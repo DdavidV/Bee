@@ -41,9 +41,14 @@ defmodule Bee.Plugin do
     * `{:buffer_opened, path}`, `{:buffer_changed, path, version}`,
       `{:buffer_saved, path}`, `{:buffer_closed, path}`
     * `{:settings_changed, settings}`
+    * `{:fs_changed, path}` – a file in the workspace or config dir changed
 
   Messages sent to the plugin's process (`ctx.host`), e.g. by timers, go to
   `handle_info/2`.
+
+  `handle_request/4` answers the plugin's browser part
+  (`bee.request(method, params)` → `{:reply, result}`, `{:reply, result,
+  new_state}` or `{:error, message}`; `result` must be JSON-encodable).
   """
 
   @type state :: term()
@@ -53,8 +58,14 @@ defmodule Bee.Plugin do
   @callback deactivate(state) :: term()
   @callback handle_event(event :: tuple(), state) :: result
   @callback handle_info(msg :: term(), state) :: result
+  @callback handle_request(method :: String.t(), params :: term(), Bee.Plugins.Context.t(), state) ::
+              {:reply, term()} | {:reply, term(), state} | {:error, String.t()}
 
-  @optional_callbacks activate: 1, deactivate: 1, handle_event: 2, handle_info: 2
+  @optional_callbacks activate: 1,
+                      deactivate: 1,
+                      handle_event: 2,
+                      handle_info: 2,
+                      handle_request: 4
 
   defmacro __using__(_opts) do
     quote do

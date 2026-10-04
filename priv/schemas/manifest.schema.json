@@ -41,8 +41,8 @@
     },
     "activationEvents": {
       "type": "array",
-      "description": "When the server part starts. Running one of the plugin's commands always starts it.",
-      "items": {"type": "string", "pattern": "^(\\*|onStartupFinished|onLanguage:[A-Za-z0-9_.+-]+)$"}
+      "description": "When the server part starts. Running one of the plugin's commands, or showing one of its views, always starts it.",
+      "items": {"type": "string", "pattern": "^(\\*|onStartupFinished|onLanguage:[A-Za-z0-9_.+-]+|onView:[A-Za-z0-9_.-]+)$"}
     },
     "contributes": {
       "type": "object",
@@ -53,12 +53,24 @@
         "menubar": {"type": "array", "items": {"$ref": "#/definitions/menubarEntry"}},
         "menus": {
           "type": "object",
-          "description": "Menu id (e.g. \"menubar/file\") to items.",
+          "description": "Menu id to items: \"menubar/<id>\", \"editor/title\" (editor buttons), \"view/title\" (view header buttons; `when` can test `view`), \"view/item/context\" (group \"inline\": buttons on a view's items; `when` can test `view` and `viewItem`), \"commandPalette\" (`when` false hides a command from the palette).",
           "additionalProperties": {"type": "array", "items": {"$ref": "#/definitions/menuItem"}}
         },
         "languages": {"type": "array", "items": {"$ref": "#/definitions/language"}},
         "grammars": {"type": "array", "items": {"$ref": "#/definitions/grammar"}},
-        "configuration": {"$ref": "#/definitions/configuration"}
+        "configuration": {"$ref": "#/definitions/configuration"},
+        "viewsContainers": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "activitybar": {"type": "array", "items": {"$ref": "#/definitions/viewsContainer"}}
+          }
+        },
+        "views": {
+          "type": "object",
+          "description": "Views container id (yours, or e.g. \"explorer\") to the views shown in it.",
+          "additionalProperties": {"type": "array", "items": {"$ref": "#/definitions/view"}}
+        }
       }
     }
   },
@@ -73,6 +85,11 @@
         "command": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+$"},
         "title": {"type": "string", "minLength": 1},
         "category": {"type": "string", "minLength": 1},
+        "icon": {
+          "type": "string",
+          "pattern": "^[a-z0-9-]+$",
+          "description": "Icon shown where the command is a button (editor/title, view/title, view/item/context menus): a Heroicons outline name, e.g. \"arrow-path\"."
+        },
         "runtime": {
           "enum": ["server", "client"],
           "description": "server: a handler in the BEAM (`@command` function of Bee or of the plugin's server module); client: a handler registered in the browser."
@@ -112,6 +129,28 @@
           "pattern": "^[^@]+(@[0-9]+)?$",
           "description": "\"<group>@<order>\". Groups sort by name and are separated by a line; items sort by order."
         },
+        "when": {"$ref": "#/definitions/whenClause"}
+      }
+    },
+    "viewsContainer": {
+      "type": "object",
+      "required": ["id", "title", "icon"],
+      "additionalProperties": false,
+      "description": "An icon in the activity bar that shows a set of views in the sidebar.",
+      "properties": {
+        "id": {"type": "string", "pattern": "^[A-Za-z0-9_-]+$"},
+        "title": {"type": "string", "minLength": 1},
+        "icon": {"type": "string", "pattern": "^[a-z0-9-]+$", "description": "A Heroicons outline name."}
+      }
+    },
+    "view": {
+      "type": "object",
+      "required": ["id", "name"],
+      "additionalProperties": false,
+      "description": "A sidebar view. A plugin fills its views with Bee.API.set_view/3.",
+      "properties": {
+        "id": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+$"},
+        "name": {"type": "string", "minLength": 1},
         "when": {"$ref": "#/definitions/whenClause"}
       }
     },

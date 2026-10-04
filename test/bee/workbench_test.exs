@@ -96,7 +96,16 @@ defmodule Bee.WorkbenchTest do
              |> Workbench.move_palette(5, 3)
              |> then(& &1.palette.index) == 2
 
-      assert Workbench.filter_palette(wb, "x").palette == %{query: "x", index: 0}
+      assert Workbench.filter_palette(wb, "x").palette == %{mode: :commands, query: "x", index: 0}
+    end
+
+    test "quick pick and input box use the palette" do
+      wb = Workbench.open_quick_pick(wb(), %{items: [%{label: "a", value: 1}], command: "x.pick"})
+      assert %{mode: :pick, command: "x.pick", arguments: [], query: ""} = wb.palette
+      assert Workbench.filter_palette(wb, "a").palette.items == [%{label: "a", value: 1}]
+
+      wb = Workbench.open_input_box(wb(), %{command: "x.in", value: "draft", prompt: "Name?"})
+      assert %{mode: :input, query: "draft", prompt: "Name?"} = wb.palette
     end
   end
 

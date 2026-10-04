@@ -1,0 +1,43 @@
+{
+  "$schema": "../../../priv/schemas/manifest.schema.json",
+  "name": "todos",
+  "displayName": "TODOs",
+  "description": "Lists the TODO and FIXME comments of the workspace. Example of the plugin UI API: a view, an input box, a quick pick, a status bar item and editor decorations.",
+  "version": "0.1.0",
+  "server": {"module": "Todos"},
+  "browser": "browser.js",
+  "activationEvents": ["*"],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [{"id": "todos", "title": "TODOs", "icon": "check-circle"}]
+    },
+    "views": {
+      "todos": [{"id": "todos.list", "name": "TODOs"}]
+    },
+    "commands": [
+      {"command": "todos.refresh", "category": "TODOs", "title": "Refresh", "icon": "arrow-path", "runtime": "server"},
+      {"command": "todos.add", "category": "TODOs", "title": "Add TODO…", "icon": "plus", "runtime": "server"},
+      {"command": "todos.goTo", "category": "TODOs", "title": "Go to TODO…", "icon": "magnifying-glass", "runtime": "server"},
+      {"command": "todos.open", "category": "TODOs", "title": "Open TODO", "runtime": "server"},
+      {"command": "todos.hide", "category": "TODOs", "title": "Hide", "icon": "eye-slash", "runtime": "server"},
+      {"command": "todos.showHidden", "category": "TODOs", "title": "Show Hidden TODOs", "icon": "eye", "runtime": "server"}
+    ],
+    "keybindings": [
+      {"key": "ctrl+alt+t", "command": "todos.goTo"}
+    ],
+    "menus": {
+      "view/title": [
+        {"command": "todos.goTo", "group": "navigation@1", "when": "view == todos.list"},
+        {"command": "todos.showHidden", "group": "navigation@2", "when": "view == todos.list"},
+        {"command": "todos.refresh", "group": "navigation@3", "when": "view == todos.list"}
+      ],
+      "view/item/context": [
+        {"command": "todos.hide", "group": "inline", "when": "view == todos.list && viewItem == todo"}
+      ],
+      "commandPalette": [
+        {"command": "todos.open", "when": "false"},
+        {"command": "todos.hide", "when": "false"}
+      ]
+    }
+  }
+}

@@ -18,6 +18,9 @@ defmodule Bee.Workspace do
 
   def list_dir(rel), do: Bee.Workspace.FS.list_dir(root(), rel, Bee.Settings.excluded_globs())
 
+  @doc "Every file of the workspace (relative paths), without `files.exclude`d ones."
+  def files, do: Bee.Workspace.FS.walk(root(), "", Bee.Settings.excluded_globs())
+
   @impl true
   def init(_opts) do
     # The config dir is watched too, so edits to settings/keybindings files

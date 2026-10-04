@@ -4,6 +4,11 @@
 //   bee.registerCommand(id, fn)      implements a "runtime": "client" command
 //   bee.registerMode(name, factory)  a CodeMirror mode for "grammars"
 //   bee.showMessage(text, level)     level: "info" | "error"
+//   bee.request(method, params)      -> Promise of the server part's answer
+//                                    (handle_request/4); rejects with its error
+//   bee.onMessage(fn)                fn(data) for Bee.API.post_message/2
+//   bee.registerEditorExtension(ext) a CodeMirror extension for every file;
+//                                    bee.editor.pathOf(state) tells which file
 //   bee.editor                       the active editor (see below)
 //   bee.codemirror                   Bee's CodeMirror modules: plugins must use
 //                                    these, a second copy of @codemirror/state
@@ -19,6 +24,7 @@ import * as autocomplete from "@codemirror/autocomplete"
 import {registerCommand} from "../commands/registry"
 import {registerMode} from "../editor/modes"
 import {getEditor} from "../editor/active"
+import {filePath, registerExtension} from "../editor/extensions"
 
 const codemirror = {state, view, language, commands, autocomplete}
 
@@ -27,6 +33,10 @@ const editor = {
   // Absolute path of the active file, or null.
   get path() {
     return getEditor()?.active ?? null
+  },
+  // The file of an EditorState (inside editor extensions).
+  pathOf(editorState) {
+    return editorState.facet(filePath)
   },
   // The EditorView, or null when no file is open.
   get view() {
@@ -79,6 +89,9 @@ export const createApi = (name, hook) => {
     registerMode: (mode, factory) => track(registerMode(mode, factory)),
     showMessage: (text, level = "info") =>
       hook.pushEvent("plugin_message", {plugin: name, level, text: String(text)}),
+    request: (method, params = null) => hook.request(name, method, params),
+    onMessage: fn => track(hook.onMessage(name, fn)),
+    registerEditorExtension: extension => track(registerExtension(extension)),
     editor,
     codemirror,
   }

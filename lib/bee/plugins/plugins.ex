@@ -69,6 +69,22 @@ defmodule Bee.Plugins do
   @spec execute(String.t(), String.t(), Context.t()) :: :ok | {:error, String.t()}
   def execute(name, id, %Context{} = ctx), do: GenServer.call(Manager, {:execute, name, id, ctx})
 
+  @doc "View `view_id` is shown: starts the plugin that contributed it, so it can fill it."
+  def view_shown(view_id) do
+    case Bee.Views.plugin(view_id) do
+      nil -> :ok
+      name -> GenServer.call(Manager, {:activate, name})
+    end
+  end
+
+  @doc """
+  A request from plugin `name`'s browser part (`bee.request(method, params)`)
+  to its server part (`handle_request/4`). The answer goes to `ctx.window`
+  as `{:bee_api, {:reply, ref, result}}`.
+  """
+  def request(name, method, params, %Context{} = ctx, ref),
+    do: GenServer.call(Manager, {:request, name, method, params, ctx, ref})
+
   @doc "Stops every plugin and loads them again from disk."
   def reload, do: GenServer.call(Manager, :reload, 30_000)
 end

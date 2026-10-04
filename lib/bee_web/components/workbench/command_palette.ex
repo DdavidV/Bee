@@ -4,7 +4,9 @@ defmodule BeeWeb.Workbench.CommandPalette do
 
   Closed, it shows the window title; clicking it (or Ctrl+Shift+P / F1)
   turns it into the palette input in place, with the matching commands and
-  their keybindings dropping down below. Enter submits the form
+  their keybindings dropping down below. Plugins use the same widget to ask
+  the user (`Bee.API.quick_pick/4`, `input_box/3`): see
+  `Bee.Workbench.open_palette/1` for the modes. Enter submits the form
   (`palette_run`); arrow keys and Escape are handled by the LiveView
   (`palette_key`). The `Palette` hook focuses the input and gives focus back
   to where it was when the palette closes.
@@ -12,7 +14,7 @@ defmodule BeeWeb.Workbench.CommandPalette do
   use BeeWeb, :html
 
   attr :title, :string, required: true
-  attr :palette, :map, default: nil, doc: "nil when closed, else %{query, index}"
+  attr :palette, :map, default: nil, doc: "nil when closed, else %{mode, query, index, …}"
   attr :items, :list, default: []
   attr :shortcut, :string, default: nil, doc: "label of the showCommands keybinding"
 
@@ -46,7 +48,7 @@ defmodule BeeWeb.Workbench.CommandPalette do
           value={@palette.query}
           autocomplete="off"
           spellcheck="false"
-          placeholder="Type the name of a command"
+          placeholder={placeholder(@palette)}
           phx-keydown="palette_key"
           class="w-full h-6 px-3 rounded-md text-xs bg-base-100 border border-primary outline-none select-text"
         />
@@ -56,9 +58,33 @@ defmodule BeeWeb.Workbench.CommandPalette do
         role="listbox"
         class="absolute left-0 right-0 top-full mt-1 z-50 max-h-[60vh] overflow-auto py-1 rounded-md bg-base-200 border border-base-content/10 shadow-2xl text-sm"
       >
-        <li :if={@items == []} class="px-4 py-2 opacity-60">No matching commands</li>
+        <li :if={@palette.mode == :input} id="palette-prompt" class="px-4 py-1.5 opacity-80">
+          {if @palette.prompt != "", do: @palette.prompt <> " ", else: ""}(Press 'Enter' to confirm or 'Escape' to cancel)
+        </li>
+        <li :if={@items == [] and @palette.mode != :input} class="px-4 py-2 opacity-60">
+          {if @palette.mode == :pick, do: "No matching items", else: "No matching commands"}
+        </li>
         <li :for={{item, i} <- Enum.with_index(@items)}>
           <button
+            :if={item.id == nil}
+            data-pick={item.key}
+            role="option"
+            aria-selected={to_string(i == @palette.index)}
+            class={[
+              "w-full flex gap-3 px-4 py-1 text-left cursor-pointer",
+              if(i == @palette.index,
+                do: "bg-primary text-primary-content",
+                else: "hover:bg-base-content/10"
+              )
+            ]}
+            phx-click="palette_pick"
+            phx-value-index={i}
+          >
+            <span class="truncate">{item.label}</span>
+            <span :if={item.description != ""} class="truncate opacity-60">{item.description}</span>
+          </button>
+          <button
+            :if={item.id != nil}
             data-command={item.id}
             role="option"
             aria-selected={to_string(i == @palette.index)}
@@ -80,4 +106,7 @@ defmodule BeeWeb.Workbench.CommandPalette do
     </div>
     """
   end
+
+  defp placeholder(%{mode: :commands}), do: "Type the name of a command"
+  defp placeholder(%{placeholder: placeholder}), do: placeholder
 end

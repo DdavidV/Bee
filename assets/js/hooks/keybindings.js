@@ -7,13 +7,15 @@
 //
 // Matching follows VS Code: the last binding whose keys match and whose
 // `when` holds wins; a stroke that starts a chord waits for the next one.
-// Matched commands go through the server (`run_command`), which checks
-// enablement and answers `bee:exec` for commands implemented in the browser.
+// Client commands (`client: true`, with their `enablement` AST) run right
+// here; the others go through the server (`run_command`), which checks
+// enablement and runs them.
 // Listens in the capture phase so it sees keys before CodeMirror and xterm.
 
 import {strokeFromEvent, label, isMac} from "../commands/keys"
 import {evaluate} from "../commands/when"
 import {exec} from "../commands/registry"
+import {editorContext} from "../editor/active"
 
 const startsWith = (strokes, prefix) => prefix.every((s, i) => strokes[i] === s)
 
@@ -21,7 +23,7 @@ export const Keybindings = {
   mounted() {
     this.pending = null
     this.load()
-    this.handleEvent("bee:exec", ({command}) => exec(command))
+    this.handleEvent("bee:exec", ({command, args}) => exec(command, args || []))
     this.onKeydown = e => this.keydown(e)
     window.addEventListener("keydown", this.onKeydown, true)
   },
@@ -48,6 +50,7 @@ export const Keybindings = {
     const platform = navigator.platform
     return {
       ...this.serverContext,
+      ...editorContext(),
       editorFocus: inEditor,
       editorTextFocus: inEditor,
       terminalFocus: inTerminal,
@@ -83,9 +86,13 @@ export const Keybindings = {
     if (match) {
       this.stop(e)
       this.status("")
-      // The server should see the latest text and selection first.
-      window.dispatchEvent(new Event("bee:flush"))
-      this.pushEvent("run_command", {command: match.command})
+      if (match.client) {
+        if (evaluate(match.enablement, ctx)) exec(match.command)
+      } else {
+        // The server should see the latest text and selection first.
+        window.dispatchEvent(new Event("bee:flush"))
+        this.pushEvent("run_command", {command: match.command})
+      }
     } else if (wasChord) {
       this.stop(e)
       this.status(`The key combination (${seq.map(label).join(" ")}) is not a command.`, 3000)

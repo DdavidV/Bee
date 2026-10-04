@@ -1,7 +1,8 @@
 defmodule BeeWeb.Workbench.PluginsView do
   @moduledoc """
-  The Plugins sidebar view (`workbench.view.extensions`): installed plugins
-  from `Bee.Plugins.list/0` with their status and problems.
+  The Plugins sidebar view (`workbench.extensions.installed`): installed
+  plugins from `Bee.Plugins.list/0` with their status and problems. Its
+  reload button is a `view/title` menu item in `bee.json`.
   """
   use BeeWeb, :html
 
@@ -11,19 +12,6 @@ defmodule BeeWeb.Workbench.PluginsView do
   def plugins_view(assigns) do
     ~H"""
     <div id="plugins-view" class="text-sm">
-      <div class="flex items-center px-3 py-2 text-xs uppercase tracking-wide opacity-60">
-        <span class="flex-1">Plugins</span>
-        <button
-          id="reload-plugins"
-          class="btn btn-ghost btn-xs btn-square normal-case"
-          title="Reload Plugins"
-          phx-click="run_command"
-          phx-value-command="bee.plugins.reload"
-        >
-          <.icon name="hero-arrow-path" class="size-4" />
-        </button>
-      </div>
-
       <div :if={@plugins == []} class="px-3 py-2 text-xs opacity-60 space-y-2">
         <p>No plugins installed.</p>
         <p>

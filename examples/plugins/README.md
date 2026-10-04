@@ -6,6 +6,7 @@
 | `upcase`      | Erlang server plugin: edits the open file through `Bee.API`    |
 | `insert-date` | Browser plugin: a client command using the editor              |
 | `dotenv`      | A language and its highlighting (a CodeMirror mode) from a plugin |
+| `todos`       | The UI API: its own sidebar view (tree, input box, inline buttons), a quick pick, an input box, a status bar item, editor decorations and a hover that asks the server part |
 
 Install by linking (or copying) them into your plugins folder:
 

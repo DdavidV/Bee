@@ -11,8 +11,8 @@ export const registerCommand = (id, handler) => {
 
 export const hasCommand = id => handlers.has(id)
 
-export const exec = id => {
+export const exec = (id, args = []) => {
   const handler = handlers.get(id)
-  if (handler) handler()
+  if (handler) handler(...args)
   else console.warn(`Bee: no client handler for command ${id}`)
 }

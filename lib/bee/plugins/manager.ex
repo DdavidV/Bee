@@ -69,6 +69,30 @@ defmodule Bee.Plugins.Manager do
     end
   end
 
+  # Something of the plugin is needed (one of its views was shown).
+  def handle_call({:activate, name}, _from, s) do
+    case s.plugins[name] do
+      %{status: :inactive, server?: true} = plugin ->
+        {:reply, :ok, elem(ensure_active(s, plugin), 0)}
+
+      _ ->
+        {:reply, :ok, s}
+    end
+  end
+
+  def handle_call({:request, name, method, params, ctx, ref}, _from, s) do
+    case s.plugins[name] do
+      %{status: status, server?: true} = plugin
+      when status in [:inactive, :activating, :active] ->
+        {s, pid} = ensure_active(s, plugin)
+        Host.request(pid, method, params, ctx, ref)
+        {:reply, :ok, s}
+
+      _ ->
+        {:reply, {:error, "plugin #{name} has no running server part"}, s}
+    end
+  end
+
   def handle_call(:reload, _from, s) do
     s = Enum.reduce(Map.keys(s.plugins), s, &remove(&2, &1))
     {:reply, :ok, rescan(s)}
@@ -279,6 +303,7 @@ defmodule Bee.Plugins.Manager do
       plugin ->
         s = stop_host(s, plugin)
         Contributions.unregister({:plugin, name})
+        Bee.UI.forget(name)
         %{s | plugins: Map.delete(s.plugins, name)}
     end
   end

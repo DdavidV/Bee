@@ -13,6 +13,7 @@ defmodule Bee.Contributions do
     * `Bee.Commands.Registry` – commands, keybindings, menubar, menus
     * `Bee.Languages` – languages, grammars
     * `Bee.Settings.Configuration` – configuration (settings)
+    * `Bee.Views` – viewsContainers, views
 
   Reads go straight to ETS. Changes broadcast `{:contributions_changed, keys}`
   on the `"contributions"` topic, `keys` being the point keys affected.
@@ -22,7 +23,7 @@ defmodule Bee.Contributions do
   @table __MODULE__
   @topic "contributions"
 
-  @points [Bee.Commands.Registry, Bee.Languages, Bee.Settings.Configuration]
+  @points [Bee.Commands.Registry, Bee.Languages, Bee.Settings.Configuration, Bee.Views]
 
   # Bee's own manifests, embedded and schema-checked at compile time (see
   # Bee.Priv): a mistake fails `mix compile`. Point checks that need other

@@ -6,7 +6,7 @@ defmodule Bee.Commands.Registry do
 
   Normalized shapes:
 
-    * command – `%{id, title, category, runtime: :server | :client, source,
+    * command – `%{id, title, category, icon, runtime: :server | :client, source,
       enablement, toggled, enablement_ast, toggled_ast, handler}`, where
       `handler` is `{module, fun}` for Bee's own server commands (a
       `use Bee.Commands.Command` function taking the workbench),
@@ -45,6 +45,18 @@ defmodule Bee.Commands.Registry do
     end
   end
 
+  @doc """
+  Items of any menu (`"editor/title"`, `"view/title"`, …) across sources:
+  `[%{command, group, when_ast}]`, ordered by group, then order.
+  """
+  def menu(id) do
+    Contributions.entries(:commands)
+    |> Enum.flat_map(&elem(&1, 1).menu_items)
+    |> Enum.filter(&(&1.menu == id))
+    |> Enum.sort_by(&{&1.group, &1.order})
+    |> Enum.map(&Map.take(&1, [:command, :group, :when_ast]))
+  end
+
   @doc "`Category: Title`, as shown in the palette."
   def label(%{category: nil, title: title}), do: title
   def label(%{category: category, title: title}), do: "#{category}: #{title}"
@@ -71,6 +83,7 @@ defmodule Bee.Commands.Registry do
           id: c["command"],
           title: c["title"],
           category: c["category"],
+          icon: c["icon"],
           runtime: runtime,
           enablement: c["enablement"],
           toggled: c["toggled"],

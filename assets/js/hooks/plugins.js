@@ -3,14 +3,50 @@
 // edited plugin is unloaded and imported again.
 //
 // A plugin module exports activate(bee) (see plugins/api.js) and optionally
-// deactivate().
+// deactivate(). This hook also carries bee.request() to the server
+// (plugin_request → plugin:reply) and Bee.API.post_message/2 to the plugin
+// (plugin:message).
 
 import {createApi} from "../plugins/api"
 
 export const Plugins = {
   mounted() {
     this.loaded = new Map() // name -> {url, dispose}
+    this.pending = new Map() // request ref -> {resolve, reject}
+    this.listeners = new Map() // plugin name -> Set of message handlers
+    this.nextRef = 0
+
+    this.handleEvent("plugin:reply", ({ref, result, error}) => {
+      const pending = this.pending.get(ref)
+      if (!pending) return
+      this.pending.delete(ref)
+      if (error != null) pending.reject(new Error(error))
+      else pending.resolve(result)
+    })
+    this.handleEvent("plugin:message", ({plugin, data}) => {
+      for (const fn of this.listeners.get(plugin) || []) {
+        try {
+          fn(data)
+        } catch (e) {
+          console.error(`Bee: plugin ${plugin} message handler failed`, e)
+        }
+      }
+    })
     this.sync()
+  },
+
+  request(plugin, method, params) {
+    const ref = `r${++this.nextRef}`
+    return new Promise((resolve, reject) => {
+      this.pending.set(ref, {resolve, reject})
+      this.pushEvent("plugin_request", {plugin, method, params, ref})
+    })
+  },
+
+  onMessage(plugin, fn) {
+    if (!this.listeners.has(plugin)) this.listeners.set(plugin, new Set())
+    this.listeners.get(plugin).add(fn)
+    return () => this.listeners.get(plugin)?.delete(fn)
   },
 
   updated() {

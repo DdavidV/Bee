@@ -31,7 +31,9 @@ defmodule Bee.Workbench do
             terminals: [],
             active_term: nil,
             open_menu: nil,
-            palette: nil
+            palette: nil,
+            can_undo: false,
+            can_redo: false
 
   @type tab :: %{path: String.t(), dirty: boolean(), lang: String.t()}
   @type terminal :: %{id: integer(), name: String.t()}
@@ -49,6 +51,8 @@ defmodule Bee.Workbench do
     :active_term,
     :open_menu,
     :palette,
+    :can_undo,
+    :can_redo,
     :root
   ]
 
@@ -119,6 +123,9 @@ defmodule Bee.Workbench do
 
   def set_language(wb, path, lang), do: update_tab(wb, path, &%{&1 | lang: lang})
 
+  @doc "Whether the active editor has something to undo / redo (reported by the browser)."
+  def set_history(wb, can_undo, can_redo), do: %{wb | can_undo: can_undo, can_redo: can_redo}
+
   defp update_tab(wb, path, fun) do
     %{wb | tabs: Enum.map(wb.tabs, &if(&1.path == path, do: fun.(&1), else: &1))}
   end
@@ -184,9 +191,51 @@ defmodule Bee.Workbench do
   def toggle_menu(wb, menu), do: %{wb | open_menu: if(wb.open_menu == menu, do: nil, else: menu)}
   def close_menu(wb), do: %{wb | open_menu: nil}
 
-  def open_palette(wb), do: %{wb | palette: %{query: "", index: 0}, open_menu: nil}
+  @doc """
+  Opens the title bar's quick input. Modes (VS Code's quick input):
+
+    * `:commands` – the command palette
+    * `:pick` – choose one of `items` (`%{label, description, value}`); the
+      choice runs `command` with `arguments ++ [value]`
+    * `:input` – type a line; Enter runs `command` with `arguments ++ [text]`
+  """
+  def open_palette(wb),
+    do: %{wb | palette: %{mode: :commands, query: "", index: 0}, open_menu: nil}
+
+  def open_quick_pick(wb, %{items: items, command: command} = spec) do
+    palette = %{
+      mode: :pick,
+      query: "",
+      index: 0,
+      items: items,
+      command: command,
+      arguments: Map.get(spec, :arguments, []),
+      placeholder: Map.get(spec, :placeholder, "")
+    }
+
+    %{wb | palette: palette, open_menu: nil}
+  end
+
+  def open_input_box(wb, %{command: command} = spec) do
+    palette = %{
+      mode: :input,
+      query: Map.get(spec, :value, ""),
+      index: 0,
+      command: command,
+      arguments: Map.get(spec, :arguments, []),
+      prompt: Map.get(spec, :prompt, ""),
+      placeholder: Map.get(spec, :placeholder, "")
+    }
+
+    %{wb | palette: palette, open_menu: nil}
+  end
+
   def close_palette(wb), do: %{wb | palette: nil}
-  def filter_palette(wb, query), do: %{wb | palette: %{query: query, index: 0}}
+
+  def filter_palette(%{palette: %{} = palette} = wb, query),
+    do: %{wb | palette: %{palette | query: query, index: 0}}
+
+  def filter_palette(wb, _query), do: wb
 
   @doc "Moves the palette selection by `delta`, within `count` items."
   def move_palette(%{palette: %{index: index} = p} = wb, delta, count) do
@@ -216,6 +265,8 @@ defmodule Bee.Workbench do
       "resourcePath" => active,
       "editorLangId" => active && language(wb, active),
       "editorIsOpen" => wb.tabs != [],
+      "canUndo" => active != nil and wb.can_undo,
+      "canRedo" => active != nil and wb.can_redo,
       "sideBarVisible" => wb.sidebar_open,
       "activeViewlet" => wb.sidebar_open && "workbench.view.#{wb.sidebar_view}",
       "panelVisible" => wb.panel_open,

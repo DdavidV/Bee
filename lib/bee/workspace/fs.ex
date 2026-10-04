@@ -55,6 +55,26 @@ defmodule Bee.Workspace.FS do
   end
 
   @doc """
+  Every file under `rel` (relative paths), skipping `exclude` globs like
+  `list_dir/3`. Symlinked directories aren't followed (no cycles).
+  """
+  @spec walk(String.t(), String.t(), [Regex.t()]) :: [String.t()]
+  def walk(root, rel \\ "", exclude \\ []) do
+    root
+    |> list_dir(rel, exclude)
+    |> Enum.flat_map(fn
+      %{type: :dir, path: path} ->
+        case File.lstat(Path.join(root, path)) do
+          {:ok, %{type: :directory}} -> walk(root, path, exclude)
+          _ -> []
+        end
+
+      %{type: :file, path: path} ->
+        [path]
+    end)
+  end
+
+  @doc """
   Path of `abs` relative to `root` ("" for the root itself).
   """
   def relative(root, abs) do

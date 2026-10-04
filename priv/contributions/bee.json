@@ -17,6 +17,22 @@
         "enablement": "activeEditor"
       },
       {
+        "command": "undo",
+        "category": "Edit",
+        "title": "Undo",
+        "icon": "arrow-uturn-left",
+        "runtime": "client",
+        "enablement": "canUndo"
+      },
+      {
+        "command": "redo",
+        "category": "Edit",
+        "title": "Redo",
+        "icon": "arrow-uturn-right",
+        "runtime": "client",
+        "enablement": "canRedo"
+      },
+      {
         "command": "workbench.action.closeActiveEditor",
         "category": "View",
         "title": "Close Editor",
@@ -86,6 +102,7 @@
         "command": "bee.plugins.reload",
         "category": "Developer",
         "title": "Reload Plugins",
+        "icon": "arrow-path",
         "runtime": "server"
       }
     ],
@@ -94,6 +111,8 @@
       {"key": "f1", "command": "workbench.action.showCommands"},
       {"key": "ctrl+shift+p", "mac": "cmd+shift+p", "command": "workbench.action.showCommands"},
       {"key": "ctrl+s", "mac": "cmd+s", "command": "workbench.action.files.save"},
+      {"key": "ctrl+z", "mac": "cmd+z", "command": "undo", "when": "editorTextFocus"},
+      {"key": "ctrl+shift+z", "mac": "cmd+shift+z", "command": "redo", "when": "editorTextFocus"},
       {"key": "ctrl+b", "mac": "cmd+b", "command": "workbench.action.toggleSidebarVisibility"},
       {"key": "ctrl+j", "mac": "cmd+j", "command": "workbench.action.togglePanel"},
       {"key": "ctrl+shift+e", "mac": "cmd+shift+e", "command": "workbench.view.explorer"},
@@ -102,8 +121,21 @@
       {"key": "ctrl+k ctrl+s", "mac": "cmd+k cmd+s", "command": "workbench.action.openGlobalKeybindingsFile"}
     ],
 
+    "viewsContainers": {
+      "activitybar": [
+        {"id": "explorer", "title": "Explorer", "icon": "document-duplicate"},
+        {"id": "extensions", "title": "Plugins", "icon": "puzzle-piece"}
+      ]
+    },
+
+    "views": {
+      "explorer": [{"id": "workbench.explorer.fileView", "name": "Folders"}],
+      "extensions": [{"id": "workbench.extensions.installed", "name": "Installed"}]
+    },
+
     "menubar": [
       {"id": "file", "label": "File"},
+      {"id": "edit", "label": "Edit"},
       {"id": "view", "label": "View"},
       {"id": "terminal", "label": "Terminal"}
     ],
@@ -115,6 +147,17 @@
         {"command": "workbench.action.openSettingsJson", "group": "2_preferences@1"},
         {"command": "workbench.action.openWorkspaceSettingsFile", "group": "2_preferences@2"},
         {"command": "workbench.action.openGlobalKeybindingsFile", "group": "2_preferences@3"}
+      ],
+      "menubar/edit": [
+        {"command": "undo", "group": "1_do@1"},
+        {"command": "redo", "group": "1_do@2"}
+      ],
+      "view/title": [
+        {"command": "bee.plugins.reload", "group": "navigation@1", "when": "view == workbench.extensions.installed"}
+      ],
+      "editor/title": [
+        {"command": "undo", "group": "navigation@1", "when": "activeEditor"},
+        {"command": "redo", "group": "navigation@2", "when": "activeEditor"}
       ],
       "menubar/view": [
         {"command": "workbench.action.showCommands", "group": "1_commands@1"},

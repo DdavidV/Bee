@@ -9,6 +9,7 @@ defmodule Bee.Plugins.Context do
     * `language` – language id of the active editor
     * `selections` – `[{from, to}]` in the active editor, UTF-8 byte offsets
       into `Bee.API.text/1`
+    * `args` – the command's arguments (from a view item, an input box…)
 
   A plain struct, so Erlang code can match it as a map.
   """
@@ -21,7 +22,8 @@ defmodule Bee.Plugins.Context do
     :window,
     :active_editor,
     :language,
-    selections: []
+    selections: [],
+    args: []
   ]
 
   @type t :: %__MODULE__{}

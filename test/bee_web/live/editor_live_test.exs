@@ -730,6 +730,53 @@ defmodule BeeWeb.EditorLiveTest do
     end
   end
 
+  describe "undo / redo" do
+    test "buttons in the tab bar and the Edit menu follow what the editor reports", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      refute has_element?(view, "#editor-actions [data-command='undo']")
+
+      open_file(view, "mix.exs")
+      assert has_element?(view, "#editor-actions [data-command='undo'][disabled]")
+      assert has_element?(view, "#editor-actions [data-command='redo'][disabled]")
+      assert has_element?(view, "#editor-actions [data-command='undo'][title='Undo (Ctrl+Z)']")
+
+      assert has_element?(
+               view,
+               "#editor-actions [data-command='redo'][title='Redo (Ctrl+Shift+Z)']"
+             )
+
+      render_hook(view, "history_changed", %{"canUndo" => true, "canRedo" => false})
+      refute has_element?(view, "#editor-actions [data-command='undo'][disabled]")
+      assert has_element?(view, "#editor-actions [data-command='redo'][disabled]")
+
+      # implemented in the browser: the server asks for it
+      view |> element("#editor-actions [data-command='undo']") |> render_click()
+      assert_push_event(view, "bee:exec", %{command: "undo"})
+
+      open_menu(view, "edit")
+      assert has_element?(view, "#menu-edit [data-command='redo'][disabled]", "Ctrl+Shift+Z")
+      assert has_element?(view, "#menu-edit [data-command='undo']", "Ctrl+Z")
+      refute has_element?(view, "#menu-edit [data-command='undo'][disabled]")
+    end
+
+    test "keybindings of client commands carry their enablement", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      bindings = json_data(view, "#workbench", "data-keybindings")
+
+      assert %{
+               "client" => true,
+               "enablement" => ["key", "canUndo"],
+               "when" => ["key", "editorTextFocus"]
+             } =
+               Enum.find(bindings, &(&1["command"] == "undo"))
+
+      refute Map.has_key?(
+               Enum.find(bindings, &(&1["command"] == "workbench.action.togglePanel")),
+               "client"
+             )
+    end
+  end
+
   describe "plugins" do
     @examples Path.expand("../../../examples/plugins", __DIR__)
 
@@ -847,6 +894,129 @@ defmodule BeeWeb.EditorLiveTest do
       _ = render(view)
       assert_push_event(view, "cm:language", %{lang: "dotenv", mode: "dotenv"})
       assert has_element?(view, "#status-lang", "Dotenv")
+    end
+
+    test "a plugin view: tree, inline buttons, input box, badge and status item", %{conn: conn} do
+      File.write!(
+        Path.join(Bee.Workspace.root(), "notes.txt"),
+        "TODO: first\nok\nFIXME: second\n"
+      )
+
+      install(["todos"])
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      # its container in the activity bar, with the count as badge
+      eventually(fn -> render(view) =~ ~s(id="view-todos") end)
+      eventually(fn -> has_element?(view, "#view-todos", "2") end)
+      assert has_element?(view, "[id^='status-item-todos-count']", "2 TODOs")
+
+      view |> element("#view-todos") |> render_click()
+      assert has_element?(view, "#sidebar-title", "TODOs")
+      assert has_element?(view, "[data-item='notes.txt']", "notes.txt")
+      assert has_element?(view, "[data-item='notes.txt:1']", "TODO: first")
+      assert has_element?(view, "[data-item='notes.txt:3']", "FIXME: second")
+      # view/title buttons in the header
+      assert has_element?(view, "#sidebar [data-command='todos.refresh']")
+
+      # a leaf runs its command with its arguments: open at the line
+      view |> element("[data-item='notes.txt:3']") |> render_click()
+      path = Path.join(Bee.Workspace.root(), "notes.txt")
+      assert_push_event(view, "cm:open", %{path: ^path}, 3_000)
+      assert_push_event(view, "cm:reveal", %{path: ^path, line: 3})
+
+      # folding a group
+      view |> element("[data-item='notes.txt']") |> render_click()
+      refute has_element?(view, "[data-item='notes.txt:1']")
+      view |> element("[data-item='notes.txt']") |> render_click()
+
+      # an inline button gets the item's arguments
+      view
+      |> element("[data-item='notes.txt:1'] [data-command='todos.hide']")
+      |> render_click()
+
+      eventually(fn -> not has_element?(view, "[data-item='notes.txt:1']") end)
+      assert has_element?(view, "#view-todos", "1")
+
+      # the input box runs its command with the text
+      view
+      |> form("#view-input-todos\\.list", %{"value" => "write docs"})
+      |> render_submit()
+
+      eventually(fn ->
+        File.read(Path.join(Bee.Workspace.root(), "TODO.md")) == {:ok, "- TODO: write docs\n"}
+      end)
+
+      eventually(fn -> has_element?(view, "[data-item='TODO.md:1']", "TODO: write docs") end)
+    end
+
+    test "plugins ask through the palette: quick pick and input box", %{conn: conn} do
+      File.write!(Path.join(Bee.Workspace.root(), "notes.txt"), "TODO: first\nFIXME: second\n")
+      install(["todos"])
+      {:ok, view, _html} = live(conn, ~p"/")
+      eventually(fn -> Bee.Plugins.get("todos").status == :active end)
+
+      run(view, "todos.goTo")
+      eventually(fn -> has_element?(view, "#palette [data-pick]") end)
+      assert has_element?(view, "#palette-input[placeholder='Go to a TODO']")
+      view |> form("#palette-form", %{query: "fixme"}) |> render_change()
+      assert has_element?(view, "#palette [data-pick='1']", "FIXME: second")
+      refute has_element?(view, "#palette [data-pick='0']")
+      view |> form("#palette-form") |> render_submit()
+
+      path = Path.join(Bee.Workspace.root(), "notes.txt")
+      assert_push_event(view, "cm:reveal", %{path: ^path, line: 2}, 3_000)
+
+      # with no text, todos.add asks for it
+      run(view, "todos.add")
+      eventually(fn -> has_element?(view, "#palette-prompt", "What needs doing?") end)
+      view |> form("#palette-form", %{query: "from the palette"}) |> render_change()
+      view |> form("#palette-form") |> render_submit()
+
+      eventually(fn ->
+        File.read(Path.join(Bee.Workspace.root(), "TODO.md")) ==
+          {:ok, "- TODO: from the palette\n"}
+      end)
+
+      # commands for view items stay out of the palette
+      run(view, "workbench.action.showCommands")
+      view |> form("#palette-form", %{query: "todos"}) |> render_change()
+      assert has_element?(view, "#palette [data-command='todos.goTo']")
+      refute has_element?(view, "#palette [data-command='todos.open']")
+    end
+
+    test "the browser part's requests are answered by the server part", %{conn: conn} do
+      File.write!(Path.join(Bee.Workspace.root(), "notes.txt"), "TODO: a\nTODO: b\n")
+      install(["todos"])
+      {:ok, view, _html} = live(conn, ~p"/")
+      eventually(fn -> Bee.Plugins.get("todos").status == :active end)
+
+      path = Path.join(Bee.Workspace.root(), "notes.txt")
+
+      render_hook(view, "plugin_request", %{
+        "plugin" => "todos",
+        "method" => "count",
+        "params" => %{"path" => path},
+        "ref" => "r1"
+      })
+
+      assert_push_event(view, "plugin:reply", %{ref: "r1", result: %{file: 2, total: 2}}, 3_000)
+
+      render_hook(view, "plugin_request", %{
+        "plugin" => "todos",
+        "method" => "nope",
+        "ref" => "r2"
+      })
+
+      assert_push_event(view, "plugin:reply", %{ref: "r2", error: error}, 3_000)
+      assert error =~ "handle_request/4"
+
+      render_hook(view, "plugin_request", %{
+        "plugin" => "insert-date",
+        "method" => "x",
+        "ref" => "r3"
+      })
+
+      assert_push_event(view, "plugin:reply", %{ref: "r3", error: _})
     end
 
     test "the asset route serves a plugin's browser module only", %{conn: conn} do

@@ -37,6 +37,10 @@ defmodule Bee.Plugins.Host do
   @doc "Runs command `id` with `ctx` (a `Bee.Plugins.Context`) – asynchronously."
   def run_command(pid, id, %Context{} = ctx), do: GenServer.cast(pid, {:command, id, ctx})
 
+  @doc "Calls `handle_request/4`; the result goes to `ctx.window` (see `Bee.Plugins.request/5`)."
+  def request(pid, method, params, %Context{} = ctx, ref),
+    do: GenServer.cast(pid, {:request, method, params, ctx, ref})
+
   defp via(name), do: {:via, Registry, {Bee.Registry, {:plugin, name}}}
 
   ## Server
@@ -62,6 +66,7 @@ defmodule Bee.Plugins.Host do
       if function_exported?(module, :handle_event, 2) do
         Bee.Editor.Buffer.subscribe()
         Bee.Settings.subscribe()
+        Bee.Workspace.subscribe()
       end
 
       notify({:plugin_activated, plugin.name})
@@ -83,6 +88,26 @@ defmodule Bee.Plugins.Host do
         Bee.API.show_message(ctx, :error, "#{s.plugin.name} has no handler for #{id}")
         {:noreply, s}
     end
+  end
+
+  def handle_cast({:request, method, params, ctx, ref}, s) do
+    ctx = %{ctx | plugin: s.plugin.name, dir: s.plugin.dir, host: self()}
+
+    {reply, s} =
+      if function_exported?(s.module, :handle_request, 4) do
+        case run(fn -> s.module.handle_request(method, params, ctx, s.state) end) do
+          {:ok, {:reply, result}} -> {{:ok, result}, s}
+          {:ok, {:reply, result, state}} -> {{:ok, result}, %{s | state: state}}
+          {:ok, {:error, message}} -> {{:error, to_string(message)}, s}
+          {:ok, other} -> {{:error, "handle_request/4 returned #{inspect(other)}"}, s}
+          {:error, message} -> {{:error, "handle_request/4 #{message}"}, s}
+        end
+      else
+        {{:error, "#{s.plugin.name} has no handle_request/4"}, s}
+      end
+
+    Bee.API.reply(ctx, ref, reply)
+    {:noreply, s}
   end
 
   @impl true
@@ -157,6 +182,7 @@ defmodule Bee.Plugins.Host do
   defp event({:buffer_reloaded, path, _text}), do: {:buffer_changed, path, nil}
   defp event({:buffer_edited, _path, _version, _edits, _text}), do: :ignore
   defp event({:settings_changed, settings, _errors}), do: {:settings_changed, settings}
+  defp event({:fs_changed, path}), do: {:fs_changed, path}
   defp event(_), do: nil
 
   defp maybe_handle_info(msg, s) do

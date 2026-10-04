@@ -12,10 +12,12 @@
 // applied to the files waiting for it.
 //
 // Server -> client: cm:open, cm:activate, cm:close, cm:reload, cm:language,
-//                   cm:edit (server-side edits, UTF-8 byte offsets)
+//                   cm:edit (server-side edits, UTF-8 byte offsets),
+//                   cm:reveal (select a range / go to a line)
 // Client -> server: doc_changed (throttled), save, selection_changed
 //                   (throttled, UTF-8 byte offsets; for plugin commands)
-// Client command:   workbench.action.files.save
+//                   history_changed (whether the active file can undo/redo)
+// Client commands:  workbench.action.files.save, undo, redo
 //
 // A `bee:flush` window event sends pending changes and selections at once
 // (the Keybindings hook fires it before running a command).
@@ -25,7 +27,9 @@ import {
   EditorView, keymap, lineNumbers, highlightActiveLineGutter, highlightSpecialChars,
   drawSelection, dropCursor, rectangularSelection, crosshairCursor, highlightActiveLine,
 } from "@codemirror/view"
-import {history, defaultKeymap, historyKeymap, indentWithTab} from "@codemirror/commands"
+import {
+  history, defaultKeymap, historyKeymap, indentWithTab, undo, redo, undoDepth, redoDepth,
+} from "@codemirror/commands"
 import {
   indentUnit, foldGutter, indentOnInput, syntaxHighlighting,
   defaultHighlightStyle, bracketMatching, foldKeymap,
@@ -39,6 +43,7 @@ import {modeExtension, onModeChange} from "../editor/modes"
 import "../editor/builtin_modes"
 import {toBytes, fromBytes} from "../editor/offsets"
 import {setEditor} from "../editor/active"
+import {filePath, pluginExtensions, onExtensionsChange} from "../editor/extensions"
 
 const SYNC_MS = 300
 const SELECTION_MS = 100
@@ -82,6 +87,8 @@ const compartments = {
 
 // Per state: the file's highlighting mode.
 const languageCompartment = new Compartment()
+// Shared by all states: extensions of browser plugins.
+const pluginCompartment = new Compartment()
 
 const DEFAULTS = {fontSize: 14, tabSize: 2, wordWrap: "off", lineNumbers: "on", theme: "dark"}
 
@@ -111,14 +118,25 @@ export const CodeEditor = {
     this.handleEvent("cm:reload", ({path, text}) => this.reload(path, text))
     this.handleEvent("cm:language", ({path, mode}) => this.setMode(path, mode))
     this.handleEvent("cm:edit", ({path, edits, text}) => this.edit(path, edits, text))
+    this.handleEvent("cm:reveal", target => this.reveal(target))
 
-    this.unregisterSave = registerCommand("workbench.action.files.save", () => {
-      if (this.active) this.save(this.active)
-    })
+    this.unregisterCommands = [
+      registerCommand("workbench.action.files.save", () => {
+        if (this.active) this.save(this.active)
+      }),
+      registerCommand("undo", () => this.runHistory(undo)),
+      registerCommand("redo", () => this.runHistory(redo)),
+    ]
+    this.history = null // last {canUndo, canRedo} sent
     this.unregisterEditor = setEditor(this)
     // A plugin registered a mode: re-apply it to the files using it.
     this.offModeChange = onModeChange(name => {
       for (const [path, mode] of this.modes) if (mode === name) this.setMode(path, mode)
+    })
+    this.offExtensionsChange = onExtensionsChange(() => {
+      const effects = pluginCompartment.reconfigure(pluginExtensions())
+      this.view.dispatch({effects})
+      for (const [path, state] of this.states) this.states.set(path, state.update({effects}).state)
     })
     this.onFlush = () => this.flushAll()
     window.addEventListener("bee:flush", this.onFlush)
@@ -131,9 +149,10 @@ export const CodeEditor = {
   },
 
   destroyed() {
-    this.unregisterSave()
+    this.unregisterCommands.forEach(unregister => unregister())
     this.unregisterEditor()
     this.offModeChange()
+    this.offExtensionsChange()
     window.removeEventListener("bee:flush", this.onFlush)
     clearTimeout(this.selectionTimer)
     this.timers.forEach(clearTimeout)
@@ -158,14 +177,39 @@ export const CodeEditor = {
       doc: text,
       extensions: [
         setup,
+        filePath.of(path),
         languageCompartment.of(modeExtension(mode)),
+        pluginCompartment.of(pluginExtensions()),
         Object.entries(compartments).map(([name, c]) => c.of(exts[name])),
         EditorView.updateListener.of(update => {
           if (update.docChanged) this.changed(path)
+          if (update.transactions.length) this.historyChanged()
           if (update.docChanged || update.selectionSet) this.selectionChanged()
         }),
       ],
     })
+  },
+
+  runHistory(command) {
+    if (!this.active) return
+    command(this.view)
+    this.view.focus()
+  },
+
+  contextKeys() {
+    const state = this.active && this.view.state
+    return {
+      canUndo: !!state && undoDepth(state) > 0,
+      canRedo: !!state && redoDepth(state) > 0,
+    }
+  },
+
+  // Tells the server when undo/redo become (un)available for the active file.
+  historyChanged() {
+    const history = this.contextKeys()
+    if (this.history && history.canUndo === this.history.canUndo && history.canRedo === this.history.canRedo) return
+    this.history = history
+    this.pushEvent("history_changed", history)
   },
 
   // Applies `spec` to the state of `path`, whether shown or not.
@@ -197,6 +241,7 @@ export const CodeEditor = {
     this.view.setState(state)
     this.view.focus()
     this.selectionChanged()
+    this.historyChanged()
   },
 
   activate(path) {
@@ -207,6 +252,7 @@ export const CodeEditor = {
     this.states.delete(path)
     this.view.focus()
     this.selectionChanged()
+    this.historyChanged()
   },
 
   close(path) {
@@ -218,6 +264,7 @@ export const CodeEditor = {
     if (path === this.active) {
       this.active = null
       this.view.setState(EditorState.create())
+      this.historyChanged()
     }
   },
 
@@ -254,6 +301,25 @@ export const CodeEditor = {
     } else {
       this.pushText("doc_changed", path)
     }
+  },
+
+  // Selects `from`-`to` (UTF-8 bytes) or goes to `line` (1-based) in the
+  // active file, scrolled into view.
+  reveal({path, from, to, line}) {
+    if (path !== this.active) return
+    const state = this.view.state
+    let anchor, head
+    if (line != null) {
+      const l = state.doc.line(Math.min(Math.max(1, line), state.doc.lines))
+      anchor = head = l.from
+    } else {
+      const offsets = fromBytes(state.doc.toString(), [from, to])
+      if (!offsets.has(from) || !offsets.has(to)) return
+      anchor = offsets.get(from)
+      head = offsets.get(to)
+    }
+    this.view.dispatch({selection: {anchor, head}, scrollIntoView: true})
+    this.view.focus()
   },
 
   // Selections of the active editor, throttled like changes.

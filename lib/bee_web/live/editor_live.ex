@@ -39,26 +39,69 @@ defmodule BeeWeb.EditorLive do
       CommandRegistry.subscribe()
       Plugins.subscribe()
       Bee.API.subscribe_window()
+      Bee.UI.subscribe()
     end
 
     {:ok,
      socket
      |> assign(page_title: Path.basename(Workspace.root()), term_seq: %{}, selection: nil)
+     |> assign(view_inputs: %{}, collapsed: MapSet.new())
+     |> load_views()
+     |> assign(status_items: Bee.UI.status_items())
      |> put_workbench(Workbench.new(Workspace.root()))
      |> load_settings(Settings.all(), Settings.errors())
-     |> load_keybindings(Keybindings.all(), Keybindings.errors())
+     |> assign(keybindings: Keybindings.all(), keybinding_errors: Keybindings.errors())
      |> load_commands()
      |> load_plugins()}
   end
 
   ## Commands
 
+  # `args`: optional JSON array (view items, buttons with arguments).
   @impl true
-  def handle_event("run_command", %{"command" => id}, socket) do
+  def handle_event("run_command", %{"command" => id} = params, socket) do
     {:noreply,
      socket
      |> change(&(&1 |> Workbench.close_menu() |> Workbench.close_palette()))
-     |> run_command(id)}
+     |> run_command(id, decode_args(params["args"]))}
+  end
+
+  ## Sidebar views
+
+  # Activity bar: show a container's views (or hide the sidebar, VS Code style).
+  def handle_event("show_view", %{"container" => id}, socket) do
+    socket = change(socket, &Workbench.show_view(&1, id))
+    if socket.assigns.sidebar_open, do: views_shown(socket)
+    {:noreply, socket}
+  end
+
+  def handle_event("toggle_view_item", %{"view" => view, "item" => item}, socket) do
+    key = {view, item}
+
+    collapsed =
+      if MapSet.member?(socket.assigns.collapsed, key),
+        do: MapSet.delete(socket.assigns.collapsed, key),
+        else: MapSet.put(socket.assigns.collapsed, key)
+
+    {:noreply, assign(socket, collapsed: collapsed)}
+  end
+
+  def handle_event("view_input", %{"view" => view, "value" => value}, socket),
+    do: {:noreply, update(socket, :view_inputs, &Map.put(&1, view, value))}
+
+  def handle_event("view_submit", %{"view" => view_id} = params, socket) do
+    value = params["value"] || Map.get(socket.assigns.view_inputs, view_id, "")
+
+    case socket.assigns.view_contents[view_id] do
+      %{input: %{command: command, arguments: args}} ->
+        {:noreply,
+         socket
+         |> update(:view_inputs, &Map.put(&1, view_id, value))
+         |> run_command(command, args ++ [value])}
+
+      _ ->
+        {:noreply, socket}
+    end
   end
 
   ## Menus
@@ -86,14 +129,29 @@ defmodule BeeWeb.EditorLive do
   end
 
   # Enter in the input submits the form.
+  def handle_event("palette_run", _params, %{assigns: %{palette: %{mode: :input} = p}} = socket) do
+    {:noreply,
+     socket
+     |> change(&Workbench.close_palette/1)
+     |> run_command(p.command, p.arguments ++ [p.query])}
+  end
+
   def handle_event("palette_run", _params, %{assigns: %{palette: %{index: index}}} = socket) do
     case Enum.at(palette_items(socket.assigns), index) do
       nil -> {:noreply, socket}
-      item -> {:noreply, socket |> change(&Workbench.close_palette/1) |> run_command(item.id)}
+      item -> {:noreply, palette_choose(socket, item)}
     end
   end
 
   def handle_event("palette_run", _params, socket), do: {:noreply, socket}
+
+  # Clicking a quick pick item.
+  def handle_event("palette_pick", %{"index" => index}, socket) do
+    case Enum.at(palette_items(socket.assigns), String.to_integer(index)) do
+      nil -> {:noreply, socket}
+      item -> {:noreply, palette_choose(socket, item)}
+    end
+  end
 
   def handle_event("close_palette", _params, socket),
     do: {:noreply, change(socket, &Workbench.close_palette/1)}
@@ -141,11 +199,28 @@ defmodule BeeWeb.EditorLive do
   def handle_event("open_problem", %{"path" => path}, socket),
     do: {:noreply, change(socket, &Workbench.open_editor(&1, path))}
 
+  # bee.request() of a browser plugin: answered later with plugin:reply.
+  def handle_event("plugin_request", %{"plugin" => plugin, "ref" => ref} = params, socket) do
+    ctx = plugin_context(socket.assigns)
+
+    case Plugins.request(plugin, params["method"], params["params"], ctx, ref) do
+      :ok ->
+        {:noreply, socket}
+
+      {:error, message} ->
+        {:noreply, push_event(socket, "plugin:reply", %{ref: ref, error: message})}
+    end
+  end
+
   # bee.showMessage() of a browser plugin.
   def handle_event("plugin_message", %{"plugin" => plugin, "text" => text} = params, socket) do
     level = if params["level"] == "error", do: :error, else: :info
     {:noreply, put_flash(socket, level, "#{plugin}: #{text}")}
   end
+
+  # Undo/redo availability of the active editor (enables the undo/redo commands).
+  def handle_event("history_changed", %{"canUndo" => can_undo, "canRedo" => can_redo}, socket),
+    do: {:noreply, change(socket, &Workbench.set_history(&1, can_undo == true, can_redo == true))}
 
   # Selections of the active editor, UTF-8 byte offsets (for plugin commands).
   def handle_event("selection_changed", %{"path" => path, "ranges" => ranges}, socket) do
@@ -217,8 +292,27 @@ defmodule BeeWeb.EditorLive do
   def handle_info({:keybindings_changed, bindings, errors}, socket),
     do: {:noreply, load_keybindings(socket, bindings, errors)}
 
+  def handle_info({:ui_changed, {:view, id}}, socket),
+    do: {:noreply, update(socket, :view_contents, &Map.put(&1, id, Bee.UI.view(id)))}
+
+  def handle_info({:ui_changed, :status_items}, socket),
+    do: {:noreply, assign(socket, status_items: Bee.UI.status_items())}
+
   def handle_info({:contributions_changed, keys}, socket) do
     socket = if :commands in keys, do: load_commands(socket), else: socket
+
+    socket =
+      if :views in keys do
+        socket = load_views(socket)
+
+        # The shown container went away with its plugin.
+        if Enum.any?(socket.assigns.containers, &(&1.id == socket.assigns.sidebar_view)),
+          do: socket,
+          else: change(socket, &%{&1 | sidebar_view: "explorer"})
+      else
+        socket
+      end
+
     socket = if :languages in keys, do: redetect_languages(socket), else: socket
     {:noreply, socket}
   end
@@ -341,10 +435,13 @@ defmodule BeeWeb.EditorLive do
   defp run_effect(:panel_hidden, socket), do: assign(socket, term_seq: %{})
 
   defp run_effect({:exec_client, command}, socket),
-    do: push_event(socket, "bee:exec", %{command: command})
+    do: run_effect({:exec_client, command, []}, socket)
 
-  defp run_effect({:run_plugin_command, %{handler: {:plugin, name}, id: id}}, socket) do
-    case Plugins.execute(name, id, plugin_context(socket.assigns)) do
+  defp run_effect({:exec_client, command, args}, socket),
+    do: push_event(socket, "bee:exec", %{command: command, args: args})
+
+  defp run_effect({:run_plugin_command, %{handler: {:plugin, name}, id: id}, args}, socket) do
+    case Plugins.execute(name, id, %{plugin_context(socket.assigns) | args: args}) do
       :ok -> socket
       {:error, message} -> put_flash(socket, :error, message)
     end
@@ -359,7 +456,9 @@ defmodule BeeWeb.EditorLive do
 
   ## Command execution
 
-  defp run_command(socket, id) do
+  # `args` reach plugin and client commands; Bee's own server commands
+  # don't take any.
+  defp run_command(socket, id, args \\ []) do
     case Enum.find(socket.assigns.commands, &(&1.id == id)) do
       nil ->
         put_flash(socket, :error, "Command '#{id}' not found")
@@ -370,10 +469,10 @@ defmodule BeeWeb.EditorLive do
             socket
 
           command.runtime == :client ->
-            run_effect({:exec_client, id}, socket)
+            run_effect({:exec_client, id, args}, socket)
 
           match?({:plugin, _}, command.handler) ->
-            run_effect({:run_plugin_command, command}, socket)
+            run_effect({:run_plugin_command, command, args}, socket)
 
           true ->
             change(socket, fn wb -> apply_handler(command.handler, wb) end)
@@ -409,14 +508,132 @@ defmodule BeeWeb.EditorLive do
   defp plugin_request(socket, {:set_status, text}),
     do: change(socket, &Workbench.set_status(&1, text))
 
-  defp plugin_request(socket, {:open_file, path}) do
-    if File.regular?(path),
-      do: change(socket, &Workbench.open_editor(&1, path)),
-      else: put_flash(socket, :error, "Cannot open #{path}: no such file")
+  defp plugin_request(socket, {:open_file, path, reveal}) do
+    if File.regular?(path) do
+      socket = change(socket, &Workbench.open_editor(&1, path))
+      # After cm:open / cm:activate, so the editor has the file.
+      if reveal && Workbench.open?(workbench(socket), path),
+        do: push_event(socket, "cm:reveal", Map.put(reveal, :path, path)),
+        else: socket
+    else
+      put_flash(socket, :error, "Cannot open #{path}: no such file")
+    end
   end
 
   defp plugin_request(socket, {:execute_command, id}), do: run_command(socket, id)
+
+  defp plugin_request(socket, {:set_view_input, view, value}) do
+    socket
+    |> update(:view_inputs, &Map.put(&1, view, value))
+    # The box may have focus, where LiveView leaves its value alone.
+    |> push_event("view:input", %{view: view, value: value})
+  end
+
+  defp plugin_request(socket, {:input_box, spec}),
+    do: change(socket, &Workbench.open_input_box(&1, spec))
+
+  defp plugin_request(socket, {:quick_pick, spec}),
+    do: change(socket, &Workbench.open_quick_pick(&1, spec))
+
+  defp plugin_request(socket, {:post_message, plugin, data}),
+    do: push_event(socket, "plugin:message", %{plugin: plugin, data: data})
+
+  defp plugin_request(socket, {:reply, ref, {:ok, result}}),
+    do: push_event(socket, "plugin:reply", %{ref: ref, result: result})
+
+  defp plugin_request(socket, {:reply, ref, {:error, message}}),
+    do: push_event(socket, "plugin:reply", %{ref: ref, error: message})
+
   defp plugin_request(socket, _unknown), do: socket
+
+  defp decode_args(nil), do: []
+
+  defp decode_args(json) when is_binary(json) do
+    case Jason.decode(json) do
+      {:ok, args} when is_list(args) -> args
+      _ -> []
+    end
+  end
+
+  ## Views
+
+  defp load_views(socket) do
+    views = Bee.Views.views()
+
+    assign(socket,
+      containers: Bee.Views.containers(),
+      views: views,
+      view_contents: Map.new(views, &{&1.id, Bee.UI.view(&1.id)})
+    )
+  end
+
+  # The shown container's plugin views need their plugin running.
+  defp views_shown(socket) do
+    for view <- socket.assigns.views,
+        view.container == socket.assigns.sidebar_view,
+        do: Plugins.view_shown(view.id)
+
+    :ok
+  end
+
+  @doc false
+  # Views of the shown container whose `when` holds.
+  def visible_views(assigns) do
+    ctx = context(assigns)
+
+    for view <- assigns.views,
+        view.container == assigns.sidebar_view,
+        Bee.Commands.When.eval(view.when_ast, ctx),
+        do: view
+  end
+
+  @doc false
+  # The shown views with their header buttons and their items' inline buttons
+  # (per item context), for BeeWeb.Workbench.Sidebar.
+  def sidebar_views(assigns) do
+    for view <- visible_views(assigns) do
+      contexts =
+        case assigns.view_contents[view.id] do
+          %{items: items} -> item_contexts(items)
+          _ -> []
+        end
+
+      %{
+        view: view,
+        title_actions: toolbar(assigns, "view/title", %{"view" => view.id}),
+        item_actions:
+          Map.new(contexts, fn context ->
+            {context,
+             toolbar(
+               assigns,
+               "view/item/context",
+               %{"view" => view.id, "viewItem" => context},
+               true
+             )}
+          end)
+      }
+    end
+  end
+
+  defp item_contexts(items) do
+    items
+    |> Enum.flat_map(&[&1.context | item_contexts(&1.children)])
+    |> Enum.uniq()
+  end
+
+  @doc false
+  # Activity bar entries with the summed badges of their plugin views.
+  def activity_bar(assigns) do
+    for container <- assigns.containers do
+      badge =
+        assigns.views
+        |> Enum.filter(&(&1.container == container.id))
+        |> Enum.map(&((assigns.view_contents[&1.id] || %{})[:badge] || 0))
+        |> Enum.sum()
+
+      Map.put(container, :badge, if(badge > 0, do: badge))
+    end
+  end
 
   defp load_plugins(socket) do
     assign(socket,
@@ -475,11 +692,30 @@ defmodule BeeWeb.EditorLive do
     )
   end
 
-  defp load_commands(socket),
-    do: assign(socket, commands: CommandRegistry.commands(), menus: CommandRegistry.menus())
+  defp load_commands(socket) do
+    socket
+    |> assign(commands: CommandRegistry.commands(), menus: CommandRegistry.menus())
+    |> then(&load_keybindings(&1, &1.assigns.keybindings, &1.assigns.keybinding_errors))
+  end
 
+  # Bindings of client commands carry their enablement: the browser runs those
+  # itself, without a round trip.
   defp load_keybindings(socket, bindings, errors) do
-    client = Enum.map(bindings, &Map.take(&1, [:key, :mac, :command, :when]))
+    commands = Map.new(socket.assigns[:commands] || [], &{&1.id, &1})
+
+    client =
+      Enum.map(bindings, fn binding ->
+        base = Map.take(binding, [:key, :mac, :command, :when])
+
+        case commands[binding.command] do
+          %{runtime: :client, enablement_ast: ast} ->
+            Map.merge(base, %{client: true, enablement: ast})
+
+          _ ->
+            base
+        end
+      end)
+
     assign(socket, keybindings: bindings, keybinding_errors: errors, client_keybindings: client)
   end
 
@@ -519,6 +755,29 @@ defmodule BeeWeb.EditorLive do
     end
   end
 
+  @doc false
+  # Buttons of an icon menu ("editor/title", …): `[%{command, label, icon,
+  # disabled}]`, the items whose `when` holds in `ctx` (+ `extra` keys).
+  # `inline_only`: just the items of group "inline…" (view/item/context).
+  def toolbar(assigns, menu, extra \\ %{}, inline_only \\ false) do
+    ctx = Map.merge(context(assigns), extra)
+    commands = Map.new(assigns.commands, &{&1.id, &1})
+
+    for %{command: id, when_ast: when_ast, group: group} <- CommandRegistry.menu(menu),
+        not inline_only or String.starts_with?(group, "inline"),
+        command = commands[id],
+        command != nil and Bee.Commands.When.eval(when_ast, ctx) do
+      shortcut = Keybindings.label(id, assigns.keybindings)
+
+      %{
+        command: id,
+        label: if(shortcut, do: "#{command.title} (#{shortcut})", else: command.title),
+        icon: command.icon,
+        disabled: not CommandRegistry.enabled?(command, ctx)
+      }
+    end
+  end
+
   # No leading, trailing or doubled separators once hidden items are gone.
   defp tidy_separators(items) do
     items
@@ -529,13 +788,24 @@ defmodule BeeWeb.EditorLive do
   end
 
   defp palette_items(%{palette: nil}), do: []
+  defp palette_items(%{palette: %{mode: :input}}), do: []
+
+  defp palette_items(%{palette: %{mode: :pick, items: items, query: query}}) do
+    query = String.downcase(query)
+
+    items
+    |> Enum.with_index()
+    |> Enum.map(fn {item, i} -> Map.merge(item, %{id: nil, key: i, shortcut: nil}) end)
+    |> Enum.filter(&fuzzy_match?(String.downcase(&1.label), query))
+  end
 
   defp palette_items(assigns) do
     ctx = context(assigns)
     query = String.downcase(assigns.palette.query)
+    hidden = hidden_from_palette(ctx)
 
     assigns.commands
-    |> Enum.filter(&CommandRegistry.enabled?(&1, ctx))
+    |> Enum.filter(&(CommandRegistry.enabled?(&1, ctx) and &1.id not in hidden))
     |> Enum.map(
       &%{
         id: &1.id,
@@ -546,6 +816,23 @@ defmodule BeeWeb.EditorLive do
     |> Enum.filter(&fuzzy_match?(String.downcase(&1.label), query))
     # Contiguous matches ("term" in "Terminal") before scattered ones.
     |> Enum.sort_by(&{not String.contains?(String.downcase(&1.label), query), &1.label})
+  end
+
+  # Commands whose "commandPalette" menu entry has a `when` that is false
+  # (e.g. commands that need arguments from a view item).
+  defp hidden_from_palette(ctx) do
+    for %{command: id, when_ast: when_ast} <- CommandRegistry.menu("commandPalette"),
+        not Bee.Commands.When.eval(when_ast, ctx),
+        do: id
+  end
+
+  defp palette_choose(socket, %{id: id}) when is_binary(id),
+    do: socket |> change(&Workbench.close_palette/1) |> run_command(id)
+
+  defp palette_choose(%{assigns: %{palette: palette}} = socket, item) do
+    socket
+    |> change(&Workbench.close_palette/1)
+    |> run_command(palette.command, palette.arguments ++ [item.value])
   end
 
   # Every query character appears in order ("tgpan" matches "Toggle Panel").
@@ -562,6 +849,32 @@ defmodule BeeWeb.EditorLive do
 
   defp problems(assigns),
     do: assigns.settings_errors ++ assigns.keybinding_errors ++ assigns.plugin_errors
+
+  ## Status bar
+
+  attr :item, :map, required: true
+
+  # A plugin's status bar item (Bee.UI).
+  defp status_item(assigns) do
+    ~H"""
+    <button
+      id={"status-item-#{@item.owner}-#{@item.id}"}
+      type="button"
+      class={[
+        "flex items-center gap-1 px-1 rounded shrink-0",
+        @item.command && "cursor-pointer hover:bg-primary-content/15"
+      ]}
+      title={@item.tooltip}
+      disabled={!@item.command}
+      phx-click={@item.command && "run_command"}
+      phx-value-command={@item.command}
+      phx-value-args={@item.command && Jason.encode!(@item.arguments)}
+    >
+      <BeeWeb.Icons.named_icon :if={@item.icon} name={@item.icon} class="size-3.5" />
+      <span>{@item.text}</span>
+    </button>
+    """
+  end
 
   ## Paths
 

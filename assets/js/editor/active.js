@@ -11,3 +11,7 @@ export const setEditor = hook => {
 }
 
 export const getEditor = () => editor
+
+// Context keys the editor knows first (see CodeEditor.contextKeys), fresher
+// than the server's copy.
+export const editorContext = () => editor?.contextKeys() ?? {}
