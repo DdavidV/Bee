@@ -1,0 +1,32 @@
+{
+  "$schema": "../../../priv/schemas/manifest.schema.json",
+  "name": "word-count",
+  "displayName": "Word Count",
+  "description": "Counts the words of the active file or selection. Example plugin in Elixir.",
+  "version": "0.1.0",
+  "server": {"module": "WordCount"},
+  "contributes": {
+    "commands": [
+      {
+        "command": "wordCount.count",
+        "category": "Word Count",
+        "title": "Count Words",
+        "runtime": "server",
+        "enablement": "activeEditor"
+      }
+    ],
+    "keybindings": [
+      {"key": "ctrl+alt+w", "command": "wordCount.count", "when": "editorTextFocus"}
+    ],
+    "configuration": {
+      "title": "Word Count",
+      "properties": {
+        "wordCount.countNumbers": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether numbers count as words."
+        }
+      }
+    }
+  }
+}

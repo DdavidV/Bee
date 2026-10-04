@@ -1,5 +1,5 @@
 {
-  "$schema": "../schemas/contributions.schema.json",
+  "$schema": "../schemas/manifest.schema.json",
   "name": "bee",
   "description": "Bee's own commands, default keybindings and menus. Plugins contribute in the same format. Command ids follow VS Code. Close Editor has no default key: browsers don't let pages intercept Ctrl+W.",
   "contributes": {
@@ -29,6 +29,20 @@
         "title": "Toggle Primary Side Bar Visibility",
         "runtime": "server",
         "toggled": "sideBarVisible"
+      },
+      {
+        "command": "workbench.view.explorer",
+        "category": "View",
+        "title": "Show Explorer",
+        "runtime": "server",
+        "toggled": "activeViewlet == 'workbench.view.explorer'"
+      },
+      {
+        "command": "workbench.view.extensions",
+        "category": "View",
+        "title": "Show Plugins",
+        "runtime": "server",
+        "toggled": "activeViewlet == 'workbench.view.extensions'"
       },
       {
         "command": "workbench.action.togglePanel",
@@ -67,6 +81,12 @@
         "category": "Preferences",
         "title": "Open Keyboard Shortcuts (JSON)",
         "runtime": "server"
+      },
+      {
+        "command": "bee.plugins.reload",
+        "category": "Developer",
+        "title": "Reload Plugins",
+        "runtime": "server"
       }
     ],
 
@@ -76,6 +96,8 @@
       {"key": "ctrl+s", "mac": "cmd+s", "command": "workbench.action.files.save"},
       {"key": "ctrl+b", "mac": "cmd+b", "command": "workbench.action.toggleSidebarVisibility"},
       {"key": "ctrl+j", "mac": "cmd+j", "command": "workbench.action.togglePanel"},
+      {"key": "ctrl+shift+e", "mac": "cmd+shift+e", "command": "workbench.view.explorer"},
+      {"key": "ctrl+shift+x", "mac": "cmd+shift+x", "command": "workbench.view.extensions"},
       {"key": "ctrl+,", "mac": "cmd+,", "command": "workbench.action.openSettingsJson"},
       {"key": "ctrl+k ctrl+s", "mac": "cmd+k cmd+s", "command": "workbench.action.openGlobalKeybindingsFile"}
     ],
@@ -96,8 +118,10 @@
       ],
       "menubar/view": [
         {"command": "workbench.action.showCommands", "group": "1_commands@1"},
-        {"command": "workbench.action.toggleSidebarVisibility", "group": "2_layout@1"},
-        {"command": "workbench.action.togglePanel", "group": "2_layout@2"}
+        {"command": "workbench.view.explorer", "group": "2_views@1"},
+        {"command": "workbench.view.extensions", "group": "2_views@2"},
+        {"command": "workbench.action.toggleSidebarVisibility", "group": "3_layout@1"},
+        {"command": "workbench.action.togglePanel", "group": "3_layout@2"}
       ],
       "menubar/terminal": [
         {"command": "workbench.action.terminal.new", "group": "1_terminal@1"},

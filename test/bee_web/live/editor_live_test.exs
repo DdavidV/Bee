@@ -108,11 +108,12 @@ defmodule BeeWeb.EditorLiveTest do
       assert_push_event(view, "cm:open", %{
         path: ^path,
         text: "defmodule M do\nend\n",
-        lang: "elixir"
+        lang: "elixir",
+        mode: "elixir"
       })
 
       assert has_element?(view, "#tabs [phx-value-path='#{path}']", "mix.exs")
-      assert has_element?(view, "#status-lang", "elixir")
+      assert has_element?(view, "#status-lang", "Elixir")
     end
 
     test "opening an open file activates its tab instead", %{view: view, path: path} do
@@ -188,7 +189,7 @@ defmodule BeeWeb.EditorLiveTest do
       {:ok, view, _html} = live(conn, ~p"/")
       assert has_element?(view, "#sidebar:not(.hidden)")
 
-      view |> element("#toggle-sidebar") |> render_click()
+      view |> element("#view-explorer") |> render_click()
       assert has_element?(view, "#sidebar.hidden")
 
       # the keybinding pushes the same event
@@ -469,7 +470,7 @@ defmodule BeeWeb.EditorLiveTest do
 
       put_user_settings(%{"editor.fontSize" => "big"})
       _ = render(view)
-      assert has_element?(view, "#problems", "1 problem in settings")
+      assert has_element?(view, "#problems", "1 problem")
 
       view |> element("#problems") |> render_click()
       path = Bee.Settings.user_path()
@@ -485,7 +486,7 @@ defmodule BeeWeb.EditorLiveTest do
       run(view, "workbench.action.openSettingsJson")
 
       path = Bee.Settings.user_path()
-      assert_push_event(view, "cm:open", %{path: ^path, text: text, lang: "json"})
+      assert_push_event(view, "cm:open", %{path: ^path, text: text, lang: "jsonc", mode: "json"})
       assert text =~ "editor.fontSize"
       assert view |> element("#window-title") |> render() =~ "settings.json"
 
@@ -726,6 +727,138 @@ defmodule BeeWeb.EditorLiveTest do
                view,
                "#menu-file [data-command='workbench.action.closeActiveEditor'][disabled]"
              )
+    end
+  end
+
+  describe "plugins" do
+    @examples Path.expand("../../../examples/plugins", __DIR__)
+
+    setup do
+      File.rm_rf!(Bee.Plugins.user_dir())
+      File.mkdir_p!(Bee.Plugins.user_dir())
+      Bee.Plugins.reload()
+
+      on_exit(fn ->
+        File.rm_rf!(Bee.Plugins.user_dir())
+        Bee.Plugins.reload()
+      end)
+    end
+
+    defp install(examples) do
+      for example <- examples,
+          do:
+            File.cp_r!(Path.join(@examples, example), Path.join(Bee.Plugins.user_dir(), example))
+
+      Bee.Plugins.reload()
+    end
+
+    # Plugins answer asynchronously (Bee.API messages to the LiveView).
+    defp eventually(fun, tries \\ 60) do
+      if fun.() do
+        :ok
+      else
+        if tries == 0, do: flunk("condition not met")
+        Process.sleep(50)
+        eventually(fun, tries - 1)
+      end
+    end
+
+    test "the Plugins view lists installed plugins and their problems", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      view |> element("#view-extensions") |> render_click()
+      assert has_element?(view, "#plugins-view", "No plugins installed")
+      assert has_element?(view, "#sidebar > div.hidden #explorer")
+
+      install(["word-count"])
+      File.mkdir_p!(Path.join(Bee.Plugins.user_dir(), "broken"))
+      File.write!(Path.join(Bee.Plugins.user_dir(), "broken/plugin.json"), "{nope")
+      Bee.Plugins.reload()
+
+      assert has_element?(view, "#plugin-word-count", "Word Count")
+      assert has_element?(view, "#plugin-word-count", "installed")
+      assert has_element?(view, "#plugin-broken", "invalid")
+      assert has_element?(view, "#problems", "1 problem")
+
+      # the same button hides the sidebar again
+      view |> element("#view-extensions") |> render_click()
+      assert has_element?(view, "#sidebar.hidden")
+    end
+
+    test "plugin commands are in the palette and answer through Bee.API", %{conn: conn} do
+      install(["word-count"])
+      {:ok, view, _html} = live(conn, ~p"/")
+      open_file(view, "README.md")
+
+      run(view, "workbench.action.showCommands")
+      view |> form("#palette-form", %{query: "count words"}) |> render_change()
+      assert has_element?(view, "#palette-items", "Word Count: Count Words")
+      view |> form("#palette-form") |> render_submit()
+
+      eventually(fn -> render(view) =~ "1 word in README.md" end)
+      assert Bee.Plugins.get("word-count").status == :active
+    end
+
+    test "a server plugin edits the open file; the edit is pushed to the editor", %{conn: conn} do
+      install(["upcase"])
+      {:ok, view, _html} = live(conn, ~p"/")
+      open_file(view, "mix.exs")
+      path = Path.join(Bee.Workspace.root(), "mix.exs")
+
+      # "defmodule M do\nend\n": select "defmodule"
+      render_hook(view, "selection_changed", %{"path" => path, "ranges" => [[0, 9]]})
+      run(view, "upcase.selection")
+
+      assert_push_event(
+        view,
+        "cm:edit",
+        %{path: ^path, edits: [[0, 9, "DEFMODULE"]], text: text},
+        3_000
+      )
+
+      assert text == "DEFMODULE M do\nend\n"
+      # the editor then reports the change as usual
+      render_hook(view, "doc_changed", %{"path" => path, "text" => text})
+      assert has_element?(view, "#tabs button[data-confirm]")
+    end
+
+    test "browser parts are handed to the page; their messages are shown", %{conn: conn} do
+      install(["insert-date", "word-count"])
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert [%{"name" => "insert-date", "url" => "/plugins/insert-date/browser.js?v=" <> _}] =
+               json_data(view, "#browser-plugins", "data-plugins")
+
+      render_hook(view, "plugin_message", %{
+        "plugin" => "insert-date",
+        "level" => "error",
+        "text" => "oops"
+      })
+
+      assert has_element?(view, "#flash-error", "insert-date: oops")
+    end
+
+    test "open editors switch language when a plugin contributes it", %{conn: conn} do
+      File.write!(Path.join(Bee.Workspace.root(), ".env"), "A=1\n")
+      {:ok, view, _html} = live(conn, ~p"/")
+      render_click(view, "open_problem", %{"path" => Path.join(Bee.Workspace.root(), ".env")})
+      assert_push_event(view, "cm:open", %{lang: "plaintext", mode: nil})
+
+      install(["dotenv"])
+      _ = render(view)
+      assert_push_event(view, "cm:language", %{lang: "dotenv", mode: "dotenv"})
+      assert has_element?(view, "#status-lang", "Dotenv")
+    end
+
+    test "the asset route serves a plugin's browser module only", %{conn: conn} do
+      install(["insert-date"])
+
+      conn = get(conn, "/plugins/insert-date/browser.js")
+      assert response(conn, 200) =~ "export function activate"
+      assert get_resp_header(conn, "content-type") |> hd() =~ "javascript"
+
+      assert build_conn() |> get("/plugins/insert-date/plugin.json") |> response(404)
+      assert build_conn() |> get("/plugins/insert-date/../../settings.json") |> response(404)
+      assert build_conn() |> get("/plugins/nope/browser.js") |> response(404)
     end
   end
 

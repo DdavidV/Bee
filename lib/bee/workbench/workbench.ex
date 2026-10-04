@@ -14,6 +14,8 @@ defmodule Bee.Workbench do
     * `{:stop_terminal, id}` – stop it (`{:forget_terminal, id}` when it already exited)
     * `:panel_hidden` – the terminals' xterm views were unmounted
     * `{:exec_client, command}` – run a client-side command in the browser
+    * `{:run_plugin_command, command}` – run a plugin's server command
+    * `:reload_plugins`
     * `{:flash, kind, message}`
 
   Commands (`Bee.Workbench.Actions`) are built from these functions.
@@ -24,13 +26,14 @@ defmodule Bee.Workbench do
             active: nil,
             status: nil,
             sidebar_open: true,
+            sidebar_view: "explorer",
             panel_open: false,
             terminals: [],
             active_term: nil,
             open_menu: nil,
             palette: nil
 
-  @type tab :: %{path: String.t(), dirty: boolean()}
+  @type tab :: %{path: String.t(), dirty: boolean(), lang: String.t()}
   @type terminal :: %{id: integer(), name: String.t()}
   @type effect :: tuple() | atom()
   @type t :: %__MODULE__{}
@@ -40,6 +43,7 @@ defmodule Bee.Workbench do
     :active,
     :status,
     :sidebar_open,
+    :sidebar_view,
     :panel_open,
     :terminals,
     :active_term,
@@ -72,10 +76,12 @@ defmodule Bee.Workbench do
     if open?(wb, path), do: activate_editor(wb, path), else: {wb, [{:open_file, path}]}
   end
 
-  @doc "Called once the buffer for `path` is open."
-  def editor_opened(wb, path, dirty) do
-    %{wb | tabs: wb.tabs ++ [%{path: path, dirty: dirty}], active: path}
+  @doc "Called once the buffer for `path` is open; `lang` is its language id."
+  def editor_opened(wb, path, dirty, lang) do
+    %{wb | tabs: wb.tabs ++ [%{path: path, dirty: dirty, lang: lang}], active: path}
   end
+
+  def language(wb, path), do: Enum.find_value(wb.tabs, &(&1.path == path && &1.lang))
 
   def activate_editor(wb, path) do
     if open?(wb, path) do
@@ -109,13 +115,26 @@ defmodule Bee.Workbench do
     end
   end
 
-  def set_dirty(wb, path, dirty) do
-    %{wb | tabs: Enum.map(wb.tabs, &if(&1.path == path, do: %{&1 | dirty: dirty}, else: &1))}
+  def set_dirty(wb, path, dirty), do: update_tab(wb, path, &%{&1 | dirty: dirty})
+
+  def set_language(wb, path, lang), do: update_tab(wb, path, &%{&1 | lang: lang})
+
+  defp update_tab(wb, path, fun) do
+    %{wb | tabs: Enum.map(wb.tabs, &if(&1.path == path, do: fun.(&1), else: &1))}
   end
 
   ## Layout
 
   def toggle_sidebar(wb), do: %{wb | sidebar_open: not wb.sidebar_open}
+
+  @doc """
+  Shows sidebar view `view` ("explorer", "extensions" – the plugins); like clicking its
+  activity bar icon in VS Code, this hides the sidebar when it is already shown.
+  """
+  def show_view(%{sidebar_open: true, sidebar_view: view} = wb, view),
+    do: %{wb | sidebar_open: false}
+
+  def show_view(wb, view), do: %{wb | sidebar_open: true, sidebar_view: view}
 
   @doc """
   Closing the panel keeps the shells running (their views re-attach on
@@ -195,9 +214,10 @@ defmodule Bee.Workbench do
       "resourceFilename" => active && Path.basename(active),
       "resourceExtname" => active && Path.extname(active),
       "resourcePath" => active,
-      "editorLangId" => active && Bee.Editor.Lang.detect(active),
+      "editorLangId" => active && language(wb, active),
       "editorIsOpen" => wb.tabs != [],
       "sideBarVisible" => wb.sidebar_open,
+      "activeViewlet" => wb.sidebar_open && "workbench.view.#{wb.sidebar_view}",
       "panelVisible" => wb.panel_open,
       "terminalCount" => length(wb.terminals),
       "inQuickOpen" => wb.palette != nil,

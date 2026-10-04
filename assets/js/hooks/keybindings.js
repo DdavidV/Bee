@@ -83,6 +83,8 @@ export const Keybindings = {
     if (match) {
       this.stop(e)
       this.status("")
+      // The server should see the latest text and selection first.
+      window.dispatchEvent(new Event("bee:flush"))
       this.pushEvent("run_command", {command: match.command})
     } else if (wasChord) {
       this.stop(e)

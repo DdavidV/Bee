@@ -3,6 +3,7 @@ defmodule Bee.Commands.RegistryTest do
   use ExUnit.Case, async: false
 
   alias Bee.Commands.Registry, as: CommandRegistry
+  alias Bee.Contributions
   alias Bee.Workbench
 
   defmodule PluginActions do
@@ -16,7 +17,7 @@ defmodule Bee.Commands.RegistryTest do
 
   @hello %{"command" => "plugin.hello", "title" => "Hello", "runtime" => "server"}
 
-  describe "the built-in manifest (priv/contributions/bee.json)" do
+  describe "Bee's own manifest (priv/contributions/bee.json)" do
     test "is loaded with handlers for every server command" do
       for command <- CommandRegistry.commands() do
         case command.runtime do
@@ -51,16 +52,16 @@ defmodule Bee.Commands.RegistryTest do
     end
   end
 
-  describe "register/3" do
+  describe "contributing (Bee.Contributions.register/3)" do
     setup do
-      on_exit(fn -> CommandRegistry.unregister(:test_plugin) end)
+      on_exit(fn -> Contributions.unregister(:test_plugin) end)
     end
 
     test "adds commands, keybindings and menu items; unregister removes them" do
-      CommandRegistry.subscribe()
+      Contributions.subscribe()
 
       :ok =
-        CommandRegistry.register(
+        Contributions.register(
           :test_plugin,
           manifest(%{
             "commands" => [@hello],
@@ -69,10 +70,10 @@ defmodule Bee.Commands.RegistryTest do
               "menubar/file" => [%{"command" => "plugin.hello", "group" => "1_save@3"}]
             }
           }),
-          [PluginActions]
+          handlers: [PluginActions]
         )
 
-      assert_receive :commands_changed
+      assert_receive {:contributions_changed, [:commands]}
       assert %{handler: {PluginActions, :hello}} = CommandRegistry.command("plugin.hello")
 
       assert Enum.any?(
@@ -85,60 +86,112 @@ defmodule Bee.Commands.RegistryTest do
       assert Enum.at(file.items, 2).command == "plugin.hello"
       assert Enum.at(file.items, 3) == :separator
 
-      CommandRegistry.unregister(:test_plugin)
+      Contributions.unregister(:test_plugin)
+      assert_receive {:contributions_changed, [:commands]}
       assert CommandRegistry.command("plugin.hello") == nil
     end
 
     test "rejects manifests that don't match the schema" do
-      assert_raise ArgumentError, ~r/invalid contributions manifest.*runtime/, fn ->
-        CommandRegistry.register(
-          :test_plugin,
-          manifest(%{"commands" => [Map.delete(@hello, "runtime")]})
-        )
-      end
+      assert {:error, message} =
+               Contributions.register(
+                 :test_plugin,
+                 manifest(%{"commands" => [Map.delete(@hello, "runtime")]})
+               )
 
-      assert_raise ArgumentError, ~r/invalid contributions manifest/, fn ->
-        CommandRegistry.register(:test_plugin, manifest(%{"comands" => []}))
-      end
+      assert message =~ ~r/invalid manifest.*runtime/
+
+      assert {:error, "invalid manifest" <> _} =
+               Contributions.register(:test_plugin, manifest(%{"comands" => []}))
     end
 
     test "server commands need exactly one handler, and handlers a declared command" do
-      assert_raise ArgumentError, ~r/has no `use Bee.Commands.Command` handler/, fn ->
-        CommandRegistry.register(:test_plugin, manifest(%{"commands" => [@hello]}), [])
-      end
+      assert {:error, message} =
+               Contributions.register(:test_plugin, manifest(%{"commands" => [@hello]}))
 
-      assert_raise ArgumentError, ~r/undeclared command "plugin.hello"/, fn ->
-        CommandRegistry.register(:test_plugin, manifest(%{"commands" => []}), [PluginActions])
-      end
+      assert message =~ "has no `use Bee.Commands.Command` handler"
 
-      assert_raise ArgumentError, ~r/must not have a server handler/, fn ->
-        CommandRegistry.register(
-          :test_plugin,
-          manifest(%{"commands" => [%{@hello | "runtime" => "client"}]}),
-          [PluginActions]
-        )
-      end
+      assert {:error, message} =
+               Contributions.register(:test_plugin, manifest(%{"commands" => []}),
+                 handlers: [PluginActions]
+               )
+
+      assert message =~ ~s(undeclared command "plugin.hello")
+
+      assert {:error, message} =
+               Contributions.register(
+                 :test_plugin,
+                 manifest(%{"commands" => [%{@hello | "runtime" => "client"}]}),
+                 handlers: [PluginActions]
+               )
+
+      assert message =~ "must not have a server handler"
+    end
+
+    test "plugin commands are handled by the plugin, and need the matching part" do
+      source = {:plugin, "test-plugin"}
+      on_exit(fn -> Contributions.unregister(source) end)
+
+      assert {:error, message} =
+               Contributions.register(source, manifest(%{"commands" => [@hello]}))
+
+      assert message =~ ~s(needs a "server" part)
+
+      server = %{"module" => "TestPlugin"}
+
+      assert :ok =
+               Contributions.register(
+                 source,
+                 Map.put(manifest(%{"commands" => [@hello]}), "server", server)
+               )
+
+      assert %{handler: {:plugin, "test-plugin"}, source: ^source} =
+               CommandRegistry.command("plugin.hello")
+
+      client = %{@hello | "command" => "plugin.client", "runtime" => "client"}
+
+      assert {:error, message} =
+               Contributions.register(
+                 source,
+                 Map.put(manifest(%{"commands" => [client]}), "server", server)
+               )
+
+      assert message =~ ~s(needs a "browser" part)
+    end
+
+    test "command ids are unique across sources" do
+      taken = %{@hello | "command" => "workbench.action.togglePanel"}
+
+      assert {:error, message} =
+               Contributions.register(
+                 {:plugin, "thief"},
+                 Map.put(manifest(%{"commands" => [taken]}), "server", %{"module" => "X"})
+               )
+
+      assert message =~ ~s(command "workbench.action.togglePanel" is already defined)
+      refute {:plugin, "thief"} in Contributions.sources()
     end
 
     test "rejects invalid keys and when clauses" do
-      assert_raise ArgumentError, ~r/invalid key/, fn ->
-        CommandRegistry.register(
-          :test_plugin,
-          manifest(%{
-            "commands" => [@hello],
-            "keybindings" => [%{"key" => "ctrl+nope", "command" => "plugin.hello"}]
-          }),
-          [PluginActions]
-        )
-      end
+      assert {:error, message} =
+               Contributions.register(
+                 :test_plugin,
+                 manifest(%{
+                   "commands" => [@hello],
+                   "keybindings" => [%{"key" => "ctrl+nope", "command" => "plugin.hello"}]
+                 }),
+                 handlers: [PluginActions]
+               )
 
-      assert_raise ArgumentError, ~r/unexpected end/, fn ->
-        CommandRegistry.register(
-          :test_plugin,
-          manifest(%{"commands" => [Map.put(@hello, "enablement", "a &&")]}),
-          [PluginActions]
-        )
-      end
+      assert message =~ "invalid key"
+
+      assert {:error, message} =
+               Contributions.register(
+                 :test_plugin,
+                 manifest(%{"commands" => [Map.put(@hello, "enablement", "a &&")]}),
+                 handlers: [PluginActions]
+               )
+
+      assert message =~ "unexpected end"
     end
   end
 end

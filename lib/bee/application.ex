@@ -10,12 +10,13 @@ defmodule Bee.Application do
       {DNSCluster, query: Application.get_env(:bee, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Bee.PubSub},
       {Registry, keys: :unique, name: Bee.Registry},
+      Bee.Contributions,
       Bee.Settings,
-      Bee.Commands.Registry,
       Bee.Commands.Keybindings,
       Bee.Workspace,
       {DynamicSupervisor, name: Bee.BufferSup, strategy: :one_for_one},
       {DynamicSupervisor, name: Bee.TerminalSup, strategy: :one_for_one},
+      Bee.Plugins.Supervisor,
       BeeWeb.Endpoint
     ]
 

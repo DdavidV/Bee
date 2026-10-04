@@ -4,10 +4,11 @@ defmodule Bee.Settings do
   file (`<config_dir>/settings.json`), overridden by the workspace file
   (`<root>/.bee/settings.json`). Both files are JSONC.
 
-  Each value is validated against the JSON Schema in
-  `priv/schemas/settings.schema.json` (see `Bee.JSON.Schema`); an invalid value falls back to
-  the next layer down and is reported in `errors/0`. Unknown keys are kept
-  (plugins may define them later).
+  Each value is validated against its JSON Schema: Bee's own settings are in
+  `priv/schemas/settings.schema.json` (see `Bee.JSON.Schema`), plugins
+  contribute theirs (`Bee.Settings.Configuration`). An invalid value falls
+  back to the next layer down and is reported in `errors/0`. Unknown keys
+  are kept (a plugin defining them may not be loaded).
 
   The merged map lives in `:persistent_term`, so reads never go through the
   GenServer. Every reload broadcasts `{:settings_changed, settings, errors}`
@@ -24,10 +25,18 @@ defmodule Bee.Settings do
   @schema "settings"
 
   @doc """
-  The known settings: the `properties` of `priv/schemas/settings.schema.json`
-  (JSON Schema, draft 7), keyed by setting name.
+  The known settings, keyed by name: the `properties` of
+  `priv/schemas/settings.schema.json` (JSON Schema, draft 7) and those
+  contributed by plugins.
   """
-  def schema, do: Bee.JSON.Schema.raw!(@schema)["properties"]
+  def schema do
+    Enum.reduce(Bee.Settings.Configuration.contributed(), builtin_schema(), fn c, acc ->
+      Map.merge(acc, c.properties)
+    end)
+  end
+
+  @doc "Bee's own settings (`priv/schemas/settings.schema.json`)."
+  def builtin_schema, do: Bee.JSON.Schema.raw!(@schema)["properties"]
 
   @doc "Default values from the schema, plus defaults that depend on the environment."
   def defaults do
@@ -47,12 +56,25 @@ defmodule Bee.Settings do
 
   def subscribe, do: Phoenix.PubSub.subscribe(Bee.PubSub, @topic)
 
-  def all, do: elem(:persistent_term.get(@key, {defaults(), []}), 0)
+  def all, do: elem(state(), 0)
 
   @spec errors() :: [error]
-  def errors, do: elem(:persistent_term.get(@key, {defaults(), []}), 1)
+  def errors, do: elem(state(), 1)
 
   def get(key), do: Map.get(all(), key, defaults()[key])
+
+  @doc """
+  A setting from the defaults and the user file only. For settings a
+  workspace must not be able to change, like `plugins.workspace.enabled`.
+  """
+  def get_user(key), do: Map.get(elem(state(), 2), key, defaults()[key])
+
+  defp state do
+    case :persistent_term.get(@key, nil) do
+      nil -> {defaults(), [], defaults()}
+      state -> state
+    end
+  end
 
   @doc "Globs from `files.exclude` that are switched on, compiled."
   def excluded_globs do
@@ -107,13 +129,17 @@ defmodule Bee.Settings do
   bad value only affects that key. Keys the schema doesn't know are accepted.
   """
   def validate(key, value) do
-    if Map.has_key?(schema(), key) do
-      case Bee.JSON.Schema.validate(@schema, Bee.JSON.Schema.property_ref(key), value) do
-        :ok -> :ok
-        {:error, messages} -> {:error, Enum.join(messages, "; ")}
-      end
+    owner =
+      if Map.has_key?(builtin_schema(), key),
+        do: @schema,
+        else: Bee.Settings.Configuration.root_for(key)
+
+    with schema when schema != nil <- owner,
+         {:error, messages} <-
+           Bee.JSON.Schema.validate(schema, Bee.JSON.Schema.property_ref(key), value) do
+      {:error, Enum.join(messages, "; ")}
     else
-      :ok
+      _ -> :ok
     end
   end
 
@@ -123,6 +149,7 @@ defmodule Bee.Settings do
   def init(_opts) do
     File.mkdir_p(user_dir())
     Phoenix.PubSub.subscribe(Bee.PubSub, "fs")
+    Bee.Contributions.subscribe()
     load(false)
     {:ok, nil}
   end
@@ -139,16 +166,31 @@ defmodule Bee.Settings do
     {:noreply, state}
   end
 
+  # Plugin settings appeared or went away: re-validate, new defaults.
+  def handle_info({:contributions_changed, keys}, state) do
+    if :configuration in keys, do: load(true)
+    {:noreply, state}
+  end
+
   defp load(broadcast?) do
-    {settings, errors} =
-      Enum.reduce(paths(), {defaults(), []}, fn path, {settings, errors} ->
+    {layers, errors} =
+      Enum.map_reduce(paths(), [], fn path, errors ->
         case read(path) do
-          {:ok, overrides} -> apply_overrides(settings, errors, path, overrides)
-          {:error, message} -> {settings, errors ++ [%{path: path, message: message}]}
+          {:ok, overrides} -> {overrides, errors}
+          {:error, message} -> {%{}, errors ++ [%{path: path, message: message}]}
         end
       end)
 
-    :persistent_term.put(@key, {settings, errors})
+    {[user, settings], errors} =
+      paths()
+      |> Enum.zip(layers)
+      |> Enum.map_reduce({defaults(), errors}, fn {path, overrides}, {settings, errors} ->
+        {settings, errors} = apply_overrides(settings, errors, path, overrides)
+        {settings, {settings, errors}}
+      end)
+      |> then(fn {merged, {_, errors}} -> {merged, errors} end)
+
+    :persistent_term.put(@key, {settings, errors, user})
 
     for %{path: path, message: message} <- errors,
         do: Logger.warning("Bee: #{path}: #{message}")

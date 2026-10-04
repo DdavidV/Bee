@@ -50,6 +50,24 @@
       },
       "description": "Glob patterns (relative to the workspace) hidden from the explorer. Merged with the defaults; set a pattern to false to show it again."
     },
+    "files.associations": {
+      "type": "object",
+      "additionalProperties": {"type": "string", "minLength": 1},
+      "default": {},
+      "description": "Glob pattern to language id, e.g. {\"*.conf\": \"shellscript\"}. Patterns containing a slash match the workspace-relative path, others the file name. Wins over what languages contribute."
+    },
+    "plugins.disabled": {
+      "type": "array",
+      "items": {"type": "string"},
+      "uniqueItems": true,
+      "default": [],
+      "description": "Names of installed plugins not to load."
+    },
+    "plugins.workspace.enabled": {
+      "type": "boolean",
+      "default": false,
+      "description": "Load plugins from the workspace's .bee/plugins folder. Off by default: plugins run with your permissions, so only enable this for folders you trust. Only takes effect in user settings."
+    },
     "terminal.integrated.shell": {
       "type": "string",
       "minLength": 1,

@@ -7,8 +7,13 @@ defmodule Bee.WorkbenchTest do
 
   defp wb, do: Workbench.new(@root)
 
-  defp with_editors(paths),
-    do: Enum.reduce(paths, wb(), &Workbench.editor_opened(&2, Path.join(@root, &1), false))
+  defp with_editors(paths) do
+    Enum.reduce(paths, wb(), fn rel, wb ->
+      path = Path.join(@root, rel)
+      lang = Bee.Languages.detect(path, root: @root, associations: %{})
+      Workbench.editor_opened(wb, path, false, lang)
+    end)
+  end
 
   describe "editors" do
     test "opening a closed file asks for it; opening an open one activates it" do
@@ -109,9 +114,23 @@ defmodule Bee.WorkbenchTest do
              "editorLangId" => "elixir",
              "editorIsOpen" => true,
              "panelVisible" => true,
+             "activeViewlet" => "workbench.view.explorer",
              "terminalCount" => 1,
              "inQuickOpen" => false,
              "config.editor.fontSize" => 14
            } = Workbench.context(wb, %{"editor.fontSize" => 14})
+  end
+
+  describe "sidebar views" do
+    test "show_view opens a view, or hides the sidebar when it is already shown" do
+      wb = wb()
+
+      assert %{sidebar_open: true, sidebar_view: "extensions"} =
+               wb = Workbench.show_view(wb, "extensions")
+
+      assert %{sidebar_open: false} = wb = Workbench.show_view(wb, "extensions")
+      assert %{sidebar_open: true, sidebar_view: "explorer"} = Workbench.show_view(wb, "explorer")
+      assert Workbench.context(Workbench.toggle_sidebar(wb()))["activeViewlet"] == false
+    end
   end
 end

@@ -14,13 +14,17 @@ defmodule Bee.Commands.Command do
   (title, keys, menus) lives in a contributions manifest; `Bee.Commands.Registry`
   joins the two.
 
+  Plugins (`use Bee.Plugin`) use the same annotation with `arity: 2`: their
+  handlers take a context and the plugin's state (see `Bee.Plugin`).
+
   The id → function table is built at compile time and exposed as
   `__commands__/0`. Duplicate ids, wrong arity and a dangling `@command`
   are compile errors.
   """
 
-  defmacro __using__(_opts) do
+  defmacro __using__(opts) do
     quote do
+      @bee_command_arity unquote(Keyword.get(opts, :arity, 1))
       Module.register_attribute(__MODULE__, :command, accumulate: false)
       Module.register_attribute(__MODULE__, :bee_commands, accumulate: true)
       @on_definition Bee.Commands.Command
@@ -41,10 +45,10 @@ defmodule Bee.Commands.Command do
           kind != :def ->
             compile_error!(env, "@command #{inspect(id)} must be on a public function (def)")
 
-          length(args) != 1 ->
+          length(args) != (arity = Module.get_attribute(env.module, :bee_command_arity)) ->
             compile_error!(
               env,
-              "@command #{inspect(id)}: #{name} must take exactly one argument (the workbench)"
+              "@command #{inspect(id)}: #{name} must take #{arity} argument(s)"
             )
 
           Enum.any?(Module.get_attribute(env.module, :bee_commands), &(elem(&1, 0) == id)) ->

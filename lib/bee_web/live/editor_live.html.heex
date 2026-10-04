@@ -27,13 +27,26 @@
   <%!-- Activity bar: sidebar views only (the terminal lives in the title bar / View menu) --%>
   <aside class="bg-base-300 flex flex-col items-center gap-1 py-2">
     <button
-      id="toggle-sidebar"
-      class={["btn btn-ghost btn-square btn-sm", @sidebar_open && "btn-active"]}
-      title="Explorer"
+      :for={
+        {view, title, icon} <- [
+          {"explorer", "Explorer", "hero-document-duplicate"},
+          {"extensions", "Plugins", "hero-puzzle-piece"}
+        ]
+      }
+      id={"view-#{view}"}
+      class={[
+        "btn btn-ghost btn-square btn-sm",
+        @sidebar_open && @sidebar_view == view && "btn-active"
+      ]}
+      title={
+        [title, Bee.Commands.Keybindings.label("workbench.view.#{view}", @keybindings)]
+        |> Enum.filter(& &1)
+        |> Enum.join(" ")
+      }
       phx-click="run_command"
-      phx-value-command="workbench.action.toggleSidebarVisibility"
+      phx-value-command={"workbench.view.#{view}"}
     >
-      <.icon name="hero-document-duplicate" class="size-5" />
+      <.icon name={icon} class="size-5" />
     </button>
   </aside>
 
@@ -41,11 +54,19 @@
     id="sidebar"
     class={["bg-base-200 overflow-auto border-r border-base-300", !@sidebar_open && "hidden"]}
   >
-    <.live_component
-      module={BeeWeb.Workbench.FileTree}
-      id="explorer"
-      root={@root}
-      active={@active && Bee.Workspace.FS.relative(@root, @active)}
+    <%!-- The explorer stays mounted (keeps expanded folders) when another view shows. --%>
+    <div class={@sidebar_view != "explorer" && "hidden"}>
+      <.live_component
+        module={BeeWeb.Workbench.FileTree}
+        id="explorer"
+        root={@root}
+        active={@active && Bee.Workspace.FS.relative(@root, @active)}
+      />
+    </div>
+    <BeeWeb.Workbench.PluginsView.plugins_view
+      :if={@sidebar_view == "extensions"}
+      plugins={@plugins}
+      user_dir={Bee.Plugins.user_dir()}
     />
   </aside>
 
@@ -196,14 +217,29 @@
       phx-value-path={hd(problems).path}
     >
       <.icon name="hero-exclamation-triangle-micro" class="size-3.5" />
-      {length(problems)} {if length(problems) == 1, do: "problem", else: "problems"} in settings
+      {length(problems)} {if length(problems) == 1, do: "problem", else: "problems"}
     </button>
     <div class="flex-1" />
     <%!-- Filled in by the Keybindings hook while a chord is pending --%>
     <span id="keybinding-status" phx-update="ignore"></span>
     <span :if={@status} id="status" class="truncate">{@status}</span>
-    <span :if={@active} id="status-lang">{Bee.Editor.Lang.detect(@active)}</span>
+    <span
+      :if={lang = @active && Bee.Workbench.language(%Bee.Workbench{tabs: @tabs}, @active)}
+      id="status-lang"
+    >
+      {Bee.Languages.name(lang)}
+    </span>
   </footer>
+
+  <%!-- Browser parts of plugins, loaded by the Plugins hook --%>
+  <div
+    id="browser-plugins"
+    phx-hook="Plugins"
+    phx-update="ignore"
+    data-plugins={Jason.encode!(@browser_plugins)}
+    class="hidden"
+  >
+  </div>
 
   <Layouts.flash_group flash={@flash} />
 </div>

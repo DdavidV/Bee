@@ -1,0 +1,22 @@
+{
+  "$schema": "../../../priv/schemas/manifest.schema.json",
+  "name": "upcase",
+  "displayName": "Upcase",
+  "description": "Turns the selected text into upper case. Example plugin in Erlang.",
+  "version": "0.1.0",
+  "server": {"module": "bee_upcase"},
+  "contributes": {
+    "commands": [
+      {
+        "command": "upcase.selection",
+        "category": "Upcase",
+        "title": "Transform to Uppercase",
+        "runtime": "server",
+        "enablement": "activeEditor"
+      }
+    ],
+    "keybindings": [
+      {"key": "ctrl+alt+u", "command": "upcase.selection", "when": "editorTextFocus"}
+    ]
+  }
+}

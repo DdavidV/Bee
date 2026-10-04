@@ -29,12 +29,13 @@ import {CodeEditor} from "./hooks/code_editor"
 import {Keybindings} from "./hooks/keybindings"
 import {Terminal} from "./hooks/terminal"
 import {Palette} from "./hooks/palette"
+import {Plugins} from "./hooks/plugins"
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, CodeEditor, Keybindings, Palette, Terminal},
+  hooks: {...colocatedHooks, CodeEditor, Keybindings, Palette, Plugins, Terminal},
 })
 
 // Show progress bar on live navigation and form submits

@@ -9,8 +9,10 @@ defmodule BeeWeb.EditorLive do
   events).
 
   Every user action (menus, palette, keybindings, buttons) goes through
-  `run_command` with a `Bee.Commands.Registry` id: server commands run their
-  `use Bee.Commands.Command` handler, client ones are sent to the browser as
+  `run_command` with a `Bee.Commands.Registry` id: Bee's server commands run
+  their `use Bee.Commands.Command` handler here, plugin server commands are
+  handed to `Bee.Plugins` (the plugin answers with `{:bee_api, request}`
+  messages, see `Bee.API`), client ones are sent to the browser as
   `bee:exec`. The `when` context (`Bee.Workbench.context/2`) is evaluated
   here for menus and the palette, and sent to the browser (`data-context`)
   for keybindings.
@@ -22,7 +24,7 @@ defmodule BeeWeb.EditorLive do
   """
   use BeeWeb, :live_view
 
-  alias Bee.{Settings, Terminal, Workbench, Workspace}
+  alias Bee.{Languages, Plugins, Settings, Terminal, Workbench, Workspace}
   alias Bee.Commands.Registry, as: CommandRegistry
   alias Bee.Commands.Keybindings
   alias Bee.Editor.Buffer
@@ -35,15 +37,18 @@ defmodule BeeWeb.EditorLive do
       Settings.subscribe()
       Keybindings.subscribe()
       CommandRegistry.subscribe()
+      Plugins.subscribe()
+      Bee.API.subscribe_window()
     end
 
     {:ok,
      socket
-     |> assign(page_title: Path.basename(Workspace.root()), term_seq: %{})
+     |> assign(page_title: Path.basename(Workspace.root()), term_seq: %{}, selection: nil)
      |> put_workbench(Workbench.new(Workspace.root()))
      |> load_settings(Settings.all(), Settings.errors())
      |> load_keybindings(Keybindings.all(), Keybindings.errors())
-     |> assign(commands: CommandRegistry.commands(), menus: CommandRegistry.menus())}
+     |> load_commands()
+     |> load_plugins()}
   end
 
   ## Commands
@@ -136,6 +141,18 @@ defmodule BeeWeb.EditorLive do
   def handle_event("open_problem", %{"path" => path}, socket),
     do: {:noreply, change(socket, &Workbench.open_editor(&1, path))}
 
+  # bee.showMessage() of a browser plugin.
+  def handle_event("plugin_message", %{"plugin" => plugin, "text" => text} = params, socket) do
+    level = if params["level"] == "error", do: :error, else: :info
+    {:noreply, put_flash(socket, level, "#{plugin}: #{text}")}
+  end
+
+  # Selections of the active editor, UTF-8 byte offsets (for plugin commands).
+  def handle_event("selection_changed", %{"path" => path, "ranges" => ranges}, socket) do
+    ranges = for [from, to] <- ranges, is_integer(from), is_integer(to), do: {from, to}
+    {:noreply, assign(socket, selection: {path, ranges})}
+  end
+
   ## Terminal
 
   def handle_event("activate_terminal", %{"id" => id}, socket),
@@ -185,19 +202,40 @@ defmodule BeeWeb.EditorLive do
   end
 
   def handle_info({:settings_changed, settings, errors}, socket) do
-    if settings["files.exclude"] != socket.assigns.settings["files.exclude"],
+    old = socket.assigns.settings
+
+    if settings["files.exclude"] != old["files.exclude"],
       do: send_update(BeeWeb.Workbench.FileTree, id: "explorer", refresh: true)
 
-    {:noreply, load_settings(socket, settings, errors)}
+    socket = load_settings(socket, settings, errors)
+
+    if settings["files.associations"] != old["files.associations"],
+      do: {:noreply, redetect_languages(socket)},
+      else: {:noreply, socket}
   end
 
   def handle_info({:keybindings_changed, bindings, errors}, socket),
     do: {:noreply, load_keybindings(socket, bindings, errors)}
 
-  def handle_info(:commands_changed, socket),
-    do:
-      {:noreply,
-       assign(socket, commands: CommandRegistry.commands(), menus: CommandRegistry.menus())}
+  def handle_info({:contributions_changed, keys}, socket) do
+    socket = if :commands in keys, do: load_commands(socket), else: socket
+    socket = if :languages in keys, do: redetect_languages(socket), else: socket
+    {:noreply, socket}
+  end
+
+  def handle_info(:plugins_changed, socket), do: {:noreply, load_plugins(socket)}
+
+  # Requests from plugins (Bee.API).
+  def handle_info({:bee_api, request}, socket), do: {:noreply, plugin_request(socket, request)}
+
+  def handle_info({:buffer_edited, path, _version, edits, text}, socket) do
+    if Workbench.open?(workbench(socket), path) do
+      edits = for {from, to, insert} <- edits, do: [from, to, insert]
+      {:noreply, push_event(socket, "cm:edit", %{path: path, edits: edits, text: text})}
+    else
+      {:noreply, socket}
+    end
+  end
 
   def handle_info({:buffer_reloaded, path, text}, socket) do
     if Workbench.open?(workbench(socket), path) do
@@ -232,7 +270,8 @@ defmodule BeeWeb.EditorLive do
 
   ## Workbench state and effects
 
-  defp workbench(socket), do: struct(Workbench, Map.take(socket.assigns, Workbench.fields()))
+  defp workbench(socket), do: workbench_from(socket.assigns)
+  defp workbench_from(assigns), do: struct(Workbench, Map.take(assigns, Workbench.fields()))
 
   defp put_workbench(socket, wb),
     do: assign(socket, Map.take(Map.from_struct(wb), Workbench.fields()))
@@ -251,12 +290,15 @@ defmodule BeeWeb.EditorLive do
   defp run_effect({:open_file, path}, socket) do
     case Buffer.open(path) do
       {:ok, buffer} ->
+        lang = Languages.detect(path, first_line: Languages.first_line(buffer.text))
+
         socket
-        |> change(&Workbench.editor_opened(&1, path, Buffer.dirty?(buffer)))
+        |> change(&Workbench.editor_opened(&1, path, Buffer.dirty?(buffer), lang))
         |> push_event("cm:open", %{
           path: path,
           text: buffer.text,
-          lang: Bee.Editor.Lang.detect(path)
+          lang: lang,
+          mode: Languages.mode(lang)
         })
 
       {:error, reason} ->
@@ -301,6 +343,18 @@ defmodule BeeWeb.EditorLive do
   defp run_effect({:exec_client, command}, socket),
     do: push_event(socket, "bee:exec", %{command: command})
 
+  defp run_effect({:run_plugin_command, %{handler: {:plugin, name}, id: id}}, socket) do
+    case Plugins.execute(name, id, plugin_context(socket.assigns)) do
+      :ok -> socket
+      {:error, message} -> put_flash(socket, :error, message)
+    end
+  end
+
+  defp run_effect(:reload_plugins, socket) do
+    Plugins.reload()
+    socket |> load_plugins() |> put_flash(:info, "Plugins reloaded")
+  end
+
   defp run_effect({:flash, kind, message}, socket), do: put_flash(socket, kind, message)
 
   ## Command execution
@@ -312,24 +366,94 @@ defmodule BeeWeb.EditorLive do
 
       command ->
         cond do
-          not CommandRegistry.enabled?(command, context(socket.assigns)) -> socket
-          command.runtime == :client -> run_effect({:exec_client, id}, socket)
-          true -> change(socket, fn wb -> apply_handler(command.handler, wb) end)
+          not CommandRegistry.enabled?(command, context(socket.assigns)) ->
+            socket
+
+          command.runtime == :client ->
+            run_effect({:exec_client, id}, socket)
+
+          match?({:plugin, _}, command.handler) ->
+            run_effect({:run_plugin_command, command}, socket)
+
+          true ->
+            change(socket, fn wb -> apply_handler(command.handler, wb) end)
         end
     end
   end
 
   defp apply_handler({module, fun}, wb), do: apply(module, fun, [wb])
 
+  ## Plugins
+
+  defp plugin_context(assigns) do
+    active = assigns.active
+
+    selections =
+      case assigns.selection do
+        {^active, ranges} when active != nil -> ranges
+        _ -> []
+      end
+
+    %Bee.Plugins.Context{
+      window: self(),
+      root: assigns.root,
+      active_editor: active,
+      language: active && Workbench.language(workbench_from(assigns), active),
+      selections: selections
+    }
+  end
+
+  # What a plugin may ask of a window (Bee.API).
+  defp plugin_request(socket, {:show_message, level, text}), do: put_flash(socket, level, text)
+
+  defp plugin_request(socket, {:set_status, text}),
+    do: change(socket, &Workbench.set_status(&1, text))
+
+  defp plugin_request(socket, {:open_file, path}) do
+    if File.regular?(path),
+      do: change(socket, &Workbench.open_editor(&1, path)),
+      else: put_flash(socket, :error, "Cannot open #{path}: no such file")
+  end
+
+  defp plugin_request(socket, {:execute_command, id}), do: run_command(socket, id)
+  defp plugin_request(socket, _unknown), do: socket
+
+  defp load_plugins(socket) do
+    assign(socket,
+      plugins: Plugins.list(),
+      plugin_errors: Plugins.errors(),
+      browser_plugins: Plugins.browser_modules()
+    )
+  end
+
+  ## Languages
+
+  # Language contributions or files.associations changed: re-detect open tabs.
+  defp redetect_languages(socket) do
+    Enum.reduce(socket.assigns.tabs, socket, fn %{path: path, lang: old}, socket ->
+      text =
+        try do
+          Buffer.get(path).text
+        catch
+          :exit, _ -> ""
+        end
+
+      case Languages.detect(path, first_line: Languages.first_line(text)) do
+        ^old ->
+          socket
+
+        lang ->
+          socket
+          |> change(&Workbench.set_language(&1, path, lang))
+          |> push_event("cm:language", %{path: path, lang: lang, mode: Languages.mode(lang)})
+      end
+    end)
+  end
+
   ## `when` context
 
   @doc false
-  def context(assigns) do
-    assigns
-    |> Map.take(Workbench.fields())
-    |> then(&struct(Workbench, &1))
-    |> Workbench.context(assigns.settings)
-  end
+  def context(assigns), do: assigns |> workbench_from() |> Workbench.context(assigns.settings)
 
   ## Settings / keybindings → assigns
 
@@ -350,6 +474,9 @@ defmodule BeeWeb.EditorLive do
       }
     )
   end
+
+  defp load_commands(socket),
+    do: assign(socket, commands: CommandRegistry.commands(), menus: CommandRegistry.menus())
 
   defp load_keybindings(socket, bindings, errors) do
     client = Enum.map(bindings, &Map.take(&1, [:key, :mac, :command, :when]))
@@ -433,7 +560,8 @@ defmodule BeeWeb.EditorLive do
     end) != nil
   end
 
-  defp problems(assigns), do: assigns.settings_errors ++ assigns.keybinding_errors
+  defp problems(assigns),
+    do: assigns.settings_errors ++ assigns.keybinding_errors ++ assigns.plugin_errors
 
   ## Paths
 

@@ -1,6 +1,6 @@
-// Implementations of `run: :client` commands (see Bee.Commands.Builtin).
-// Hooks register handlers for the commands they implement; the server asks
-// for them with a `bee:exec` event, keybindings call `exec` directly.
+// Implementations of "runtime": "client" commands (see Bee.Commands.Registry):
+// registered by hooks (CodeEditor) and browser plugins. The server asks for
+// them with a `bee:exec` event.
 
 const handlers = new Map()
 

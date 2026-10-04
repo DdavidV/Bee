@@ -17,6 +17,12 @@ defmodule Bee.Workbench.Actions do
   @command "workbench.action.toggleSidebarVisibility"
   def toggle_sidebar_visibility(wb), do: Workbench.toggle_sidebar(wb)
 
+  @command "workbench.view.explorer"
+  def show_explorer(wb), do: Workbench.show_view(wb, "explorer")
+
+  @command "workbench.view.extensions"
+  def show_plugins(wb), do: Workbench.show_view(wb, "extensions")
+
   @command "workbench.action.togglePanel"
   def toggle_panel(wb), do: Workbench.toggle_panel(wb)
 
@@ -36,4 +42,7 @@ defmodule Bee.Workbench.Actions do
   @command "workbench.action.openGlobalKeybindingsFile"
   def open_global_keybindings_file(wb),
     do: Workbench.open_editor(wb, Bee.Commands.Keybindings.ensure_user_file!())
+
+  @command "bee.plugins.reload"
+  def reload_plugins(wb), do: {wb, [:reload_plugins]}
 end

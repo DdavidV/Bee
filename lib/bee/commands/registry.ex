@@ -1,73 +1,43 @@
 defmodule Bee.Commands.Registry do
   @moduledoc """
-  Registry of contributions, VS Code style. A source (`:builtin` for Bee
-  itself, later a plugin) registers a contributions manifest – JSON in the
-  format of `priv/schemas/contributions.schema.json`, Bee's own is
-  `priv/contributions/bee.json` – plus the modules implementing its server
-  commands (`use Bee.Commands.Command`).
+  The commands, keybindings and menus contributed to Bee: a
+  `Bee.Contributions.Point` for the `commands`, `keybindings`, `menubar` and
+  `menus` sections of manifests.
 
   Normalized shapes:
 
-    * command – `%{id, title, category, runtime: :server | :client,
-      enablement, toggled, enablement_ast, toggled_ast, handler: {module, fun} | nil}`
+    * command – `%{id, title, category, runtime: :server | :client, source,
+      enablement, toggled, enablement_ast, toggled_ast, handler}`, where
+      `handler` is `{module, fun}` for Bee's own server commands (a
+      `use Bee.Commands.Command` function taking the workbench),
+      `{:plugin, name}` for a plugin's (run by `Bee.Plugins`) and `nil` for
+      client commands
     * keybinding – `%{key, mac, command, when, source}`
     * menu – `%{id, label, items: [%{command, when_ast} | :separator]}`, items
       ordered by their `"group@order"`, with a separator between groups
 
-  Registering checks that every server command has exactly one handler and
-  every handler a declared command; for `:builtin` a mismatch stops boot.
-
-  Reads go straight to ETS. Changes broadcast `:commands_changed` on the
-  `"commands"` topic.
+  Bee's own server commands must each have exactly one handler, and every
+  handler a declared command. A plugin's server commands need a `server`
+  part (its handlers are checked when it activates), its client commands a
+  `browser` part. Command ids are unique across sources.
   """
-  use GenServer
+  @behaviour Bee.Contributions.Point
 
-  @table __MODULE__
-  @topic "commands"
+  alias Bee.Contributions
 
-  # Bee's own manifest, embedded and schema-checked at compile time (see
-  # Bee.Priv); a mistake in bee.json fails `mix compile`. The handler
-  # cross-check needs the handler modules, so it runs at boot (init/1).
-  @builtin_manifest_file "contributions/bee.json"
-  @external_resource Bee.Priv.path(@builtin_manifest_file)
-  @builtin_manifest Bee.Priv.read_json!(@builtin_manifest_file)
+  @doc "Subscribes to `{:contributions_changed, keys}` (see `Bee.Contributions`)."
+  def subscribe, do: Contributions.subscribe()
 
-  case Bee.JSON.Schema.validate("contributions", "#", @builtin_manifest) do
-    :ok ->
-      :ok
-
-    {:error, messages} ->
-      raise CompileError,
-        file: Bee.Priv.path(@builtin_manifest_file),
-        description: "invalid contributions manifest: " <> Enum.join(messages, "; ")
-  end
-
-  @builtin_handlers [Bee.Workbench.Actions]
-
-  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
-
-  def subscribe, do: Phoenix.PubSub.subscribe(Bee.PubSub, @topic)
-
-  @doc """
-  Registers (or replaces) the contributions of `source`. `manifest` is the
-  decoded JSON; `handlers` the `use Bee.Commands.Command` modules. Raises
-  `ArgumentError` for an invalid manifest.
-  """
-  def register(source, manifest, handlers \\ []),
-    do: GenServer.call(__MODULE__, {:register, source, normalize!(manifest, handlers, source)})
-
-  def unregister(source), do: GenServer.call(__MODULE__, {:unregister, source})
-
-  def commands, do: Enum.flat_map(contributions(), & &1.commands)
+  def commands, do: Enum.flat_map(Contributions.entries(:commands), &elem(&1, 1).commands)
 
   def command(id), do: Enum.find(commands(), &(&1.id == id))
 
   @doc "Default keybindings, in contribution order (later ones win)."
-  def keybindings, do: Enum.flat_map(contributions(), & &1.keybindings)
+  def keybindings, do: Enum.flat_map(Contributions.entries(:commands), &elem(&1, 1).keybindings)
 
   @doc "Menu bar menus with their items, across all sources."
   def menus do
-    contributions = contributions()
+    contributions = Enum.map(Contributions.entries(:commands), &elem(&1, 1))
     items = Enum.flat_map(contributions, & &1.menu_items)
 
     for %{id: id, label: label} <- Enum.flat_map(contributions, & &1.menubar) do
@@ -85,18 +55,13 @@ defmodule Bee.Commands.Registry do
 
   ## Normalization
 
-  @doc false
-  def normalize!(manifest, handlers, source) do
-    case Bee.JSON.Schema.validate("contributions", "#", manifest) do
-      :ok ->
-        :ok
+  @impl Bee.Contributions.Point
+  def key, do: :commands
 
-      {:error, messages} ->
-        raise ArgumentError, "invalid contributions manifest: " <> Enum.join(messages, "; ")
-    end
-
+  @impl Bee.Contributions.Point
+  def normalize!(manifest, source, opts) do
     contributes = manifest["contributes"]
-    handler_table = handler_table!(handlers)
+    handler_table = handler_table!(Keyword.get(opts, :handlers, []))
 
     commands =
       for c <- Map.get(contributes, "commands", []) do
@@ -111,11 +76,12 @@ defmodule Bee.Commands.Registry do
           toggled: c["toggled"],
           enablement_ast: Bee.Commands.When.parse!(c["enablement"]),
           toggled_ast: c["toggled"] && Bee.Commands.When.parse!(c["toggled"]),
-          handler: handler_table[c["command"]]
+          source: source,
+          handler: handler(source, runtime, handler_table[c["command"]])
         }
       end
 
-    check_handlers!(commands, handler_table)
+    check_handlers!(commands, handler_table, source, manifest)
 
     keybindings =
       for k <- Map.get(contributes, "keybindings", []) do
@@ -143,8 +109,21 @@ defmodule Bee.Commands.Registry do
         }
       end
 
-    %{commands: commands, keybindings: keybindings, menubar: menubar, menu_items: menu_items}
+    if commands == [] and keybindings == [] and menubar == [] and menu_items == [] do
+      nil
+    else
+      %{commands: commands, keybindings: keybindings, menubar: menubar, menu_items: menu_items}
+    end
   end
+
+  @impl Bee.Contributions.Point
+  def conflicts(%{commands: commands}, others) do
+    taken = MapSet.new(for other <- others, c <- other.commands, do: c.id)
+    for %{id: id} <- commands, id in taken, do: "command #{inspect(id)} is already defined"
+  end
+
+  defp handler({:plugin, name}, :server, _), do: {:plugin, name}
+  defp handler(_source, _runtime, handler), do: handler
 
   defp handler_table!(modules) do
     Enum.reduce(modules, %{}, fn module, acc ->
@@ -158,7 +137,27 @@ defmodule Bee.Commands.Registry do
     end)
   end
 
-  defp check_handlers!(commands, handler_table) do
+  defp check_handlers!(commands, handler_table, {:plugin, name}, manifest) do
+    if handler_table != %{},
+      do: raise(ArgumentError, "plugin handlers are found in its server module, not passed in")
+
+    for %{runtime: :server, id: id} <- commands,
+        manifest["server"] == nil,
+        do:
+          raise(ArgumentError, "server command #{inspect(id)} needs a \"server\" part in #{name}")
+
+    for %{runtime: :client, id: id} <- commands,
+        manifest["browser"] == nil,
+        do:
+          raise(
+            ArgumentError,
+            "client command #{inspect(id)} needs a \"browser\" part in #{name}"
+          )
+
+    :ok
+  end
+
+  defp check_handlers!(commands, handler_table, _source, _manifest) do
     for %{runtime: :server, id: id, handler: nil} <- commands,
         do:
           raise(
@@ -199,39 +198,5 @@ defmodule Bee.Commands.Registry do
     end)
     |> Enum.intersperse([:separator])
     |> List.flatten()
-  end
-
-  # :builtin first, then other sources in registration order.
-  defp contributions do
-    @table
-    |> :ets.tab2list()
-    |> Enum.sort_by(fn {source, seq, _} -> {source != :builtin, seq} end)
-    |> Enum.map(&elem(&1, 2))
-  end
-
-  ## Server
-
-  @impl true
-  def init(_opts) do
-    :ets.new(@table, [:named_table, :protected, read_concurrency: true])
-    builtin = normalize!(@builtin_manifest, @builtin_handlers, :builtin)
-    # Synchronously, so processes started after us see the built-ins.
-    {:ok, put(0, :builtin, builtin)}
-  end
-
-  @impl true
-  def handle_call({:register, source, contributions}, _from, seq),
-    do: {:reply, :ok, put(seq, source, contributions)}
-
-  def handle_call({:unregister, source}, _from, seq) do
-    :ets.delete(@table, source)
-    Phoenix.PubSub.broadcast(Bee.PubSub, @topic, :commands_changed)
-    {:reply, :ok, seq}
-  end
-
-  defp put(seq, source, contributions) do
-    :ets.insert(@table, {source, seq, contributions})
-    Phoenix.PubSub.broadcast(Bee.PubSub, @topic, :commands_changed)
-    seq + 1
   end
 end

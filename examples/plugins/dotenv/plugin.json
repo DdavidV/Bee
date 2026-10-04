@@ -1,0 +1,19 @@
+{
+  "$schema": "../../../priv/schemas/manifest.schema.json",
+  "name": "dotenv",
+  "displayName": "Dotenv",
+  "description": "The Dotenv language (.env files) with highlighting. Example of a language and a CodeMirror mode from a plugin.",
+  "version": "0.1.0",
+  "browser": "browser.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "dotenv",
+        "aliases": ["Dotenv"],
+        "filenames": [".env"],
+        "filenamePatterns": [".env.*", "*.env"]
+      }
+    ],
+    "grammars": [{"language": "dotenv", "mode": "dotenv"}]
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "$schema": "../../../priv/schemas/manifest.schema.json",
+  "name": "insert-date",
+  "displayName": "Insert Date",
+  "description": "Inserts today's date at the cursor. Example browser plugin in JavaScript.",
+  "version": "0.1.0",
+  "browser": "browser.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "insertDate.insert",
+        "category": "Insert Date",
+        "title": "Insert Today's Date",
+        "runtime": "client",
+        "enablement": "activeEditor"
+      }
+    ],
+    "keybindings": [
+      {"key": "ctrl+alt+d", "command": "insertDate.insert", "when": "editorTextFocus"}
+    ]
+  }
+}

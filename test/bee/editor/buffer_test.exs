@@ -122,4 +122,32 @@ defmodule Bee.Editor.BufferTest do
   # Simulate Bee.Workspace's watcher broadcast.
   defp send_fs_event(path),
     do: Phoenix.PubSub.broadcast(Bee.PubSub, "fs", {:fs_changed, path})
+
+  describe "server-side edits" do
+    test "apply_edits/2 applies non-overlapping byte ranges at once" do
+      assert Buffer.apply_edits("hello world", [{6, 11, "there"}, {0, 0, ">> "}]) ==
+               {:ok, ">> hello there"}
+
+      assert Buffer.apply_edits("abc", []) == {:ok, "abc"}
+      assert Buffer.apply_edits("abc", [{0, 2, "x"}, {1, 3, "y"}]) == {:error, :invalid_edits}
+      assert Buffer.apply_edits("abc", [{2, 4, "x"}]) == {:error, :invalid_edits}
+      assert Buffer.apply_edits("abc", [{2, 1, "x"}]) == {:error, :invalid_edits}
+      assert Buffer.apply_edits("abc", [:nope]) == {:error, :invalid_edits}
+      # splitting "ö" (2 bytes) in half
+      assert Buffer.apply_edits("ö", [{1, 2, ""}]) == {:error, :invalid_utf8}
+    end
+
+    test "edit/2 changes the text, broadcasts the edits and makes it dirty", %{path: path} do
+      {:ok, _} = Buffer.open(path)
+
+      assert {:ok, buffer} = Buffer.edit(path, [{0, 1, "J"}])
+      assert buffer.text == "Jello" and buffer.version == 1
+      assert Buffer.dirty?(buffer)
+      assert_receive {:buffer_edited, ^path, 1, [{0, 1, "J"}], "Jello"}
+      assert_receive {:buffer_changed, ^path, 1, "Jello"}
+
+      assert {:error, :invalid_edits} = Buffer.edit(path, [{0, 99, ""}])
+      assert Buffer.edit(Path.join(Path.dirname(path), "closed.txt"), []) == {:error, :not_open}
+    end
+  end
 end

@@ -12,7 +12,7 @@ defmodule Bee.JSON.Schema do
 
   alias ExJsonSchema.Validator.Error
 
-  @names ~w(settings keybindings contributions)
+  @names ~w(settings keybindings manifest)
 
   for name <- @names, do: @external_resource(Bee.Priv.path("schemas/#{name}.schema.json"))
 
@@ -38,17 +38,28 @@ defmodule Bee.JSON.Schema do
   def raw!(name), do: load!(name).schema
 
   @doc """
-  Validates `data` against the fragment at `ref` (e.g. `"#/properties/editor.fontSize"`)
-  of schema `name`. Returns `:ok` or `{:error, [message]}`.
+  Resolves a schema given as data (e.g. settings contributed by a plugin).
+  Returns `{:ok, root}` or `{:error, message}` for an invalid schema.
   """
-  def validate(name, ref, data) do
-    root = load!(name)
+  def resolve(schema) do
+    {:ok, ExJsonSchema.Schema.resolve(schema)}
+  rescue
+    e -> {:error, Exception.message(e)}
+  end
 
+  @doc """
+  Validates `data` against the fragment at `ref` (e.g. `"#/properties/editor.fontSize"`)
+  of schema `name` (or of a root from `resolve/1`). Returns `:ok` or
+  `{:error, [message]}`.
+  """
+  def validate(%ExJsonSchema.Schema.Root{} = root, ref, data) do
     case ExJsonSchema.Validator.validate_fragment(root, ref, data, error_formatter: false) do
       :ok -> :ok
       {:error, errors} -> {:error, Enum.flat_map(errors, &format(&1, root, ref))}
     end
   end
+
+  def validate(name, ref, data), do: validate(load!(name), ref, data)
 
   @doc "JSON pointer for a property name (escapes `~` and `/`)."
   def property_ref(key),

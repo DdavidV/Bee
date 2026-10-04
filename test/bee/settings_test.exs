@@ -132,4 +132,80 @@ defmodule Bee.SettingsTest do
 
     assert {:ok, %{}} = Bee.JSON.JSONC.decode(text)
   end
+
+  test "get_user/1 ignores the workspace layer" do
+    write(Settings.user_path(), ~s({"editor.fontSize": 18}))
+
+    write(
+      Settings.workspace_path(),
+      ~s({"editor.fontSize": 20, "plugins.workspace.enabled": true})
+    )
+
+    assert Settings.get("editor.fontSize") == 20
+    assert Settings.get_user("editor.fontSize") == 18
+    assert Settings.get("plugins.workspace.enabled") == true
+    assert Settings.get_user("plugins.workspace.enabled") == false
+  end
+
+  describe "contributed settings (Bee.Settings.Configuration)" do
+    @configuration %{
+      "title" => "Test",
+      "properties" => %{
+        "test.level" => %{
+          "type" => "integer",
+          "minimum" => 1,
+          "default" => 3,
+          "description" => "A level."
+        }
+      }
+    }
+
+    defp contribute(source, configuration) do
+      Bee.Contributions.register(source, %{
+        "name" => "test",
+        "contributes" => %{"configuration" => configuration}
+      })
+    end
+
+    setup do
+      on_exit(fn ->
+        Bee.Contributions.unregister(:test_settings)
+        Bee.Contributions.unregister(:test_settings_2)
+      end)
+    end
+
+    test "add defaults, validation and documentation; go away when unregistered" do
+      write(Settings.user_path(), ~s({"test.level": 0}))
+      assert Settings.get("test.level") == 0
+      assert Settings.errors() == []
+
+      :ok = contribute(:test_settings, @configuration)
+      # Settings reloads on its own when contributions change.
+      assert_receive {:settings_changed, _, [%{message: ~s("test.level": ) <> message}]}
+      assert message =~ ">= 1"
+      assert Settings.get("test.level") == 3
+      assert Settings.schema()["test.level"]["description"] == "A level."
+
+      Bee.Contributions.unregister(:test_settings)
+      assert_receive {:settings_changed, %{"test.level" => 0}, []}
+    end
+
+    test "names are unique, and the schema must be valid" do
+      assert {:error, message} =
+               contribute(:test_settings, %{
+                 "properties" => %{"editor.fontSize" => %{"type" => "integer"}}
+               })
+
+      assert message =~ ~s(setting "editor.fontSize" is already defined)
+
+      :ok = contribute(:test_settings, @configuration)
+      assert {:error, message} = contribute(:test_settings_2, @configuration)
+      assert message =~ ~s(setting "test.level" is already defined)
+
+      assert {:error, "invalid configuration schema: " <> _} =
+               contribute(:test_settings_2, %{
+                 "properties" => %{"test.other" => %{"type" => "no-such-type"}}
+               })
+    end
+  end
 end

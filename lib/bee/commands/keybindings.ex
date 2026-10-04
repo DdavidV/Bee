@@ -153,8 +153,8 @@ defmodule Bee.Commands.Keybindings do
     {:noreply, state}
   end
 
-  def handle_info(:commands_changed, state) do
-    load(true)
+  def handle_info({:contributions_changed, keys}, state) do
+    if :commands in keys, do: load(true)
     {:noreply, state}
   end
 

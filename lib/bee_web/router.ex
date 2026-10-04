@@ -20,6 +20,10 @@ defmodule BeeWeb.Router do
     live "/", EditorLive
   end
 
+  scope "/plugins", BeeWeb do
+    get "/:name/*path", PluginAssetController, :show
+  end
+
   if Application.compile_env(:bee, :dev_routes) do
     import Phoenix.LiveDashboard.Router
 

@@ -7,10 +7,16 @@ defmodule Bee.Editor.Buffer do
   buffer monitors them and stops once the last one is gone, discarding
   unsaved changes.
 
-  Broadcasts on the `"buffers"` topic (for plugins and LSP later on):
+  Text changes come from the editor (`update/2`, the whole text) or from the
+  server (`edit/2`, e.g. plugins): those are pushed to every editor showing
+  the file.
+
+  Broadcasts on the `"buffers"` topic (for plugins and LSP):
 
     * `{:buffer_opened, path, text}`
     * `{:buffer_changed, path, version, text}`
+    * `{:buffer_edited, path, version, edits, text}` – after `edit/2`, before
+      `:buffer_changed`
     * `{:buffer_saved, path, text}`
     * `{:buffer_reloaded, path, text}` – file changed on disk while clean
     * `{:buffer_closed, path}`
@@ -54,6 +60,48 @@ defmodule Bee.Editor.Buffer do
   def update(path, text), do: GenServer.call(via(path), {:update, text})
   def save(path, text), do: GenServer.call(via(path), {:save, text})
 
+  @doc """
+  Applies `edits` – `[{from, to, text}]`, UTF-8 byte offsets into the
+  current text, not overlapping – all at once. Returns `{:ok, buffer}` or
+  `{:error, reason}`; `{:error, :not_open}` when no editor has the file open.
+  """
+  def edit(path, edits) do
+    GenServer.call(via(path), {:edit, edits})
+  catch
+    :exit, {:noproc, _} -> {:error, :not_open}
+  end
+
+  @doc "Applies `edits` (see `edit/2`) to `text`."
+  def apply_edits(text, edits) do
+    in_range? = fn
+      {from, to, insert} ->
+        is_integer(from) and is_integer(to) and is_binary(insert) and
+          0 <= from and from <= to and to <= byte_size(text)
+
+      _ ->
+        false
+    end
+
+    with true <- (is_list(edits) and Enum.all?(edits, in_range?)) || {:error, :invalid_edits},
+         sorted = Enum.sort_by(edits, fn {from, to, _} -> {from, to} end),
+         true <- not overlapping?(sorted) || {:error, :invalid_edits},
+         result =
+           sorted
+           |> Enum.reverse()
+           |> Enum.reduce(text, fn {from, to, insert}, acc ->
+             binary_part(acc, 0, from) <> insert <> binary_part(acc, to, byte_size(acc) - to)
+           end),
+         true <- String.valid?(result) || {:error, :invalid_utf8} do
+      {:ok, result}
+    end
+  end
+
+  defp overlapping?(sorted) do
+    sorted
+    |> Enum.chunk_every(2, 1, :discard)
+    |> Enum.any?(fn [{_, to, _}, {from, _, _}] -> from < to end)
+  end
+
   def dirty?(%__MODULE__{text: text, disk_text: disk}), do: text != disk
 
   defp attach(pid, client) do
@@ -94,6 +142,21 @@ defmodule Bee.Editor.Buffer do
   def handle_call({:update, text}, _from, state) do
     state = put_text(state, text)
     {:reply, state, state}
+  end
+
+  def handle_call({:edit, edits}, _from, state) do
+    case apply_edits(state.text, edits) do
+      {:ok, text} when text == state.text ->
+        {:reply, {:ok, state}, state}
+
+      {:ok, text} ->
+        broadcast({:buffer_edited, state.path, state.version + 1, edits, text})
+        state = put_text(state, text)
+        {:reply, {:ok, state}, state}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
   end
 
   def handle_call({:save, text}, _from, state) do

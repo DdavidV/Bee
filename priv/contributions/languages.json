@@ -1,0 +1,75 @@
+{
+  "$schema": "../schemas/manifest.schema.json",
+  "name": "languages",
+  "description": "Languages Bee knows out of the box, and the bundled CodeMirror modes that highlight them. Plugins add languages, or files to these, in the same format. Ids follow VS Code.",
+  "contributes": {
+    "languages": [
+      {"id": "plaintext", "aliases": ["Plain Text"], "extensions": [".txt"]},
+      {
+        "id": "elixir",
+        "aliases": ["Elixir"],
+        "extensions": [".ex", ".exs"],
+        "filenames": ["mix.lock", ".formatter.exs", ".iex.exs"],
+        "firstLine": "^#!.*\\b(elixir|iex)\\b"
+      },
+      {"id": "phoenix-heex", "aliases": ["HEEx"], "extensions": [".heex"]},
+      {
+        "id": "erlang",
+        "aliases": ["Erlang"],
+        "extensions": [".erl", ".hrl", ".escript", ".app.src"],
+        "filenames": ["rebar.config", "sys.config"],
+        "firstLine": "^#!.*\\bescript\\b"
+      },
+      {
+        "id": "javascript",
+        "aliases": ["JavaScript"],
+        "extensions": [".js", ".mjs", ".cjs", ".jsx"],
+        "firstLine": "^#!.*\\bnode\\b"
+      },
+      {"id": "typescript", "aliases": ["TypeScript"], "extensions": [".ts", ".mts", ".cts", ".tsx"]},
+      {"id": "json", "aliases": ["JSON"], "extensions": [".json", ".webmanifest"]},
+      {
+        "id": "jsonc",
+        "aliases": ["JSON with Comments"],
+        "extensions": [".jsonc"],
+        "filenames": ["settings.json", "keybindings.json", "tsconfig.json", "jsconfig.json"]
+      },
+      {"id": "css", "aliases": ["CSS"], "extensions": [".css"]},
+      {"id": "html", "aliases": ["HTML"], "extensions": [".html", ".htm"]},
+      {"id": "markdown", "aliases": ["Markdown"], "extensions": [".md", ".markdown"]},
+      {
+        "id": "shellscript",
+        "aliases": ["Shell Script"],
+        "extensions": [".sh", ".bash", ".zsh"],
+        "filenames": [".bashrc", ".bash_profile", ".zshrc", ".profile"],
+        "firstLine": "^#!.*\\b(sh|bash|zsh|dash)\\b"
+      },
+      {"id": "yaml", "aliases": ["YAML"], "extensions": [".yml", ".yaml"]},
+      {"id": "toml", "aliases": ["TOML"], "extensions": [".toml"]},
+      {
+        "id": "dockerfile",
+        "aliases": ["Docker"],
+        "extensions": [".dockerfile"],
+        "filenames": ["Dockerfile", "Containerfile"],
+        "filenamePatterns": ["Dockerfile.*"]
+      },
+      {"id": "makefile", "aliases": ["Makefile"], "extensions": [".mk"], "filenames": ["Makefile", "GNUmakefile", "makefile"]}
+    ],
+    "grammars": [
+      {"language": "elixir", "mode": "elixir"},
+      {"language": "phoenix-heex", "mode": "html"},
+      {"language": "erlang", "mode": "erlang"},
+      {"language": "javascript", "mode": "javascript"},
+      {"language": "typescript", "mode": "typescript"},
+      {"language": "json", "mode": "json"},
+      {"language": "jsonc", "mode": "json"},
+      {"language": "css", "mode": "css"},
+      {"language": "html", "mode": "html"},
+      {"language": "markdown", "mode": "markdown"},
+      {"language": "shellscript", "mode": "shell"},
+      {"language": "yaml", "mode": "yaml"},
+      {"language": "toml", "mode": "toml"},
+      {"language": "dockerfile", "mode": "dockerfile"}
+    ]
+  }
+}
