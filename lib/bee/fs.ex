@@ -61,4 +61,33 @@ defmodule Bee.FS do
       rel -> rel
     end
   end
+
+  @doc """
+  Writes atomically (temp file + rename), keeping the original file mode.
+  """
+  def atomic_write(path, contents) do
+    tmp =
+      Path.join(
+        Path.dirname(path),
+        ".#{Path.basename(path)}.bee-#{System.unique_integer([:positive])}"
+      )
+
+    with :ok <- File.write(tmp, contents),
+         :ok <- copy_mode(path, tmp),
+         :ok <- File.rename(tmp, path) do
+      :ok
+    else
+      error ->
+        File.rm(tmp)
+        error
+    end
+  end
+
+  defp copy_mode(from, to) do
+    case File.stat(from) do
+      {:ok, %{mode: mode}} -> File.chmod(to, Bitwise.band(mode, 0o7777))
+      {:error, :enoent} -> :ok
+      error -> error
+    end
+  end
 end

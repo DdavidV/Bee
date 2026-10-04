@@ -15,22 +15,65 @@
       module={BeeWeb.FileTreeComponent}
       id="explorer"
       root={@root}
-      active={@selected}
+      active={@active && Bee.FS.relative(@root, @active)}
     />
   </aside>
 
   <%!-- Editor area --%>
-  <main class="min-w-0 min-h-0 grid place-items-center text-sm opacity-40">
-    <div class="text-center space-y-1">
-      <div class="text-4xl">🐝</div>
-      <div :if={!@selected}>Select a file in the explorer</div>
-      <div :if={@selected} id="selected-file">{@selected}</div>
+  <main class="min-w-0 min-h-0 flex flex-col">
+    <div id="tabs" class="flex bg-base-200 overflow-x-auto shrink-0 text-sm">
+      <div
+        :for={tab <- @tabs}
+        id={"tab-#{:erlang.phash2(tab.path)}"}
+        class={[
+          "group flex items-center gap-1 pl-3 pr-1 py-1.5 border-r border-base-300 cursor-pointer whitespace-nowrap",
+          if(tab.path == @active,
+            do: "bg-base-100",
+            else: "opacity-70 hover:opacity-100 hover:bg-base-content/5"
+          )
+        ]}
+        phx-click="activate_tab"
+        phx-value-path={tab.path}
+        title={Bee.FS.relative(@root, tab.path)}
+      >
+        <span>{Path.basename(tab.path)}</span>
+        <button
+          class="size-5 grid place-items-center rounded cursor-pointer hover:bg-base-content/10"
+          title="Close"
+          phx-click="close_tab"
+          phx-value-path={tab.path}
+          data-confirm={tab.dirty && "Discard unsaved changes to #{Path.basename(tab.path)}?"}
+        >
+          <span :if={tab.dirty} class="size-2 rounded-full bg-base-content group-hover:hidden" />
+          <.icon
+            name="hero-x-mark-mini"
+            class={["size-4", tab.dirty && "hidden group-hover:block"]}
+          />
+        </button>
+      </div>
+    </div>
+
+    <div class="flex-1 min-h-0 relative">
+      <div id="editor" phx-hook="CodeEditor" phx-update="ignore" class="absolute inset-0"></div>
+      <div
+        :if={@tabs == []}
+        class="absolute inset-0 grid place-items-center bg-base-100 text-sm"
+      >
+        <div class="text-center space-y-1 opacity-40">
+          <div class="text-4xl">🐝</div>
+          <div>Open a file from the explorer</div>
+          <div>Ctrl+S · Save</div>
+        </div>
+      </div>
     </div>
   </main>
 
   <%!-- Status bar --%>
   <footer class="col-span-3 h-6 bg-primary text-primary-content text-xs flex items-center gap-4 px-3">
     <span class="truncate">{@root}</span>
+    <div class="flex-1" />
+    <span :if={@status} id="status" class="truncate">{@status}</span>
+    <span :if={@active} id="status-lang">{Bee.Lang.detect(@active)}</span>
   </footer>
 
   <Layouts.flash_group flash={@flash} />

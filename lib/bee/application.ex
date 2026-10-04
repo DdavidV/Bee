@@ -9,7 +9,9 @@ defmodule Bee.Application do
       BeeWeb.Telemetry,
       {DNSCluster, query: Application.get_env(:bee, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Bee.PubSub},
+      {Registry, keys: :unique, name: Bee.Registry},
       Bee.Workspace,
+      {DynamicSupervisor, name: Bee.BufferSup, strategy: :one_for_one},
       BeeWeb.Endpoint
     ]
 
