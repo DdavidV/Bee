@@ -73,6 +73,9 @@ export const CodeEditor = {
       }
     }
     window.addEventListener("keydown", this.onKeydown)
+
+    // File > Save in the title bar.
+    this.el.addEventListener("bee:save", () => this.active && this.save(this.active))
   },
 
   destroyed() {

@@ -115,10 +115,7 @@ defmodule BeeWeb.EditorLiveTest do
     end
 
     test "files changed on disk are reloaded into the editor", %{view: view, path: path} do
-      before = {File.read(path), Registry.lookup(Bee.Registry, {:buffer, path})}
       open_file(view, "mix.exs")
-      assert_push_event(view, "cm:open", %{text: opened})
-      if opened == "", do: flunk("DEBUG before=#{inspect(before)} now=#{inspect(File.read(path))} ls=#{inspect(File.ls(Path.dirname(path)))}")
       File.write!(path, "from disk")
       Phoenix.PubSub.broadcast(Bee.PubSub, "fs", {:fs_changed, path})
 
@@ -256,8 +253,124 @@ defmodule BeeWeb.EditorLiveTest do
     end
   end
 
+  describe "title bar" do
+    setup do
+      previous = System.get_env("SHELL")
+      System.put_env("SHELL", "/bin/sh")
+
+      on_exit(fn ->
+        if previous, do: System.put_env("SHELL", previous), else: System.delete_env("SHELL")
+      end)
+    end
+
+    test "window title shows the active file and the workspace", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      workspace = Path.basename(Bee.Workspace.root())
+      assert view |> element("#window-title") |> render() =~ workspace
+
+      open_file(view, "mix.exs")
+      assert view |> element("#window-title") |> render() =~ "mix.exs — #{workspace}"
+    end
+
+    test "menus open, switch, and close on Escape, click-away or a second click", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      refute has_element?(view, "[role=menu]")
+
+      open_menu(view, "file")
+      assert has_element?(view, "#menu-file")
+      assert has_element?(view, "#menu-file-button[aria-expanded=true]")
+
+      open_menu(view, "view")
+      assert has_element?(view, "#menu-view")
+      refute has_element?(view, "#menu-file")
+
+      render_keydown(view, "close_menu", %{"key" => "Escape"})
+      refute has_element?(view, "[role=menu]")
+
+      open_menu(view, "view")
+      render_click(view, "close_menu", %{})
+      refute has_element?(view, "[role=menu]")
+
+      open_menu(view, "view")
+      open_menu(view, "view")
+      refute has_element?(view, "[role=menu]")
+    end
+
+    test "layout toggles reflect and change the layout", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      assert has_element?(view, "#layout-sidebar[aria-pressed=true]")
+      assert has_element?(view, "#layout-panel[aria-pressed=false]")
+
+      view |> element("#layout-sidebar") |> render_click()
+      assert has_element?(view, "#sidebar.hidden")
+      assert has_element?(view, "#layout-sidebar[aria-pressed=false]")
+
+      view |> element("#layout-panel") |> render_click()
+      assert has_element?(view, "#panel")
+      assert has_element?(view, "#layout-panel[aria-pressed=true]")
+    end
+
+    test "View menu toggles the explorer and terminal, with check marks", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      open_menu(view, "view")
+      assert has_element?(view, "#menu-view-explorer .hero-check-micro")
+      refute has_element?(view, "#menu-view-terminal .hero-check-micro")
+
+      menu_click(view, "view", "terminal")
+      assert has_element?(view, "#panel")
+      refute has_element?(view, "#menu-view"), "menu closes after an item is chosen"
+      open_menu(view, "view")
+      assert has_element?(view, "#menu-view-terminal .hero-check-micro")
+
+      menu_click(view, "view", "explorer")
+      assert has_element?(view, "#sidebar.hidden")
+      open_menu(view, "view")
+      refute has_element?(view, "#menu-view-explorer .hero-check-micro")
+    end
+
+    test "Terminal menu creates and kills terminals", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      open_menu(view, "terminal")
+      assert has_element?(view, "#menu-terminal-kill[disabled]")
+
+      html = menu_click(view, "terminal", "new")
+      [_, id] = Regex.run(~r/id="term-(\d+)"/, html)
+      [{pid, _}] = Registry.lookup(Bee.Registry, {:terminal, String.to_integer(id)})
+      ref = Process.monitor(pid)
+      open_menu(view, "terminal")
+      refute has_element?(view, "#menu-terminal-kill[disabled]")
+
+      menu_click(view, "terminal", "kill")
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}
+      refute has_element?(view, "#term-#{id}")
+    end
+
+    test "File menu is disabled without an editor and closes the active one", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      open_menu(view, "file")
+      assert has_element?(view, "#menu-file-save[disabled]")
+      assert has_element?(view, "#menu-file-close[disabled]")
+
+      open_file(view, "mix.exs")
+      open_menu(view, "file")
+      refute has_element?(view, "#menu-file-close[disabled]")
+
+      menu_click(view, "file", "close")
+      refute has_element?(view, "#tabs > div")
+      open_menu(view, "file")
+      assert has_element?(view, "#menu-file-close[disabled]")
+    end
+  end
+
+  defp open_menu(view, menu), do: view |> element("#menu-#{menu}-button") |> render_click()
+
+  defp menu_click(view, menu, item) do
+    unless has_element?(view, "#menu-#{menu}"), do: open_menu(view, menu)
+    view |> element("#menu-#{menu}-#{item}") |> render_click()
+  end
+
   defp open_panel(view) do
-    html = view |> element("#toggle-panel") |> render_click()
+    html = view |> element("#layout-panel") |> render_click()
     [_, id] = Regex.run(~r/id="term-(\d+)"/, html)
     String.to_integer(id)
   end

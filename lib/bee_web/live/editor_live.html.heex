@@ -2,11 +2,20 @@
   id="workbench"
   phx-hook="Keybindings"
   class={[
-    "h-screen w-screen grid grid-rows-[1fr_auto] bg-base-100 text-base-content overflow-hidden",
+    "h-screen w-screen grid grid-rows-[auto_1fr_auto] bg-base-100 text-base-content overflow-hidden",
     if(@sidebar_open, do: "grid-cols-[3rem_16rem_1fr]", else: "grid-cols-[3rem_1fr]")
   ]}
 >
-  <%!-- Activity bar --%>
+  <BeeWeb.TitleBar.title_bar
+    title={window_title(@active, @root)}
+    open_menu={@open_menu}
+    has_editor={@active != nil}
+    has_terminal={@active_term != nil}
+    sidebar_open={@sidebar_open}
+    panel_open={@panel_open}
+  />
+
+  <%!-- Activity bar: sidebar views only (the terminal lives in the title bar / View menu) --%>
   <aside class="bg-base-300 flex flex-col items-center gap-1 py-2">
     <button
       id="toggle-sidebar"
@@ -15,14 +24,6 @@
       phx-click="toggle_sidebar"
     >
       <.icon name="hero-document-duplicate" class="size-5" />
-    </button>
-    <button
-      id="toggle-panel"
-      class={["btn btn-ghost btn-square btn-sm", @panel_open && "btn-active"]}
-      title="Toggle Terminal (Ctrl+J)"
-      phx-click="toggle_panel"
-    >
-      <.icon name="hero-command-line" class="size-5" />
     </button>
   </aside>
 

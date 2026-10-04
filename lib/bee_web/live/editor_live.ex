@@ -30,6 +30,7 @@ defmodule BeeWeb.EditorLive do
        active: nil,
        status: nil,
        sidebar_open: true,
+       open_menu: nil,
        terminals: [],
        active_term: nil,
        term_seq: %{},
@@ -44,6 +45,11 @@ defmodule BeeWeb.EditorLive do
 
   def handle_event("close_tab", %{"path" => path}, socket),
     do: {:noreply, close_tab(socket, path)}
+
+  def handle_event("close_active_tab", _params, socket) do
+    {:noreply,
+     if(socket.assigns.active, do: close_tab(socket, socket.assigns.active), else: socket)}
+  end
 
   def handle_event("doc_changed", %{"path" => path, "text" => text}, socket) do
     if open?(socket, path) do
@@ -67,6 +73,12 @@ defmodule BeeWeb.EditorLive do
     end
   end
 
+  def handle_event("toggle_menu", %{"menu" => menu}, socket) do
+    {:noreply, update(socket, :open_menu, &if(&1 == menu, do: nil, else: menu))}
+  end
+
+  def handle_event("close_menu", _params, socket), do: {:noreply, assign(socket, open_menu: nil)}
+
   def handle_event("toggle_sidebar", _params, socket),
     do: {:noreply, update(socket, :sidebar_open, &(!&1))}
 
@@ -81,16 +93,11 @@ defmodule BeeWeb.EditorLive do
     {:noreply, if(terminal?(socket, id), do: assign(socket, active_term: id), else: socket)}
   end
 
-  def handle_event("close_terminal", %{"id" => id}, socket) do
-    id = String.to_integer(id)
+  def handle_event("close_terminal", %{"id" => id}, socket),
+    do: {:noreply, close_terminal(socket, String.to_integer(id))}
 
-    if terminal?(socket, id) do
-      Terminal.stop(id)
-      {:noreply, remove_terminal(socket, id)}
-    else
-      {:noreply, socket}
-    end
-  end
+  def handle_event("close_active_terminal", _params, socket),
+    do: {:noreply, close_terminal(socket, socket.assigns.active_term)}
 
   def handle_event("term_ready", %{"id" => id, "cols" => cols, "rows" => rows}, socket) do
     if terminal?(socket, id) do
@@ -231,6 +238,15 @@ defmodule BeeWeb.EditorLive do
     end
   end
 
+  defp close_terminal(socket, id) do
+    if terminal?(socket, id) do
+      Terminal.stop(id)
+      remove_terminal(socket, id)
+    else
+      socket
+    end
+  end
+
   defp remove_terminal(socket, id) do
     Phoenix.PubSub.unsubscribe(Bee.PubSub, Terminal.topic(id))
     terminals = Enum.reject(socket.assigns.terminals, &(&1.id == id))
@@ -256,6 +272,10 @@ defmodule BeeWeb.EditorLive do
   defp toggle_panel(socket), do: assign(socket, panel_open: true)
 
   defp terminal?(socket, id), do: Enum.any?(socket.assigns.terminals, &(&1.id == id))
+
+  # "file — workspace", like VS Code's window title.
+  defp window_title(nil, root), do: Path.basename(root)
+  defp window_title(active, root), do: "#{Path.basename(active)} — #{Path.basename(root)}"
 
   defp rel(socket, path), do: Bee.FS.relative(socket.assigns.root, path)
 end
