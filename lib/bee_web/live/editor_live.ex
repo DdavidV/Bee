@@ -2,105 +2,150 @@ defmodule BeeWeb.EditorLive do
   @moduledoc """
   The editor window.
 
-  Text lives in CodeMirror on the client (`CodeEditor` hook) and in a
-  `Bee.Buffer` process per file on the server; this LiveView routes between
-  them. Tabs are keyed by absolute path.
+  Window state is a `%Bee.Workbench{}`, kept as individual assigns (one per
+  field) so LiveView change tracking stays fine-grained. Events and commands
+  change it through `Bee.Workbench` functions and command handlers, which
+  return effects; `run_effects/2` performs them (buffers, terminals, browser
+  events).
 
-  Terminals are `Bee.Terminal` processes owned by this LiveView, rendered by
-  the `Terminal` hook (xterm.js). Output is only forwarded once the hook has
-  reported ready and replayed the scrollback; `term_seq` holds the last
-  sequence number forwarded per terminal.
+  Every user action (menus, palette, keybindings, buttons) goes through
+  `run_command` with a `Bee.Commands.Registry` id: server commands run their
+  `use Bee.Commands.Command` handler, client ones are sent to the browser as
+  `bee:exec`. The `when` context (`Bee.Workbench.context/2`) is evaluated
+  here for menus and the palette, and sent to the browser (`data-context`)
+  for keybindings.
+
+  Text lives in CodeMirror (`CodeEditor` hook) and in a `Bee.Editor.Buffer` per
+  file. Terminals are `Bee.Terminal` processes owned by this LiveView, shown
+  by the `Terminal` hook; output is forwarded only after the hook reported
+  ready and replayed the scrollback (`term_seq` = last forwarded sequence).
   """
   use BeeWeb, :live_view
 
-  alias Bee.{Buffer, Terminal, Workspace}
+  alias Bee.{Settings, Terminal, Workbench, Workspace}
+  alias Bee.Commands.Registry, as: CommandRegistry
+  alias Bee.Commands.Keybindings
+  alias Bee.Editor.Buffer
 
   @impl true
   def mount(_params, _session, socket) do
     if connected?(socket) do
       Workspace.subscribe()
       Buffer.subscribe()
+      Settings.subscribe()
+      Keybindings.subscribe()
+      CommandRegistry.subscribe()
     end
 
     {:ok,
-     assign(socket,
-       page_title: Path.basename(Workspace.root()),
-       root: Workspace.root(),
-       tabs: [],
-       active: nil,
-       status: nil,
-       sidebar_open: true,
-       open_menu: nil,
-       terminals: [],
-       active_term: nil,
-       term_seq: %{},
-       panel_open: false
-     )}
+     socket
+     |> assign(page_title: Path.basename(Workspace.root()), term_seq: %{})
+     |> put_workbench(Workbench.new(Workspace.root()))
+     |> load_settings(Settings.all(), Settings.errors())
+     |> load_keybindings(Keybindings.all(), Keybindings.errors())
+     |> assign(commands: CommandRegistry.commands(), menus: CommandRegistry.menus())}
   end
+
+  ## Commands
 
   @impl true
-  def handle_event("activate_tab", %{"path" => path}, socket) do
-    {:noreply, if(open?(socket, path), do: activate(socket, path), else: socket)}
+  def handle_event("run_command", %{"command" => id}, socket) do
+    {:noreply,
+     socket
+     |> change(&(&1 |> Workbench.close_menu() |> Workbench.close_palette()))
+     |> run_command(id)}
   end
+
+  ## Menus
+
+  def handle_event("toggle_menu", %{"menu" => menu}, socket),
+    do: {:noreply, change(socket, &Workbench.toggle_menu(&1, menu))}
+
+  def handle_event("close_menu", _params, socket),
+    do: {:noreply, change(socket, &Workbench.close_menu/1)}
+
+  ## Command palette
+
+  def handle_event("palette_filter", %{"query" => query}, socket),
+    do: {:noreply, change(socket, &Workbench.filter_palette(&1, query))}
+
+  def handle_event("palette_key", %{"key" => key}, socket) do
+    count = length(palette_items(socket.assigns))
+
+    case key do
+      "ArrowDown" -> {:noreply, change(socket, &Workbench.move_palette(&1, 1, count))}
+      "ArrowUp" -> {:noreply, change(socket, &Workbench.move_palette(&1, -1, count))}
+      "Escape" -> {:noreply, change(socket, &Workbench.close_palette/1)}
+      _ -> {:noreply, socket}
+    end
+  end
+
+  # Enter in the input submits the form.
+  def handle_event("palette_run", _params, %{assigns: %{palette: %{index: index}}} = socket) do
+    case Enum.at(palette_items(socket.assigns), index) do
+      nil -> {:noreply, socket}
+      item -> {:noreply, socket |> change(&Workbench.close_palette/1) |> run_command(item.id)}
+    end
+  end
+
+  def handle_event("palette_run", _params, socket), do: {:noreply, socket}
+
+  def handle_event("close_palette", _params, socket),
+    do: {:noreply, change(socket, &Workbench.close_palette/1)}
+
+  ## Editor
+
+  def handle_event("activate_tab", %{"path" => path}, socket),
+    do: {:noreply, change(socket, &Workbench.activate_editor(&1, path))}
 
   def handle_event("close_tab", %{"path" => path}, socket),
-    do: {:noreply, close_tab(socket, path)}
-
-  def handle_event("close_active_tab", _params, socket) do
-    {:noreply,
-     if(socket.assigns.active, do: close_tab(socket, socket.assigns.active), else: socket)}
-  end
+    do: {:noreply, change(socket, &Workbench.close_editor(&1, path))}
 
   def handle_event("doc_changed", %{"path" => path, "text" => text}, socket) do
-    if open?(socket, path) do
-      {:noreply, set_dirty(socket, path, Buffer.dirty?(Buffer.update(path, text)))}
+    if Workbench.open?(workbench(socket), path) do
+      dirty = Buffer.dirty?(Buffer.update(path, text))
+      {:noreply, change(socket, &Workbench.set_dirty(&1, path, dirty))}
     else
       {:noreply, socket}
     end
   end
 
   def handle_event("save", %{"path" => path, "text" => text}, socket) do
-    with true <- open?(socket, path),
+    with true <- Workbench.open?(workbench(socket), path),
          {:ok, _buffer} <- Buffer.save(path, text) do
-      {:noreply, socket |> set_dirty(path, false) |> assign(status: "Saved #{rel(socket, path)}")}
+      # Apply right away, also when file watching is unavailable.
+      if path in Settings.paths(), do: Settings.reload()
+      if path == Keybindings.user_path(), do: Keybindings.reload()
+
+      {:noreply,
+       change(socket, fn wb ->
+         wb
+         |> Workbench.set_dirty(path, false)
+         |> Workbench.set_status("Saved #{display_path(wb.root, path)}")
+       end)}
     else
       false ->
         {:noreply, socket}
 
       {:error, reason} ->
-        {:noreply,
-         put_flash(socket, :error, "Could not save #{rel(socket, path)}: #{inspect(reason)}")}
+        message = "Could not save #{display_path(socket.assigns.root, path)}: #{inspect(reason)}"
+        {:noreply, put_flash(socket, :error, message)}
     end
   end
 
-  def handle_event("toggle_menu", %{"menu" => menu}, socket) do
-    {:noreply, update(socket, :open_menu, &if(&1 == menu, do: nil, else: menu))}
-  end
-
-  def handle_event("close_menu", _params, socket), do: {:noreply, assign(socket, open_menu: nil)}
-
-  def handle_event("toggle_sidebar", _params, socket),
-    do: {:noreply, update(socket, :sidebar_open, &(!&1))}
+  def handle_event("open_problem", %{"path" => path}, socket),
+    do: {:noreply, change(socket, &Workbench.open_editor(&1, path))}
 
   ## Terminal
 
-  def handle_event("new_terminal", _params, socket), do: {:noreply, new_terminal(socket)}
-
-  def handle_event("toggle_panel", _params, socket), do: {:noreply, toggle_panel(socket)}
-
-  def handle_event("activate_terminal", %{"id" => id}, socket) do
-    id = String.to_integer(id)
-    {:noreply, if(terminal?(socket, id), do: assign(socket, active_term: id), else: socket)}
-  end
+  def handle_event("activate_terminal", %{"id" => id}, socket),
+    do: {:noreply, change(socket, &Workbench.activate_terminal(&1, String.to_integer(id)))}
 
   def handle_event("close_terminal", %{"id" => id}, socket),
-    do: {:noreply, close_terminal(socket, String.to_integer(id))}
-
-  def handle_event("close_active_terminal", _params, socket),
-    do: {:noreply, close_terminal(socket, socket.assigns.active_term)}
+    do: {:noreply, change(socket, &Workbench.kill_terminal(&1, String.to_integer(id)))}
 
   def handle_event("term_ready", %{"id" => id, "cols" => cols, "rows" => rows}, socket) do
-    if terminal?(socket, id) do
+    if Workbench.terminal?(workbench(socket), id) do
       Terminal.resize(id, cols, rows)
       {scrollback, seq} = Terminal.scrollback(id)
 
@@ -115,33 +160,50 @@ defmodule BeeWeb.EditorLive do
   end
 
   def handle_event("term_input", %{"id" => id, "data" => data}, socket) do
-    if terminal?(socket, id), do: Terminal.input(id, data)
+    if Workbench.terminal?(workbench(socket), id), do: Terminal.input(id, data)
     {:noreply, socket}
   end
 
   def handle_event("term_resize", %{"id" => id, "cols" => cols, "rows" => rows}, socket) do
-    if terminal?(socket, id), do: Terminal.resize(id, cols, rows)
+    if Workbench.terminal?(workbench(socket), id), do: Terminal.resize(id, cols, rows)
     {:noreply, socket}
   end
+
+  ## PubSub
 
   @impl true
   def handle_info({:open_file, rel}, socket) do
     case Workspace.resolve(rel) do
-      {:ok, abs} -> {:noreply, open(socket, abs)}
+      {:ok, abs} -> {:noreply, change(socket, &Workbench.open_editor(&1, abs))}
       {:error, _} -> {:noreply, put_flash(socket, :error, "Path outside workspace")}
     end
   end
 
   def handle_info({:fs_changed, path}, socket) do
-    send_update(BeeWeb.FileTreeComponent, id: "explorer", fs_changed: path)
+    send_update(BeeWeb.Workbench.FileTree, id: "explorer", fs_changed: path)
     {:noreply, socket}
   end
 
+  def handle_info({:settings_changed, settings, errors}, socket) do
+    if settings["files.exclude"] != socket.assigns.settings["files.exclude"],
+      do: send_update(BeeWeb.Workbench.FileTree, id: "explorer", refresh: true)
+
+    {:noreply, load_settings(socket, settings, errors)}
+  end
+
+  def handle_info({:keybindings_changed, bindings, errors}, socket),
+    do: {:noreply, load_keybindings(socket, bindings, errors)}
+
+  def handle_info(:commands_changed, socket),
+    do:
+      {:noreply,
+       assign(socket, commands: CommandRegistry.commands(), menus: CommandRegistry.menus())}
+
   def handle_info({:buffer_reloaded, path, text}, socket) do
-    if open?(socket, path) do
+    if Workbench.open?(workbench(socket), path) do
       {:noreply,
        socket
-       |> set_dirty(path, false)
+       |> change(&Workbench.set_dirty(&1, path, false))
        |> push_event("cm:reload", %{path: path, text: text})}
     else
       {:noreply, socket}
@@ -162,75 +224,60 @@ defmodule BeeWeb.EditorLive do
     end
   end
 
-  def handle_info({:term_exit, id, _reason}, socket), do: {:noreply, remove_terminal(socket, id)}
+  def handle_info({:term_exit, id, _reason}, socket),
+    do: {:noreply, change(socket, &Workbench.terminal_exited(&1, id))}
 
   # The remaining buffer events are for plugins and LSP.
   def handle_info(_msg, socket), do: {:noreply, socket}
 
-  defp open(socket, abs) do
-    if open?(socket, abs) do
-      activate(socket, abs)
-    else
-      case Buffer.open(abs) do
-        {:ok, buffer} ->
-          socket
-          |> update(:tabs, &(&1 ++ [%{path: abs, dirty: Buffer.dirty?(buffer)}]))
-          |> assign(active: abs)
-          |> push_event("cm:open", %{path: abs, text: buffer.text, lang: Bee.Lang.detect(abs)})
+  ## Workbench state and effects
 
-        {:error, reason} ->
-          put_flash(socket, :error, "Cannot open #{rel(socket, abs)}: #{inspect(reason)}")
-      end
-    end
+  defp workbench(socket), do: struct(Workbench, Map.take(socket.assigns, Workbench.fields()))
+
+  defp put_workbench(socket, wb),
+    do: assign(socket, Map.take(Map.from_struct(wb), Workbench.fields()))
+
+  # Applies `fun` (a Workbench function or command handler) and its effects.
+  defp change(socket, fun) do
+    {wb, effects} = Workbench.wrap(fun.(workbench(socket)))
+    socket |> put_workbench(wb) |> run_effects(effects)
   end
 
-  defp activate(socket, path) do
-    socket |> assign(active: path) |> push_event("cm:activate", %{path: path})
-  end
+  @doc false
+  def run_effects(socket, effects), do: Enum.reduce(effects, socket, &run_effect/2)
 
-  defp close_tab(socket, path) do
-    tabs = socket.assigns.tabs
+  defp run_effect({:push, event, payload}, socket), do: push_event(socket, event, payload)
 
-    case Enum.find_index(tabs, &(&1.path == path)) do
-      nil ->
+  defp run_effect({:open_file, path}, socket) do
+    case Buffer.open(path) do
+      {:ok, buffer} ->
         socket
+        |> change(&Workbench.editor_opened(&1, path, Buffer.dirty?(buffer)))
+        |> push_event("cm:open", %{
+          path: path,
+          text: buffer.text,
+          lang: Bee.Editor.Lang.detect(path)
+        })
 
-      index ->
-        Buffer.close(path)
-        remaining = List.delete_at(tabs, index)
-        socket = socket |> assign(tabs: remaining) |> push_event("cm:close", %{path: path})
-
-        cond do
-          socket.assigns.active != path -> socket
-          remaining == [] -> assign(socket, active: nil)
-          true -> activate(socket, Enum.at(remaining, min(index, length(remaining) - 1)).path)
-        end
+      {:error, reason} ->
+        message = "Cannot open #{display_path(socket.assigns.root, path)}: #{inspect(reason)}"
+        put_flash(socket, :error, message)
     end
   end
 
-  defp set_dirty(socket, path, dirty) do
-    update(socket, :tabs, fn tabs ->
-      Enum.map(tabs, fn
-        %{path: ^path} = tab -> %{tab | dirty: dirty}
-        tab -> tab
-      end)
-    end)
+  defp run_effect({:close_buffer, path}, socket) do
+    Buffer.close(path)
+    socket
   end
 
-  defp open?(socket, path), do: Enum.any?(socket.assigns.tabs, &(&1.path == path))
-
-  defp new_terminal(socket) do
+  defp run_effect(:new_terminal, socket) do
     id = System.unique_integer([:positive])
     shell = Terminal.default_shell()
     Phoenix.PubSub.subscribe(Bee.PubSub, Terminal.topic(id))
 
     case Terminal.start(id: id, owner: self(), shell: shell) do
       {:ok, _pid} ->
-        terminal = %{id: id, name: Path.basename(shell)}
-
-        socket
-        |> update(:terminals, &(&1 ++ [terminal]))
-        |> assign(active_term: id, panel_open: true)
+        change(socket, &Workbench.terminal_started(&1, id, Path.basename(shell)))
 
       {:error, reason} ->
         Phoenix.PubSub.unsubscribe(Bee.PubSub, Terminal.topic(id))
@@ -238,44 +285,169 @@ defmodule BeeWeb.EditorLive do
     end
   end
 
-  defp close_terminal(socket, id) do
-    if terminal?(socket, id) do
-      Terminal.stop(id)
-      remove_terminal(socket, id)
-    else
-      socket
+  defp run_effect({:stop_terminal, id}, socket) do
+    Terminal.stop(id)
+    run_effect({:forget_terminal, id}, socket)
+  end
+
+  defp run_effect({:forget_terminal, id}, socket) do
+    Phoenix.PubSub.unsubscribe(Bee.PubSub, Terminal.topic(id))
+    update(socket, :term_seq, &Map.delete(&1, id))
+  end
+
+  # The xterm views were unmounted; they re-attach via term_ready.
+  defp run_effect(:panel_hidden, socket), do: assign(socket, term_seq: %{})
+
+  defp run_effect({:exec_client, command}, socket),
+    do: push_event(socket, "bee:exec", %{command: command})
+
+  defp run_effect({:flash, kind, message}, socket), do: put_flash(socket, kind, message)
+
+  ## Command execution
+
+  defp run_command(socket, id) do
+    case Enum.find(socket.assigns.commands, &(&1.id == id)) do
+      nil ->
+        put_flash(socket, :error, "Command '#{id}' not found")
+
+      command ->
+        cond do
+          not CommandRegistry.enabled?(command, context(socket.assigns)) -> socket
+          command.runtime == :client -> run_effect({:exec_client, id}, socket)
+          true -> change(socket, fn wb -> apply_handler(command.handler, wb) end)
+        end
     end
   end
 
-  defp remove_terminal(socket, id) do
-    Phoenix.PubSub.unsubscribe(Bee.PubSub, Terminal.topic(id))
-    terminals = Enum.reject(socket.assigns.terminals, &(&1.id == id))
+  defp apply_handler({module, fun}, wb), do: apply(module, fun, [wb])
 
-    active =
-      cond do
-        socket.assigns.active_term != id -> socket.assigns.active_term
-        terminals == [] -> nil
-        true -> List.last(terminals).id
-      end
+  ## `when` context
 
-    socket
-    |> assign(terminals: terminals, active_term: active)
-    |> update(:term_seq, &Map.delete(&1, id))
+  @doc false
+  def context(assigns) do
+    assigns
+    |> Map.take(Workbench.fields())
+    |> then(&struct(Workbench, &1))
+    |> Workbench.context(assigns.settings)
   end
 
-  # Closing the panel unmounts the xterm hooks but keeps the shells running;
-  # reopening re-attaches them via term_ready. Opening an empty panel starts a shell.
-  defp toggle_panel(%{assigns: %{panel_open: true}} = socket),
-    do: assign(socket, panel_open: false, term_seq: %{})
+  ## Settings / keybindings → assigns
 
-  defp toggle_panel(%{assigns: %{terminals: []}} = socket), do: new_terminal(socket)
-  defp toggle_panel(socket), do: assign(socket, panel_open: true)
+  defp load_settings(socket, settings, errors) do
+    assign(socket,
+      settings: settings,
+      settings_errors: errors,
+      editor_settings: %{
+        fontSize: settings["editor.fontSize"],
+        tabSize: settings["editor.tabSize"],
+        wordWrap: settings["editor.wordWrap"],
+        lineNumbers: settings["editor.lineNumbers"],
+        theme: settings["workbench.colorTheme"]
+      },
+      terminal_settings: %{
+        fontSize: settings["terminal.integrated.fontSize"],
+        theme: settings["workbench.colorTheme"]
+      }
+    )
+  end
 
-  defp terminal?(socket, id), do: Enum.any?(socket.assigns.terminals, &(&1.id == id))
+  defp load_keybindings(socket, bindings, errors) do
+    client = Enum.map(bindings, &Map.take(&1, [:key, :mac, :command, :when]))
+    assign(socket, keybindings: bindings, keybinding_errors: errors, client_keybindings: client)
+  end
+
+  ## Menus and palette (rendering helpers)
+
+  defp menubar(assigns) do
+    ctx = context(assigns)
+    commands = Map.new(assigns.commands, &{&1.id, &1})
+
+    for menu <- assigns.menus do
+      items =
+        menu.items
+        |> Enum.flat_map(fn
+          :separator ->
+            [:separator]
+
+          %{command: id, when_ast: when_ast} ->
+            command = commands[id]
+
+            if command && Bee.Commands.When.eval(when_ast, ctx) do
+              [
+                %{
+                  command: id,
+                  label: command.title,
+                  shortcut: Keybindings.label(id, assigns.keybindings),
+                  disabled: not CommandRegistry.enabled?(command, ctx),
+                  checked: CommandRegistry.toggled?(command, ctx)
+                }
+              ]
+            else
+              []
+            end
+        end)
+        |> tidy_separators()
+
+      %{id: menu.id, label: menu.label, items: items}
+    end
+  end
+
+  # No leading, trailing or doubled separators once hidden items are gone.
+  defp tidy_separators(items) do
+    items
+    |> Enum.chunk_by(&(&1 == :separator))
+    |> Enum.reject(&(&1 |> hd() == :separator))
+    |> Enum.intersperse([:separator])
+    |> List.flatten()
+  end
+
+  defp palette_items(%{palette: nil}), do: []
+
+  defp palette_items(assigns) do
+    ctx = context(assigns)
+    query = String.downcase(assigns.palette.query)
+
+    assigns.commands
+    |> Enum.filter(&CommandRegistry.enabled?(&1, ctx))
+    |> Enum.map(
+      &%{
+        id: &1.id,
+        label: CommandRegistry.label(&1),
+        shortcut: Keybindings.label(&1.id, assigns.keybindings)
+      }
+    )
+    |> Enum.filter(&fuzzy_match?(String.downcase(&1.label), query))
+    # Contiguous matches ("term" in "Terminal") before scattered ones.
+    |> Enum.sort_by(&{not String.contains?(String.downcase(&1.label), query), &1.label})
+  end
+
+  # Every query character appears in order ("tgpan" matches "Toggle Panel").
+  defp fuzzy_match?(_label, ""), do: true
+
+  defp fuzzy_match?(label, query) do
+    Enum.reduce_while(String.graphemes(query), label, fn char, rest ->
+      case String.split(rest, char, parts: 2) do
+        [_, rest] -> {:cont, rest}
+        [_] -> {:halt, nil}
+      end
+    end) != nil
+  end
+
+  defp problems(assigns), do: assigns.settings_errors ++ assigns.keybinding_errors
+
+  ## Paths
 
   # "file — workspace", like VS Code's window title.
   defp window_title(nil, root), do: Path.basename(root)
   defp window_title(active, root), do: "#{Path.basename(active)} — #{Path.basename(root)}"
 
-  defp rel(socket, path), do: Bee.FS.relative(socket.assigns.root, path)
+  # Workspace-relative where possible; settings files get readable names.
+  defp display_path(root, path) do
+    cond do
+      path == Settings.user_path() -> "User Settings"
+      path == Keybindings.user_path() -> "Keyboard Shortcuts"
+      String.starts_with?(path, root <> "/") -> Path.relative_to(path, root)
+      true -> path
+    end
+  end
 end

@@ -1,4 +1,4 @@
-defmodule Bee.FS do
+defmodule Bee.Workspace.FS do
   @moduledoc """
   Pure filesystem helpers. Every path coming from the browser must go
   through `resolve/2` so it cannot escape the workspace root.
@@ -33,17 +33,20 @@ defmodule Bee.FS do
 
   @doc """
   Lists a directory relative to `root`: directories first, then files,
-  both alphabetically. Names in `exclude` are skipped.
+  both alphabetically. Entries whose path relative to `root` matches one of
+  the `exclude` globs (see `Bee.Workspace.Glob`) are skipped.
   """
   @spec list_dir(String.t(), String.t(), [String.t()]) :: [entry]
   def list_dir(root, rel, exclude \\ []) do
     with {:ok, abs} <- resolve(root, rel),
          {:ok, names} <- File.ls(abs) do
       names
-      |> Enum.reject(&(&1 in exclude))
       |> Enum.map(fn name ->
         type = if File.dir?(Path.join(abs, name)), do: :dir, else: :file
         %{name: name, path: relative(root, Path.join(abs, name)), type: type}
+      end)
+      |> Enum.reject(fn entry ->
+        Enum.any?(exclude, &Bee.Workspace.Glob.match?(&1, entry.path))
       end)
       |> Enum.sort_by(&{&1.type != :dir, String.downcase(&1.name)})
     else

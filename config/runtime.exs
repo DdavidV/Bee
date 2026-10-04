@@ -7,9 +7,15 @@ end
 config :bee, BeeWeb.Endpoint, http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
 if config_env() == :test do
-  config :bee, workspace_root: Path.join(System.tmp_dir!(), "bee_test_workspace")
+  config :bee,
+    workspace_root: Path.join(System.tmp_dir!(), "bee_test_workspace"),
+    config_dir: Path.join(System.tmp_dir!(), "bee_test_config"),
+    watch_files: false
 else
-  config :bee, workspace_root: System.get_env("BEE_ROOT") || File.cwd!()
+  # BEE_CONFIG_DIR: where settings.json / keybindings.json live (default ~/.config/bee)
+  config :bee,
+    workspace_root: System.get_env("BEE_ROOT") || File.cwd!(),
+    config_dir: System.get_env("BEE_CONFIG_DIR")
 end
 
 if config_env() == :dev do

@@ -8,22 +8,26 @@ defmodule Bee.Workspace do
 
   @topic "fs"
 
-  @exclude [".git", "_build", "deps", "node_modules", ".elixir_ls", ".expert"]
-
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
   def root, do: Path.expand(Application.fetch_env!(:bee, :workspace_root))
 
   def subscribe, do: Phoenix.PubSub.subscribe(Bee.PubSub, @topic)
 
-  def resolve(rel), do: Bee.FS.resolve(root(), rel)
+  def resolve(rel), do: Bee.Workspace.FS.resolve(root(), rel)
 
-  def list_dir(rel), do: Bee.FS.list_dir(root(), rel, @exclude)
+  def list_dir(rel), do: Bee.Workspace.FS.list_dir(root(), rel, Bee.Settings.excluded_globs())
 
   @impl true
   def init(_opts) do
-    with true <- File.dir?(root()),
-         {:ok, watcher} <- FileSystem.start_link(dirs: [root()]) do
+    # The config dir is watched too, so edits to settings/keybindings files
+    # made outside Bee are picked up.
+    dirs = Enum.filter([root(), Bee.Settings.user_dir()], &File.dir?/1)
+
+    # Off in tests, which simulate {:fs_changed, path} themselves.
+    with true <- Application.get_env(:bee, :watch_files, true) || :disabled_by_config,
+         [_ | _] <- dirs,
+         {:ok, watcher} <- FileSystem.start_link(dirs: dirs) do
       FileSystem.subscribe(watcher)
       {:ok, %{watcher: watcher}}
     else

@@ -62,7 +62,8 @@ defmodule Bee.MixProject do
       {:dns_cluster, "~> 0.2.0"},
       {:bandit, "~> 1.5"},
       {:erlexec, "~> 2.2"},
-      {:file_system, "~> 1.0"}
+      {:file_system, "~> 1.0"},
+      {:ex_json_schema, "~> 0.11.5"}
     ]
   end
 

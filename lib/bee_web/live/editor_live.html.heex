@@ -1,16 +1,25 @@
+<%!-- The Keybindings hook reads data-keybindings and data-context (the server
+     part of the `when` context; focus keys are added in the browser). --%>
 <div
   id="workbench"
   phx-hook="Keybindings"
+  data-theme={@settings["workbench.colorTheme"]}
+  data-keybindings={Jason.encode!(@client_keybindings)}
+  data-context={Jason.encode!(context(assigns))}
   class={[
     "h-screen w-screen grid grid-rows-[auto_1fr_auto] bg-base-100 text-base-content overflow-hidden",
     if(@sidebar_open, do: "grid-cols-[3rem_16rem_1fr]", else: "grid-cols-[3rem_1fr]")
   ]}
 >
-  <BeeWeb.TitleBar.title_bar
+  <BeeWeb.Workbench.TitleBar.title_bar
     title={window_title(@active, @root)}
+    palette={@palette}
+    palette_items={palette_items(assigns)}
+    palette_shortcut={
+      Bee.Commands.Keybindings.label("workbench.action.showCommands", @keybindings)
+    }
+    menus={menubar(assigns)}
     open_menu={@open_menu}
-    has_editor={@active != nil}
-    has_terminal={@active_term != nil}
     sidebar_open={@sidebar_open}
     panel_open={@panel_open}
   />
@@ -20,8 +29,9 @@
     <button
       id="toggle-sidebar"
       class={["btn btn-ghost btn-square btn-sm", @sidebar_open && "btn-active"]}
-      title="Toggle Explorer (Ctrl+B)"
-      phx-click="toggle_sidebar"
+      title="Explorer"
+      phx-click="run_command"
+      phx-value-command="workbench.action.toggleSidebarVisibility"
     >
       <.icon name="hero-document-duplicate" class="size-5" />
     </button>
@@ -32,10 +42,10 @@
     class={["bg-base-200 overflow-auto border-r border-base-300", !@sidebar_open && "hidden"]}
   >
     <.live_component
-      module={BeeWeb.FileTreeComponent}
+      module={BeeWeb.Workbench.FileTree}
       id="explorer"
       root={@root}
-      active={@active && Bee.FS.relative(@root, @active)}
+      active={@active && Bee.Workspace.FS.relative(@root, @active)}
     />
   </aside>
 
@@ -54,7 +64,7 @@
         ]}
         phx-click="activate_tab"
         phx-value-path={tab.path}
-        title={Bee.FS.relative(@root, tab.path)}
+        title={Bee.Workspace.FS.relative(@root, tab.path)}
       >
         <span>{Path.basename(tab.path)}</span>
         <button
@@ -74,7 +84,14 @@
     </div>
 
     <div class="flex-1 min-h-0 relative">
-      <div id="editor" phx-hook="CodeEditor" phx-update="ignore" class="absolute inset-0"></div>
+      <div
+        id="editor"
+        phx-hook="CodeEditor"
+        phx-update="ignore"
+        data-settings={Jason.encode!(@editor_settings)}
+        class="absolute inset-0"
+      >
+      </div>
       <div
         :if={@tabs == []}
         class="absolute inset-0 grid place-items-center bg-base-100 text-sm"
@@ -82,8 +99,21 @@
         <div class="text-center space-y-1 opacity-40">
           <div class="text-4xl">🐝</div>
           <div>Open a file from the explorer</div>
-          <div>Ctrl+S · Save</div>
-          <div>Ctrl+J · Terminal</div>
+          <div :for={
+            {label, command} <- [
+              {"Show All Commands", "workbench.action.showCommands"},
+              {"Toggle Terminal", "workbench.action.togglePanel"},
+              {"Open Settings", "workbench.action.openSettingsJson"}
+            ]
+          }>
+            {label}
+            <kbd
+              :if={key = Bee.Commands.Keybindings.label(command, @keybindings)}
+              class="kbd kbd-xs ml-1"
+            >
+              {key}
+            </kbd>
+          </div>
         </div>
       </div>
     </div>
@@ -115,7 +145,8 @@
         <button
           class="btn btn-ghost btn-xs btn-square"
           title="New Terminal"
-          phx-click="new_terminal"
+          phx-click="run_command"
+          phx-value-command="workbench.action.terminal.new"
         >
           <.icon name="hero-plus" class="size-4" />
         </button>
@@ -131,7 +162,8 @@
         <button
           class="btn btn-ghost btn-xs btn-square"
           title="Close Panel"
-          phx-click="toggle_panel"
+          phx-click="run_command"
+          phx-value-command="workbench.action.togglePanel"
         >
           <.icon name="hero-x-mark" class="size-4" />
         </button>
@@ -144,6 +176,7 @@
           phx-update="ignore"
           data-id={term.id}
           data-active={to_string(term.id == @active_term)}
+          data-settings={Jason.encode!(@terminal_settings)}
           class="absolute inset-0 pl-2 pt-1 data-[active=false]:invisible"
         >
         </div>
@@ -154,9 +187,22 @@
   <%!-- Status bar --%>
   <footer class="col-span-full h-6 bg-primary text-primary-content text-xs flex items-center gap-4 px-3">
     <span class="truncate">{@root}</span>
+    <button
+      :if={(problems = problems(assigns)) != []}
+      id="problems"
+      class="flex items-center gap-1 cursor-pointer hover:underline"
+      title={Enum.map_join(problems, "\n", &"#{Path.basename(&1.path)}: #{&1.message}")}
+      phx-click="open_problem"
+      phx-value-path={hd(problems).path}
+    >
+      <.icon name="hero-exclamation-triangle-micro" class="size-3.5" />
+      {length(problems)} {if length(problems) == 1, do: "problem", else: "problems"} in settings
+    </button>
     <div class="flex-1" />
+    <%!-- Filled in by the Keybindings hook while a chord is pending --%>
+    <span id="keybinding-status" phx-update="ignore"></span>
     <span :if={@status} id="status" class="truncate">{@status}</span>
-    <span :if={@active} id="status-lang">{Bee.Lang.detect(@active)}</span>
+    <span :if={@active} id="status-lang">{Bee.Editor.Lang.detect(@active)}</span>
   </footer>
 
   <Layouts.flash_group flash={@flash} />

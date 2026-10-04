@@ -1,27 +1,105 @@
-// Workbench-wide shortcuts, mounted on #workbench.
+// Keyboard dispatcher, mounted on #workbench.
 //
-// Listens in the capture phase so shortcuts work while focus is inside
-// CodeMirror or xterm (which would otherwise consume the key).
+// data-keybindings: resolved bindings from Bee.Commands.Keybindings
+//   [{key: ["ctrl+k", "ctrl+s"], mac: [...], command, when: <Bee.Commands.When AST>}]
+// data-context: the server half of the `when` context (Bee.Workbench.context/2);
+//   focus-related keys are added here.
+//
+// Matching follows VS Code: the last binding whose keys match and whose
+// `when` holds wins; a stroke that starts a chord waits for the next one.
+// Matched commands go through the server (`run_command`), which checks
+// enablement and answers `bee:exec` for commands implemented in the browser.
+// Listens in the capture phase so it sees keys before CodeMirror and xterm.
 
-const BINDINGS = [
-  // Ctrl/Cmd+B. Like VS Code, this wins over the terminal (so ^B never reaches the shell).
-  {match: e => (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.code === "KeyB", event: "toggle_sidebar"},
-  // Ctrl/Cmd+J, as in VS Code (also overrides the browser's Downloads shortcut; ^J never reaches the shell).
-  {match: e => (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.code === "KeyJ", event: "toggle_panel"},]
+import {strokeFromEvent, label, isMac} from "../commands/keys"
+import {evaluate} from "../commands/when"
+import {exec} from "../commands/registry"
+
+const startsWith = (strokes, prefix) => prefix.every((s, i) => strokes[i] === s)
 
 export const Keybindings = {
   mounted() {
-    this.onKeydown = e => {
-      const binding = BINDINGS.find(b => b.match(e))
-      if (!binding) return
-      e.preventDefault()
-      e.stopPropagation()
-      this.pushEvent(binding.event, {})
-    }
+    this.pending = null
+    this.load()
+    this.handleEvent("bee:exec", ({command}) => exec(command))
+    this.onKeydown = e => this.keydown(e)
     window.addEventListener("keydown", this.onKeydown, true)
+  },
+
+  updated() {
+    this.load()
   },
 
   destroyed() {
     window.removeEventListener("keydown", this.onKeydown, true)
+  },
+
+  load() {
+    this.bindings = JSON.parse(this.el.dataset.keybindings || "[]")
+      .map(b => ({...b, strokes: isMac ? b.mac : b.key}))
+    this.serverContext = JSON.parse(this.el.dataset.context || "{}")
+  },
+
+  context() {
+    const el = document.activeElement
+    const inEditor = !!el?.closest?.("#editor .cm-editor")
+    const inTerminal = !!el?.closest?.(".xterm")
+    const textInput = !!el && (el.isContentEditable || el.tagName === "INPUT" || el.tagName === "TEXTAREA")
+    const platform = navigator.platform
+    return {
+      ...this.serverContext,
+      editorFocus: inEditor,
+      editorTextFocus: inEditor,
+      terminalFocus: inTerminal,
+      textInputFocus: textInput,
+      inputFocus: textInput,
+      isMac,
+      isLinux: platform.includes("Linux"),
+      isWindows: platform.startsWith("Win"),
+      isWeb: true,
+    }
+  },
+
+  keydown(e) {
+    const stroke = strokeFromEvent(e)
+    if (!stroke) return
+
+    const seq = this.pending ? [...this.pending, stroke] : [stroke]
+    const ctx = this.context()
+    const candidates = this.bindings.filter(b => startsWith(b.strokes, seq) && evaluate(b.when, ctx))
+
+    // A longer chord starting with these strokes takes precedence, as in VS Code.
+    if (candidates.some(b => b.strokes.length > seq.length)) {
+      this.stop(e)
+      this.pending = seq
+      this.status(`(${seq.map(label).join(" ")}) was pressed. Waiting for second key of chord...`)
+      return
+    }
+
+    const wasChord = this.pending !== null
+    this.pending = null
+    const match = candidates.findLast(b => b.strokes.length === seq.length)
+
+    if (match) {
+      this.stop(e)
+      this.status("")
+      this.pushEvent("run_command", {command: match.command})
+    } else if (wasChord) {
+      this.stop(e)
+      this.status(`The key combination (${seq.map(label).join(" ")}) is not a command.`, 3000)
+    }
+  },
+
+  stop(e) {
+    e.preventDefault()
+    e.stopPropagation()
+  },
+
+  status(text, clearAfter) {
+    const el = document.getElementById("keybinding-status")
+    if (!el) return
+    clearTimeout(this.statusTimer)
+    el.textContent = text
+    if (clearAfter) this.statusTimer = setTimeout(() => (el.textContent = ""), clearAfter)
   },
 }

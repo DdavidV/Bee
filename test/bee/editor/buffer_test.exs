@@ -1,7 +1,7 @@
-defmodule Bee.BufferTest do
+defmodule Bee.Editor.BufferTest do
   use ExUnit.Case, async: true
 
-  alias Bee.Buffer
+  alias Bee.Editor.Buffer
 
   setup do
     dir = Path.join(System.tmp_dir!(), "bee_buffer_test_#{System.unique_integer([:positive])}")

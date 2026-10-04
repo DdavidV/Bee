@@ -1,7 +1,7 @@
-defmodule Bee.FSTest do
+defmodule Bee.Workspace.FSTest do
   use ExUnit.Case, async: true
 
-  alias Bee.FS
+  alias Bee.Workspace.FS
 
   setup do
     tmp_dir = Path.join(System.tmp_dir!(), "bee_fs_test_#{System.unique_integer([:positive])}")
@@ -40,9 +40,17 @@ defmodule Bee.FSTest do
                %{name: "zdir", path: "zdir", type: :dir},
                %{name: "A.txt", path: "A.txt", type: :file},
                %{name: "b.txt", path: "b.txt", type: :file}
-             ] = FS.list_dir(root, "", [".git"])
+             ] = FS.list_dir(root, "", ["**/.git"])
 
       assert [%{name: "nested", path: "Adir/nested", type: :dir}] = FS.list_dir(root, "Adir")
+    end
+
+    test "exclude globs match the path relative to the root", %{tmp_dir: root} do
+      File.mkdir_p!(Path.join(root, "a/deps"))
+      File.mkdir_p!(Path.join(root, "a/keep"))
+
+      assert [%{name: "keep"}] = FS.list_dir(root, "a", ["**/deps"])
+      assert [_, _] = FS.list_dir(root, "a", ["deps"]), "unanchored name only matches at the root"
     end
 
     test "returns [] for missing or escaping paths", %{tmp_dir: root} do

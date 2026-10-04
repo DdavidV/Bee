@@ -1,4 +1,4 @@
-defmodule Bee.Buffer do
+defmodule Bee.Editor.Buffer do
   @moduledoc """
   One process per open file. Holds the latest text from the editor and the
   last text known to be on disk: the buffer is dirty when they differ.
@@ -99,7 +99,7 @@ defmodule Bee.Buffer do
   def handle_call({:save, text}, _from, state) do
     state = put_text(state, text)
 
-    case Bee.FS.atomic_write(state.path, text) do
+    case Bee.Workspace.FS.atomic_write(state.path, text) do
       :ok ->
         state = %{state | disk_text: text}
         broadcast({:buffer_saved, state.path, text})

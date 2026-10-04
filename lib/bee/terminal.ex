@@ -20,7 +20,7 @@ defmodule Bee.Terminal do
 
   def topic(id), do: "term:#{id}"
 
-  def default_shell, do: System.get_env("SHELL") || "/bin/bash"
+  def default_shell, do: Bee.Settings.get("terminal.integrated.shell")
 
   def input(id, data), do: GenServer.cast(via(id), {:input, data})
   def resize(id, cols, rows), do: GenServer.cast(via(id), {:resize, cols, rows})

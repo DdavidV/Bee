@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "bee://schemas/keybindings.schema.json",
+  "title": "Bee keybindings",
+  "description": "User keybindings (~/.config/bee/keybindings.json). Later entries win; a command prefixed with '-' removes earlier bindings of that command.",
+  "type": "array",
+  "items": {"$ref": "#/definitions/keybinding"},
+  "definitions": {
+    "keybinding": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Key or chord, e.g. \"ctrl+shift+p\" or \"ctrl+k ctrl+s\"."
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Command id; prefix with '-' to remove bindings of that command."
+        },
+        "when": {
+          "type": "string",
+          "description": "Condition under which the binding is active, e.g. \"editorFocus && !inQuickOpen\"."
+        },
+        "args": {
+          "description": "Arguments for the command (reserved; not used yet)."
+        }
+      },
+      "required": ["command"],
+      "additionalProperties": false,
+      "if": {"properties": {"command": {"pattern": "^-"}}},
+      "else": {"required": ["key"]}
+    }
+  }
+}

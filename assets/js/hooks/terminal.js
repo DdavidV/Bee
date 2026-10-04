@@ -12,7 +12,7 @@ import {FitAddon} from "@xterm/addon-fit"
 
 const decode = base64 => Uint8Array.from(atob(base64), c => c.charCodeAt(0))
 
-const THEME = {
+const DARK = {
   background: "#282c34",
   foreground: "#abb2bf",
   cursor: "#528bff",
@@ -35,16 +35,43 @@ const THEME = {
   brightWhite: "#ffffff",
 }
 
+const LIGHT = {
+  background: "#ffffff",
+  foreground: "#383a42",
+  cursor: "#526fff",
+  selectionBackground: "#e5e5e6",
+  black: "#383a42",
+  red: "#e45649",
+  green: "#50a14f",
+  yellow: "#c18401",
+  blue: "#4078f2",
+  magenta: "#a626a4",
+  cyan: "#0184bc",
+  white: "#a0a1a7",
+  brightBlack: "#696c77",
+  brightRed: "#e45649",
+  brightGreen: "#50a14f",
+  brightYellow: "#c18401",
+  brightBlue: "#4078f2",
+  brightMagenta: "#a626a4",
+  brightCyan: "#0184bc",
+  brightWhite: "#ffffff",
+}
+
+// data-settings: {fontSize, theme} from terminal.integrated.fontSize / workbench.colorTheme
+const readSettings = el => ({fontSize: 13, theme: "dark", ...JSON.parse(el.dataset.settings || "{}")})
+
 export const Terminal = {
   mounted() {
     this.id = Number(this.el.dataset.id)
     this.ready = false
 
+    this.settings = readSettings(this.el)
     this.term = new XTerm({
       cursorBlink: true,
-      fontSize: 13,
+      fontSize: this.settings.fontSize,
       fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
-      theme: THEME,
+      theme: this.settings.theme === "light" ? LIGHT : DARK,
       scrollback: 5000,
     })
     this.fitAddon = new FitAddon()
@@ -72,6 +99,12 @@ export const Terminal = {
 
   // Called when data-active changes (the only attributes LiveView patches here).
   updated() {
+    const settings = readSettings(this.el)
+    if (JSON.stringify(settings) !== JSON.stringify(this.settings)) {
+      this.settings = settings
+      this.term.options.fontSize = settings.fontSize
+      this.term.options.theme = settings.theme === "light" ? LIGHT : DARK
+    }
     this.fit()
     this.focusIfActive()
   },

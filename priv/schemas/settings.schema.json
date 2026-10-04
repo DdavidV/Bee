@@ -1,0 +1,68 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "bee://schemas/settings.schema.json",
+  "title": "Bee settings",
+  "description": "User (~/.config/bee/settings.json) and workspace (.bee/settings.json) settings. Unknown keys are allowed so plugins can add their own.",
+  "type": "object",
+  "properties": {
+    "editor.fontSize": {
+      "type": "integer",
+      "minimum": 6,
+      "maximum": 72,
+      "default": 14,
+      "description": "Font size of the editor in pixels."
+    },
+    "editor.tabSize": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 16,
+      "default": 2,
+      "description": "Number of spaces a tab is equal to."
+    },
+    "editor.wordWrap": {
+      "type": "string",
+      "enum": ["off", "on"],
+      "default": "off",
+      "description": "Whether long lines wrap."
+    },
+    "editor.lineNumbers": {
+      "type": "string",
+      "enum": ["on", "off"],
+      "default": "on",
+      "description": "Whether line numbers are shown."
+    },
+    "workbench.colorTheme": {
+      "type": "string",
+      "enum": ["dark", "light"],
+      "default": "dark",
+      "description": "Color theme of the workbench, editor and terminal."
+    },
+    "files.exclude": {
+      "type": "object",
+      "additionalProperties": {"type": "boolean"},
+      "default": {
+        "**/.git": true,
+        "**/_build": true,
+        "**/deps": true,
+        "**/node_modules": true,
+        "**/.elixir_ls": true,
+        "**/.expert": true
+      },
+      "description": "Glob patterns (relative to the workspace) hidden from the explorer. Merged with the defaults; set a pattern to false to show it again."
+    },
+    "terminal.integrated.shell": {
+      "type": "string",
+      "minLength": 1,
+      "default": "/bin/bash",
+      "description": "Shell started by new terminals. Defaults to $SHELL when it is set."
+    },
+    "terminal.integrated.fontSize": {
+      "type": "integer",
+      "minimum": 6,
+      "maximum": 72,
+      "default": 13,
+      "description": "Font size of the terminal in pixels."
+    }
+  },
+  "additionalProperties": true
+}

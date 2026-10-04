@@ -1,4 +1,4 @@
-defmodule BeeWeb.FileTreeComponent do
+defmodule BeeWeb.Workbench.FileTree do
   @moduledoc """
   Explorer sidebar. Directories are listed lazily when expanded.
   Clicking a file sends `{:open_file, rel_path}` to the parent LiveView.
@@ -13,13 +13,21 @@ defmodule BeeWeb.FileTreeComponent do
 
   @impl true
   def update(%{fs_changed: abs}, socket) do
-    dir = abs |> Path.dirname() |> then(&Bee.FS.relative(Bee.Workspace.root(), &1))
+    dir = abs |> Path.dirname() |> then(&Bee.Workspace.FS.relative(Bee.Workspace.root(), &1))
 
     if Map.has_key?(socket.assigns.children, dir) do
       {:ok, update(socket, :children, &Map.put(&1, dir, Bee.Workspace.list_dir(dir)))}
     else
       {:ok, socket}
     end
+  end
+
+  # files.exclude changed: re-list every loaded directory.
+  def update(%{refresh: true}, socket) do
+    {:ok,
+     update(socket, :children, fn children ->
+       Map.new(children, fn {dir, _} -> {dir, Bee.Workspace.list_dir(dir)} end)
+     end)}
   end
 
   def update(assigns, socket), do: {:ok, assign(socket, assigns)}

@@ -4,14 +4,26 @@
 // EditorState (document, selection, undo history) in `this.states`, and
 // switching tabs swaps the state into the view.
 //
+// Settings arrive in data-settings (editor.* and workbench.colorTheme) and
+// are applied through compartments to the active and all inactive states.
+//
 // Server -> client: cm:open, cm:activate, cm:close, cm:reload
 // Client -> server: doc_changed (throttled), save
+// Client command:   workbench.action.files.save
 
-import {basicSetup} from "codemirror"
-import {EditorState, Prec} from "@codemirror/state"
-import {EditorView, keymap} from "@codemirror/view"
-import {indentWithTab} from "@codemirror/commands"
-import {StreamLanguage, indentUnit} from "@codemirror/language"
+import {EditorState, Compartment} from "@codemirror/state"
+import {
+  EditorView, keymap, lineNumbers, highlightActiveLineGutter, highlightSpecialChars,
+  drawSelection, dropCursor, rectangularSelection, crosshairCursor, highlightActiveLine,
+} from "@codemirror/view"
+import {history, defaultKeymap, historyKeymap, indentWithTab} from "@codemirror/commands"
+import {
+  StreamLanguage, indentUnit, foldGutter, indentOnInput, syntaxHighlighting,
+  defaultHighlightStyle, bracketMatching, foldKeymap,
+} from "@codemirror/language"
+import {highlightSelectionMatches, searchKeymap} from "@codemirror/search"
+import {closeBrackets, autocompletion, closeBracketsKeymap, completionKeymap} from "@codemirror/autocomplete"
+import {lintKeymap} from "@codemirror/lint"
 import {oneDark} from "@codemirror/theme-one-dark"
 import {javascript} from "@codemirror/lang-javascript"
 import {json} from "@codemirror/lang-json"
@@ -24,8 +36,9 @@ import {shell} from "@codemirror/legacy-modes/mode/shell"
 import {yaml} from "@codemirror/legacy-modes/mode/yaml"
 import {toml} from "@codemirror/legacy-modes/mode/toml"
 import {dockerFile} from "@codemirror/legacy-modes/mode/dockerfile"
+import {registerCommand} from "../commands/registry"
 
-// Keys are Bee.Lang ids.
+// Keys are Bee.Editor.Lang ids.
 const LANGUAGES = {
   elixir: () => elixir(),
   erlang: () => StreamLanguage.define(erlang),
@@ -41,13 +54,53 @@ const LANGUAGES = {
   dockerfile: () => StreamLanguage.define(dockerFile),
 }
 
-const TAB_SIZE = 2
-
 const SYNC_MS = 300
 
-const baseTheme = EditorView.theme({
-  "&": {height: "100%", fontSize: "14px"},
-  ".cm-scroller": {fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"},
+// CodeMirror's basicSetup, minus lineNumbers (a setting, see below).
+const setup = [
+  highlightSpecialChars(),
+  history(),
+  foldGutter(),
+  drawSelection(),
+  dropCursor(),
+  EditorState.allowMultipleSelections.of(true),
+  indentOnInput(),
+  syntaxHighlighting(defaultHighlightStyle, {fallback: true}),
+  bracketMatching(),
+  closeBrackets(),
+  autocompletion(),
+  rectangularSelection(),
+  crosshairCursor(),
+  highlightActiveLine(),
+  highlightSelectionMatches(),
+  keymap.of([
+    ...closeBracketsKeymap, ...defaultKeymap, ...searchKeymap, ...historyKeymap,
+    ...foldKeymap, ...completionKeymap, ...lintKeymap, indentWithTab,
+  ]),
+  EditorView.theme({
+    "&": {height: "100%"},
+    "&.cm-focused": {outline: "none"},
+    ".cm-scroller": {fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"},
+  }),
+]
+
+// One compartment per setting group, shared by all states.
+const compartments = {
+  theme: new Compartment(),
+  fontSize: new Compartment(),
+  tabSize: new Compartment(),
+  wordWrap: new Compartment(),
+  lineNumbers: new Compartment(),
+}
+
+const DEFAULTS = {fontSize: 14, tabSize: 2, wordWrap: "off", lineNumbers: "on", theme: "dark"}
+
+const settingExtensions = s => ({
+  theme: s.theme === "light" ? [] : oneDark,
+  fontSize: EditorView.theme({"&": {fontSize: `${s.fontSize}px`}}),
+  tabSize: [EditorState.tabSize.of(s.tabSize), indentUnit.of(" ".repeat(s.tabSize))],
+  wordWrap: s.wordWrap === "on" ? EditorView.lineWrapping : [],
+  lineNumbers: s.lineNumbers === "on" ? [lineNumbers(), highlightActiveLineGutter()] : [],
 })
 
 export const CodeEditor = {
@@ -56,6 +109,7 @@ export const CodeEditor = {
     this.active = null
     this.timers = new Map() // path -> throttle timer
     this.pending = new Set() // paths with changes not yet sent
+    this.settings = this.readSettings()
 
     this.view = new EditorView({parent: this.el, state: EditorState.create()})
 
@@ -64,41 +118,44 @@ export const CodeEditor = {
     this.handleEvent("cm:close", ({path}) => this.close(path))
     this.handleEvent("cm:reload", ({path, text}) => this.reload(path, text))
 
-    // Ctrl/Cmd+S outside the editor (e.g. after clicking a tab) saves the active
-    // file instead of opening the browser's "Save page" dialog.
-    this.onKeydown = e => {
-      if ((e.ctrlKey || e.metaKey) && e.key === "s") {
-        e.preventDefault()
-        if (this.active) this.save(this.active)
-      }
-    }
-    window.addEventListener("keydown", this.onKeydown)
+    this.unregisterSave = registerCommand("workbench.action.files.save", () => {
+      if (this.active) this.save(this.active)
+    })
+  },
 
-    // File > Save in the title bar.
-    this.el.addEventListener("bee:save", () => this.active && this.save(this.active))
+  // LiveView patches data-settings even though the content is ignored.
+  updated() {
+    const settings = this.readSettings()
+    if (JSON.stringify(settings) !== JSON.stringify(this.settings)) this.configure(settings)
   },
 
   destroyed() {
-    window.removeEventListener("keydown", this.onKeydown)
+    this.unregisterSave()
     this.timers.forEach(clearTimeout)
     this.view.destroy()
   },
 
+  readSettings() {
+    return {...DEFAULTS, ...JSON.parse(this.el.dataset.settings || "{}")}
+  },
+
+  configure(settings) {
+    this.settings = settings
+    const exts = settingExtensions(settings)
+    const effects = Object.entries(compartments).map(([name, c]) => c.reconfigure(exts[name]))
+    this.view.dispatch({effects})
+    for (const [path, state] of this.states) this.states.set(path, state.update({effects}).state)
+  },
+
   createState(path, text, lang) {
     const language = LANGUAGES[lang]
+    const exts = settingExtensions(this.settings)
     return EditorState.create({
       doc: text,
       extensions: [
-        basicSetup,
-        Prec.high(keymap.of([
-          {key: "Mod-s", preventDefault: true, run: () => (this.save(path), true)},
-        ])),
-        keymap.of([indentWithTab]),
+        setup,
         language ? language() : [],
-        EditorState.tabSize.of(TAB_SIZE),
-        indentUnit.of(" ".repeat(TAB_SIZE)),
-        oneDark,
-        baseTheme,
+        Object.entries(compartments).map(([name, c]) => c.of(exts[name])),
         EditorView.updateListener.of(update => {
           if (update.docChanged) this.changed(path)
         }),

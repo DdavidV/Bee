@@ -1,0 +1,108 @@
+{
+  "$schema": "../schemas/contributions.schema.json",
+  "name": "bee",
+  "description": "Bee's own commands, default keybindings and menus. Plugins contribute in the same format. Command ids follow VS Code. Close Editor has no default key: browsers don't let pages intercept Ctrl+W.",
+  "contributes": {
+    "commands": [
+      {
+        "command": "workbench.action.showCommands",
+        "title": "Show All Commands",
+        "runtime": "server"
+      },
+      {
+        "command": "workbench.action.files.save",
+        "category": "File",
+        "title": "Save",
+        "runtime": "client",
+        "enablement": "activeEditor"
+      },
+      {
+        "command": "workbench.action.closeActiveEditor",
+        "category": "View",
+        "title": "Close Editor",
+        "runtime": "server",
+        "enablement": "activeEditor"
+      },
+      {
+        "command": "workbench.action.toggleSidebarVisibility",
+        "category": "View",
+        "title": "Toggle Primary Side Bar Visibility",
+        "runtime": "server",
+        "toggled": "sideBarVisible"
+      },
+      {
+        "command": "workbench.action.togglePanel",
+        "category": "View",
+        "title": "Toggle Panel Visibility",
+        "runtime": "server",
+        "toggled": "panelVisible"
+      },
+      {
+        "command": "workbench.action.terminal.new",
+        "category": "Terminal",
+        "title": "Create New Terminal",
+        "runtime": "server"
+      },
+      {
+        "command": "workbench.action.terminal.kill",
+        "category": "Terminal",
+        "title": "Kill the Active Terminal Instance",
+        "runtime": "server",
+        "enablement": "terminalCount > 0"
+      },
+      {
+        "command": "workbench.action.openSettingsJson",
+        "category": "Preferences",
+        "title": "Open User Settings (JSON)",
+        "runtime": "server"
+      },
+      {
+        "command": "workbench.action.openWorkspaceSettingsFile",
+        "category": "Preferences",
+        "title": "Open Workspace Settings (JSON)",
+        "runtime": "server"
+      },
+      {
+        "command": "workbench.action.openGlobalKeybindingsFile",
+        "category": "Preferences",
+        "title": "Open Keyboard Shortcuts (JSON)",
+        "runtime": "server"
+      }
+    ],
+
+    "keybindings": [
+      {"key": "f1", "command": "workbench.action.showCommands"},
+      {"key": "ctrl+shift+p", "mac": "cmd+shift+p", "command": "workbench.action.showCommands"},
+      {"key": "ctrl+s", "mac": "cmd+s", "command": "workbench.action.files.save"},
+      {"key": "ctrl+b", "mac": "cmd+b", "command": "workbench.action.toggleSidebarVisibility"},
+      {"key": "ctrl+j", "mac": "cmd+j", "command": "workbench.action.togglePanel"},
+      {"key": "ctrl+,", "mac": "cmd+,", "command": "workbench.action.openSettingsJson"},
+      {"key": "ctrl+k ctrl+s", "mac": "cmd+k cmd+s", "command": "workbench.action.openGlobalKeybindingsFile"}
+    ],
+
+    "menubar": [
+      {"id": "file", "label": "File"},
+      {"id": "view", "label": "View"},
+      {"id": "terminal", "label": "Terminal"}
+    ],
+
+    "menus": {
+      "menubar/file": [
+        {"command": "workbench.action.files.save", "group": "1_save@1"},
+        {"command": "workbench.action.closeActiveEditor", "group": "1_save@2"},
+        {"command": "workbench.action.openSettingsJson", "group": "2_preferences@1"},
+        {"command": "workbench.action.openWorkspaceSettingsFile", "group": "2_preferences@2"},
+        {"command": "workbench.action.openGlobalKeybindingsFile", "group": "2_preferences@3"}
+      ],
+      "menubar/view": [
+        {"command": "workbench.action.showCommands", "group": "1_commands@1"},
+        {"command": "workbench.action.toggleSidebarVisibility", "group": "2_layout@1"},
+        {"command": "workbench.action.togglePanel", "group": "2_layout@2"}
+      ],
+      "menubar/terminal": [
+        {"command": "workbench.action.terminal.new", "group": "1_terminal@1"},
+        {"command": "workbench.action.terminal.kill", "group": "1_terminal@2"}
+      ]
+    }
+  }
+}
