@@ -5,10 +5,15 @@ defmodule BeeWeb.EditorLive do
   Text lives in CodeMirror on the client (`CodeEditor` hook) and in a
   `Bee.Buffer` process per file on the server; this LiveView routes between
   them. Tabs are keyed by absolute path.
+
+  Terminals are `Bee.Terminal` processes owned by this LiveView, rendered by
+  the `Terminal` hook (xterm.js). Output is only forwarded once the hook has
+  reported ready and replayed the scrollback; `term_seq` holds the last
+  sequence number forwarded per terminal.
   """
   use BeeWeb, :live_view
 
-  alias Bee.{Buffer, Workspace}
+  alias Bee.{Buffer, Terminal, Workspace}
 
   @impl true
   def mount(_params, _session, socket) do
@@ -23,7 +28,12 @@ defmodule BeeWeb.EditorLive do
        root: Workspace.root(),
        tabs: [],
        active: nil,
-       status: nil
+       status: nil,
+       sidebar_open: true,
+       terminals: [],
+       active_term: nil,
+       term_seq: %{},
+       panel_open: false
      )}
   end
 
@@ -57,6 +67,56 @@ defmodule BeeWeb.EditorLive do
     end
   end
 
+  def handle_event("toggle_sidebar", _params, socket),
+    do: {:noreply, update(socket, :sidebar_open, &(!&1))}
+
+  ## Terminal
+
+  def handle_event("new_terminal", _params, socket), do: {:noreply, new_terminal(socket)}
+
+  def handle_event("toggle_panel", _params, socket), do: {:noreply, toggle_panel(socket)}
+
+  def handle_event("activate_terminal", %{"id" => id}, socket) do
+    id = String.to_integer(id)
+    {:noreply, if(terminal?(socket, id), do: assign(socket, active_term: id), else: socket)}
+  end
+
+  def handle_event("close_terminal", %{"id" => id}, socket) do
+    id = String.to_integer(id)
+
+    if terminal?(socket, id) do
+      Terminal.stop(id)
+      {:noreply, remove_terminal(socket, id)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_event("term_ready", %{"id" => id, "cols" => cols, "rows" => rows}, socket) do
+    if terminal?(socket, id) do
+      Terminal.resize(id, cols, rows)
+      {scrollback, seq} = Terminal.scrollback(id)
+
+      {:reply, %{data: Base.encode64(scrollback)},
+       update(socket, :term_seq, &Map.put(&1, id, seq))}
+    else
+      {:reply, %{data: ""}, socket}
+    end
+  catch
+    # The shell exited in the meantime; :term_exit removes the tab.
+    :exit, _ -> {:reply, %{data: ""}, socket}
+  end
+
+  def handle_event("term_input", %{"id" => id, "data" => data}, socket) do
+    if terminal?(socket, id), do: Terminal.input(id, data)
+    {:noreply, socket}
+  end
+
+  def handle_event("term_resize", %{"id" => id, "cols" => cols, "rows" => rows}, socket) do
+    if terminal?(socket, id), do: Terminal.resize(id, cols, rows)
+    {:noreply, socket}
+  end
+
   @impl true
   def handle_info({:open_file, rel}, socket) do
     case Workspace.resolve(rel) do
@@ -80,6 +140,22 @@ defmodule BeeWeb.EditorLive do
       {:noreply, socket}
     end
   end
+
+  def handle_info({:term_data, id, seq, data}, socket) do
+    case socket.assigns.term_seq do
+      %{^id => last} when seq > last ->
+        {:noreply,
+         socket
+         |> push_event("term:data", %{id: id, data: Base.encode64(data)})
+         |> update(:term_seq, &Map.put(&1, id, seq))}
+
+      # Not attached yet (replayed from scrollback on term_ready) or already sent.
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
+  def handle_info({:term_exit, id, _reason}, socket), do: {:noreply, remove_terminal(socket, id)}
 
   # The remaining buffer events are for plugins and LSP.
   def handle_info(_msg, socket), do: {:noreply, socket}
@@ -135,6 +211,51 @@ defmodule BeeWeb.EditorLive do
   end
 
   defp open?(socket, path), do: Enum.any?(socket.assigns.tabs, &(&1.path == path))
+
+  defp new_terminal(socket) do
+    id = System.unique_integer([:positive])
+    shell = Terminal.default_shell()
+    Phoenix.PubSub.subscribe(Bee.PubSub, Terminal.topic(id))
+
+    case Terminal.start(id: id, owner: self(), shell: shell) do
+      {:ok, _pid} ->
+        terminal = %{id: id, name: Path.basename(shell)}
+
+        socket
+        |> update(:terminals, &(&1 ++ [terminal]))
+        |> assign(active_term: id, panel_open: true)
+
+      {:error, reason} ->
+        Phoenix.PubSub.unsubscribe(Bee.PubSub, Terminal.topic(id))
+        put_flash(socket, :error, "Could not start terminal: #{inspect(reason)}")
+    end
+  end
+
+  defp remove_terminal(socket, id) do
+    Phoenix.PubSub.unsubscribe(Bee.PubSub, Terminal.topic(id))
+    terminals = Enum.reject(socket.assigns.terminals, &(&1.id == id))
+
+    active =
+      cond do
+        socket.assigns.active_term != id -> socket.assigns.active_term
+        terminals == [] -> nil
+        true -> List.last(terminals).id
+      end
+
+    socket
+    |> assign(terminals: terminals, active_term: active)
+    |> update(:term_seq, &Map.delete(&1, id))
+  end
+
+  # Closing the panel unmounts the xterm hooks but keeps the shells running;
+  # reopening re-attaches them via term_ready. Opening an empty panel starts a shell.
+  defp toggle_panel(%{assigns: %{panel_open: true}} = socket),
+    do: assign(socket, panel_open: false, term_seq: %{})
+
+  defp toggle_panel(%{assigns: %{terminals: []}} = socket), do: new_terminal(socket)
+  defp toggle_panel(socket), do: assign(socket, panel_open: true)
+
+  defp terminal?(socket, id), do: Enum.any?(socket.assigns.terminals, &(&1.id == id))
 
   defp rel(socket, path), do: Bee.FS.relative(socket.assigns.root, path)
 end

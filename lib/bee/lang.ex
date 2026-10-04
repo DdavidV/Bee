@@ -1,5 +1,4 @@
 defmodule Bee.Lang do
-
   @by_ext %{
     ".ex" => "elixir",
     ".exs" => "elixir",

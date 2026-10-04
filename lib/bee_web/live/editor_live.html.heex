@@ -1,16 +1,35 @@
 <div
   id="workbench"
-  class="h-screen w-screen grid grid-rows-[1fr_auto] grid-cols-[3rem_16rem_1fr] bg-base-100 text-base-content overflow-hidden"
+  phx-hook="Keybindings"
+  class={[
+    "h-screen w-screen grid grid-rows-[1fr_auto] bg-base-100 text-base-content overflow-hidden",
+    if(@sidebar_open, do: "grid-cols-[3rem_16rem_1fr]", else: "grid-cols-[3rem_1fr]")
+  ]}
 >
   <%!-- Activity bar --%>
   <aside class="bg-base-300 flex flex-col items-center gap-1 py-2">
-    <button class="btn btn-ghost btn-square btn-sm" title="Explorer">
+    <button
+      id="toggle-sidebar"
+      class={["btn btn-ghost btn-square btn-sm", @sidebar_open && "btn-active"]}
+      title="Toggle Explorer (Ctrl+B)"
+      phx-click="toggle_sidebar"
+    >
       <.icon name="hero-document-duplicate" class="size-5" />
+    </button>
+    <button
+      id="toggle-panel"
+      class={["btn btn-ghost btn-square btn-sm", @panel_open && "btn-active"]}
+      title="Toggle Terminal (Ctrl+J)"
+      phx-click="toggle_panel"
+    >
+      <.icon name="hero-command-line" class="size-5" />
     </button>
   </aside>
 
-  <%!-- Sidebar --%>
-  <aside class="bg-base-200 overflow-auto border-r border-base-300">
+  <aside
+    id="sidebar"
+    class={["bg-base-200 overflow-auto border-r border-base-300", !@sidebar_open && "hidden"]}
+  >
     <.live_component
       module={BeeWeb.FileTreeComponent}
       id="explorer"
@@ -63,13 +82,76 @@
           <div class="text-4xl">🐝</div>
           <div>Open a file from the explorer</div>
           <div>Ctrl+S · Save</div>
+          <div>Ctrl+J · Terminal</div>
         </div>
       </div>
     </div>
+
+    <%!-- Panel: terminals --%>
+    <section
+      :if={@panel_open}
+      id="panel"
+      class="h-72 shrink-0 border-t border-base-300 flex flex-col bg-base-100"
+    >
+      <div class="flex items-center gap-1 px-2 text-xs shrink-0">
+        <span class="uppercase tracking-wide opacity-60 mr-2">Terminal</span>
+        <button
+          :for={{term, i} <- Enum.with_index(@terminals, 1)}
+          id={"term-tab-#{term.id}"}
+          class={[
+            "px-2 py-1 rounded cursor-pointer",
+            if(term.id == @active_term,
+              do: "bg-base-300",
+              else: "opacity-70 hover:bg-base-content/10"
+            )
+          ]}
+          phx-click="activate_terminal"
+          phx-value-id={term.id}
+        >
+          {i}: {term.name}
+        </button>
+        <div class="flex-1" />
+        <button
+          class="btn btn-ghost btn-xs btn-square"
+          title="New Terminal"
+          phx-click="new_terminal"
+        >
+          <.icon name="hero-plus" class="size-4" />
+        </button>
+        <button
+          :if={@active_term}
+          class="btn btn-ghost btn-xs btn-square"
+          title="Kill Terminal"
+          phx-click="close_terminal"
+          phx-value-id={@active_term}
+        >
+          <.icon name="hero-trash" class="size-4" />
+        </button>
+        <button
+          class="btn btn-ghost btn-xs btn-square"
+          title="Close Panel"
+          phx-click="toggle_panel"
+        >
+          <.icon name="hero-x-mark" class="size-4" />
+        </button>
+      </div>
+      <div class="flex-1 min-h-0 relative">
+        <div
+          :for={term <- @terminals}
+          id={"term-#{term.id}"}
+          phx-hook="Terminal"
+          phx-update="ignore"
+          data-id={term.id}
+          data-active={to_string(term.id == @active_term)}
+          class="absolute inset-0 pl-2 pt-1 data-[active=false]:invisible"
+        >
+        </div>
+      </div>
+    </section>
   </main>
 
   <%!-- Status bar --%>
-  <footer class="col-span-3 h-6 bg-primary text-primary-content text-xs flex items-center gap-4 px-3">
+  <footer class="col-span-full h-6 bg-primary text-primary-content text-xs flex items-center gap-4 px-3">
     <span class="truncate">{@root}</span>
     <div class="flex-1" />
     <span :if={@status} id="status" class="truncate">{@status}</span>

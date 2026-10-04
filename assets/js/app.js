@@ -24,13 +24,16 @@ import {Socket} from "phoenix"
 import {LiveSocket} from "phoenix_live_view"
 import {hooks as colocatedHooks} from "phoenix-colocated/bee"
 import topbar from "../vendor/topbar"
+import "@xterm/xterm/css/xterm.css"
 import {CodeEditor} from "./hooks/code_editor"
+import {Keybindings} from "./hooks/keybindings"
+import {Terminal} from "./hooks/terminal"
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks, CodeEditor},
+  hooks: {...colocatedHooks, CodeEditor, Keybindings, Terminal},
 })
 
 // Show progress bar on live navigation and form submits

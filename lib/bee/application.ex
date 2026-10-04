@@ -12,6 +12,7 @@ defmodule Bee.Application do
       {Registry, keys: :unique, name: Bee.Registry},
       Bee.Workspace,
       {DynamicSupervisor, name: Bee.BufferSup, strategy: :one_for_one},
+      {DynamicSupervisor, name: Bee.TerminalSup, strategy: :one_for_one},
       BeeWeb.Endpoint
     ]
 

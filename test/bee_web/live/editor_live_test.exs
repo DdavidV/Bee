@@ -115,7 +115,10 @@ defmodule BeeWeb.EditorLiveTest do
     end
 
     test "files changed on disk are reloaded into the editor", %{view: view, path: path} do
+      before = {File.read(path), Registry.lookup(Bee.Registry, {:buffer, path})}
       open_file(view, "mix.exs")
+      assert_push_event(view, "cm:open", %{text: opened})
+      if opened == "", do: flunk("DEBUG before=#{inspect(before)} now=#{inspect(File.read(path))} ls=#{inspect(File.ls(Path.dirname(path)))}")
       File.write!(path, "from disk")
       Phoenix.PubSub.broadcast(Bee.PubSub, "fs", {:fs_changed, path})
 
@@ -136,6 +139,134 @@ defmodule BeeWeb.EditorLiveTest do
     # guarantees it is processed before has_element?/2.
     _ = render(view)
     assert has_element?(view, "#explorer button[phx-value-path='new.txt']")
+  end
+
+  describe "sidebar" do
+    test "Ctrl+B / explorer button hides and shows it", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      assert has_element?(view, "#sidebar:not(.hidden)")
+
+      view |> element("#toggle-sidebar") |> render_click()
+      assert has_element?(view, "#sidebar.hidden")
+
+      # the keybinding pushes the same event
+      render_hook(view, "toggle_sidebar", %{})
+      assert has_element?(view, "#sidebar:not(.hidden)")
+    end
+
+    test "keeps expanded dirs while hidden", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      view |> element("#explorer button[phx-value-path='lib']") |> render_click()
+
+      render_hook(view, "toggle_sidebar", %{})
+      render_hook(view, "toggle_sidebar", %{})
+      assert has_element?(view, "#explorer button[phx-value-path='lib/bee']")
+    end
+  end
+
+  describe "terminal" do
+    # Keep the user's shell and rc files out of tests.
+    setup do
+      previous = System.get_env("SHELL")
+      System.put_env("SHELL", "/bin/sh")
+
+      on_exit(fn ->
+        if previous, do: System.put_env("SHELL", previous), else: System.delete_env("SHELL")
+      end)
+    end
+
+    test "toggling the panel opens it with a new shell", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      refute has_element?(view, "#panel")
+
+      id = open_panel(view)
+      assert has_element?(view, "#term-tab-#{id}", "1: sh")
+      assert [{_pid, _}] = Registry.lookup(Bee.Registry, {:terminal, id})
+    end
+
+    test "output is forwarded only after term_ready, starting with the scrollback", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      id = open_panel(view)
+
+      refute_push_event(view, "term:data", %{id: ^id}, 300)
+
+      render_hook(view, "term_ready", %{"id" => id, "cols" => 80, "rows" => 24})
+      assert_reply(view, %{data: scrollback})
+      assert Base.decode64!(scrollback) =~ "$"
+
+      render_hook(view, "term_input", %{"id" => id, "data" => "echo bee-$((40 + 2))\n"})
+      assert await_term_output(view, id, "bee-42")
+    end
+
+    test "killing a terminal stops its process and removes the tab", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      id = open_panel(view)
+      [{pid, _}] = Registry.lookup(Bee.Registry, {:terminal, id})
+      ref = Process.monitor(pid)
+
+      view |> element("#panel button[phx-click='close_terminal']") |> render_click()
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}
+      refute has_element?(view, "#term-tab-#{id}")
+    end
+
+    test "exiting the shell removes its tab", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      id = open_panel(view)
+      [{pid, _}] = Registry.lookup(Bee.Registry, {:terminal, id})
+      ref = Process.monitor(pid)
+
+      render_hook(view, "term_ready", %{"id" => id, "cols" => 80, "rows" => 24})
+      render_hook(view, "term_input", %{"id" => id, "data" => "exit\n"})
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 2_000
+      # the LiveView got :term_exit before the DOWN reached us; one round trip to be sure
+      _ = render(view)
+      refute has_element?(view, "#term-tab-#{id}")
+    end
+
+    test "closing the panel keeps shells running; reopening reuses them", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      id = open_panel(view)
+
+      render_hook(view, "toggle_panel", %{})
+      refute has_element?(view, "#panel")
+      assert [{_pid, _}] = Registry.lookup(Bee.Registry, {:terminal, id})
+
+      render_hook(view, "toggle_panel", %{})
+      assert has_element?(view, "#term-#{id}")
+      refute has_element?(view, "#term-tab-#{id} ~ [id^='term-tab-']")
+    end
+
+    test "terminals of other sessions cannot be driven", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      {:ok, other, _html} = live(conn, ~p"/")
+      id = open_panel(other)
+
+      render_hook(view, "term_ready", %{"id" => id, "cols" => 80, "rows" => 24})
+      assert_reply(view, %{data: ""})
+    end
+
+    test "terminals stop when the LiveView goes away", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      id = open_panel(view)
+      [{pid, _}] = Registry.lookup(Bee.Registry, {:terminal, id})
+      ref = Process.monitor(pid)
+
+      GenServer.stop(view.pid, :normal)
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}
+    end
+  end
+
+  defp open_panel(view) do
+    html = view |> element("#toggle-panel") |> render_click()
+    [_, id] = Regex.run(~r/id="term-(\d+)"/, html)
+    String.to_integer(id)
+  end
+
+  # Output arrives in arbitrary chunks; collect until `expected` shows up.
+  defp await_term_output(view, id, expected, acc \\ "") do
+    assert_push_event(view, "term:data", %{id: ^id, data: data}, 2_000)
+    acc = acc <> Base.decode64!(data)
+    if acc =~ expected, do: acc, else: await_term_output(view, id, expected, acc)
   end
 
   defp open_file(view, rel) do
