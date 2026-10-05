@@ -81,6 +81,7 @@ defmodule BeeWeb.Workbench.Sidebar do
   attr :search, :map, required: true
   attr :file_decorations, :map, required: true
   attr :icon_theme, :any, required: true
+  attr :clipboard, :any, default: nil, doc: "the Explorer's cut or copied files"
 
   def sidebar(assigns) do
     assigns =
@@ -118,6 +119,7 @@ defmodule BeeWeb.Workbench.Sidebar do
           active={@active && Bee.Workspace.FS.relative(@root, @active)}
           decorations={@file_decorations}
           icon_theme={@icon_theme}
+          clipboard={@clipboard}
         />
       </div>
 

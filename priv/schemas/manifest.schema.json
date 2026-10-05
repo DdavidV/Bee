@@ -53,7 +53,7 @@
         "menubar": {"type": "array", "items": {"$ref": "#/definitions/menubarEntry"}},
         "menus": {
           "type": "object",
-          "description": "Menu id to items: \"menubar/<id>\", \"editor/title\" (editor buttons), \"view/title\" (view header buttons; `when` can test `view`), \"view/item/context\" (group \"inline\": buttons on a view's items; `when` can test `view` and `viewItem`), \"commandPalette\" (`when` false hides a command from the palette).",
+          "description": "Menu id to items: \"menubar/<id>\", \"editor/title\" (editor buttons), \"view/title\" (view header buttons; `when` can test `view`), \"view/item/context\" (group \"inline\": buttons on a view's items; `when` can test `view` and `viewItem`), \"commandPalette\" (`when` false hides a command from the palette), \"explorer/context\" (the Explorer's right-click menu: commands get the file's or folder's absolute path; `when` can test `explorerResourceIsFolder`, `explorerResourceIsRoot`, `resourcePath`, `resourceFilename`, `resourceExtname`). Context menus are grouped like VS Code's (\"navigation\", \"5_cutcopypaste\", \"7_modification\"…), with separators between groups.",
           "additionalProperties": {"type": "array", "items": {"$ref": "#/definitions/menuItem"}}
         },
         "languages": {"type": "array", "items": {"$ref": "#/definitions/language"}},

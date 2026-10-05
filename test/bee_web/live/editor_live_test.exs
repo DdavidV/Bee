@@ -1383,6 +1383,203 @@ defmodule BeeWeb.EditorLiveTest do
     assert ids.(view |> element("#activity-bar") |> render()) == Enum.reverse(default)
   end
 
+  describe "explorer context menu" do
+    # What the ContextMenus hook sends for a right-click on `selector`.
+    defp right_click(view, selector) do
+      render_hook(view, "open_context_menu", %{
+        "menu" => data(view, selector, "data-menu"),
+        "x" => 10,
+        "y" => 20,
+        "args" => json_data(view, selector, "data-menu-args"),
+        "context" => json_data(view, selector, "data-menu-context")
+      })
+    end
+
+    defp menu_items(view) do
+      view
+      |> element("#context-menu")
+      |> render()
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.query("[data-command]")
+      |> Enum.map(&(&1 |> LazyHTML.attribute("data-command") |> hd()))
+    end
+
+    defp menu_click(view, command),
+      do: view |> element("#context-menu [data-command='#{command}']") |> render_click()
+
+    defp entry(rel), do: "#explorer button[phx-value-path='#{rel}']"
+
+    defp submit_name(view, name),
+      do: view |> form("#explorer-edit", %{name: name}) |> render_submit()
+
+    test "folders, files and the empty space get their own items", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      right_click(view, entry("lib"))
+
+      assert menu_items(view) ==
+               ~w(explorer.newFile explorer.newFolder filesExplorer.cut filesExplorer.copy filesExplorer.paste renameFile deleteFile)
+
+      # Groups are separated; Paste needs something cut or copied.
+      assert has_element?(view, "#context-menu hr")
+      assert has_element?(view, "#context-menu [data-command='filesExplorer.paste'][disabled]")
+
+      right_click(view, entry("mix.exs"))
+      refute "explorer.newFile" in menu_items(view)
+      assert "deleteFile" in menu_items(view)
+
+      right_click(view, "#explorer")
+      assert menu_items(view) == ~w(explorer.newFile explorer.newFolder filesExplorer.paste)
+
+      render_hook(view, "close_context_menu", %{})
+      refute has_element?(view, "#context-menu")
+    end
+
+    test "new file and folder: typed in the tree, the file opens", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      root = Bee.Workspace.root()
+
+      right_click(view, entry("lib"))
+      menu_click(view, "explorer.newFile")
+      refute has_element?(view, "#context-menu")
+      assert has_element?(view, "#explorer-edit-input")
+
+      # Taken: the error shows, the input stays.
+      submit_name(view, "bee")
+      assert has_element?(view, "#explorer-edit-error", "lib/bee already exists")
+
+      submit_name(view, "new.ex")
+      refute has_element?(view, "#explorer-edit")
+      assert File.exists?(Path.join(root, "lib/new.ex"))
+      assert has_element?(view, entry("lib/new.ex"))
+      assert has_element?(view, "#tabs", "new.ex")
+
+      right_click(view, "#explorer")
+      menu_click(view, "explorer.newFolder")
+      submit_name(view, "docs/guides")
+      assert File.dir?(Path.join(root, "docs/guides"))
+      assert has_element?(view, entry("docs"))
+
+      # Escape cancels (the hook sends edit_cancel).
+      right_click(view, "#explorer")
+      menu_click(view, "explorer.newFile")
+      view |> element("#explorer-edit-input") |> render_hook("edit_cancel", %{})
+      refute has_element?(view, "#explorer-edit")
+    end
+
+    test "rename: the tab follows, unsaved changes too", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      root = Bee.Workspace.root()
+      open_file(view, "README.md")
+      readme = Path.join(root, "README.md")
+      render_hook(view, "doc_changed", %{"path" => readme, "text" => "# Changed"})
+
+      right_click(view, entry("README.md"))
+      menu_click(view, "renameFile")
+      assert data(view, "#explorer-edit-input", "value") == "README.md"
+      # The name without the extension is selected.
+      assert data(view, "#explorer-edit-input", "data-select") == "6"
+
+      submit_name(view, "GUIDE.md")
+      guide = Path.join(root, "GUIDE.md")
+      assert File.read!(guide) == "# Readme"
+      refute File.exists?(readme)
+
+      assert has_element?(view, "#tabs", "GUIDE.md")
+      refute has_element?(view, "#tabs", "README.md")
+      assert Bee.Editor.Buffer.get(guide).text == "# Changed"
+      assert_push_event(view, "cm:open", %{path: ^guide, text: "# Changed"})
+    end
+
+    test "delete asks first; the tab of a deleted file closes", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      root = Bee.Workspace.root()
+      view |> element(entry("lib")) |> render_click()
+      view |> element(entry("lib/bee")) |> render_click()
+      open_file(view, "lib/bee/app.ex")
+
+      right_click(view, entry("lib"))
+      menu_click(view, "deleteFile")
+
+      assert data(view, "#palette-input", "placeholder") =~
+               "delete the folder 'lib' and its contents"
+
+      assert File.dir?(Path.join(root, "lib"))
+
+      # Enter picks the first item: Delete.
+      view |> form("#palette-form") |> render_submit()
+      refute File.exists?(Path.join(root, "lib"))
+      refute has_element?(view, entry("lib"))
+      refute has_element?(view, "#tabs", "app.ex")
+    end
+
+    test "copy and cut, then paste into a folder", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      root = Bee.Workspace.root()
+      open_file(view, "mix.exs")
+
+      right_click(view, entry("README.md"))
+      menu_click(view, "filesExplorer.copy")
+      right_click(view, entry("lib"))
+      menu_click(view, "filesExplorer.paste")
+      assert File.read!(Path.join(root, "lib/README.md")) == "# Readme"
+      # Pasting into a file pastes next to it: a copy name.
+      right_click(view, entry("README.md"))
+      menu_click(view, "filesExplorer.paste")
+      assert File.exists?(Path.join(root, "README copy.md"))
+
+      right_click(view, entry("mix.exs"))
+      menu_click(view, "filesExplorer.cut")
+      assert has_element?(view, entry("mix.exs") <> ".opacity-50")
+      right_click(view, entry("lib"))
+      menu_click(view, "filesExplorer.paste")
+
+      moved = Path.join(root, "lib/mix.exs")
+      assert File.exists?(moved)
+      refute File.exists?(Path.join(root, "mix.exs"))
+      assert has_element?(view, "#tabs [title='lib/mix.exs']")
+
+      # A cut is pasted once.
+      right_click(view, entry("lib"))
+      assert has_element?(view, "#context-menu [data-command='filesExplorer.paste'][disabled]")
+    end
+
+    test "plugins add items to the menu", %{conn: conn} do
+      on_exit(fn -> Bee.Contributions.unregister({:plugin, "menu-test"}) end)
+
+      :ok =
+        Bee.Contributions.register({:plugin, "menu-test"}, %{
+          "name" => "menu-test",
+          "browser" => "browser.js",
+          "contributes" => %{
+            "commands" => [
+              %{"command" => "menuTest.hello", "title" => "Say Hello", "runtime" => "client"}
+            ],
+            "menus" => %{
+              "explorer/context" => [
+                %{
+                  "command" => "menuTest.hello",
+                  "group" => "9_test",
+                  "when" => "resourceExtname == .md"
+                }
+              ]
+            }
+          }
+        })
+
+      {:ok, view, _html} = live(conn, ~p"/")
+      right_click(view, entry("README.md"))
+      assert List.last(menu_items(view)) == "menuTest.hello"
+      right_click(view, entry("mix.exs"))
+      refute "menuTest.hello" in menu_items(view)
+
+      right_click(view, entry("README.md"))
+      menu_click(view, "menuTest.hello")
+      readme = Path.join(Bee.Workspace.root(), "README.md")
+      assert_push_event(view, "bee:exec", %{command: "menuTest.hello", args: [^readme]})
+    end
+  end
+
   describe "sidebar views" do
     setup do
       on_exit(fn ->

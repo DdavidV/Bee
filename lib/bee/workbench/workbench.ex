@@ -20,6 +20,10 @@ defmodule Bee.Workbench do
     * `{:update_setting, key, value}` – write it to the user settings file
     * `{:uninstall_plugin, name}` – see `Bee.Plugins.uninstall/1`
     * `{:flash, kind, message}`
+    * `{:explorer_edit, edit}` – an input in the Explorer's tree: a new
+      file's or folder's name in `dir`, or a new name for `path`
+    * `{:delete_file, path}`, `{:paste_files, op, paths, dir}` – see
+      `Bee.Workspace.Files`
     * search effects, see `Bee.Workbench.Search`
 
   Commands (`Bee.Workbench.Actions`) are built from these functions.
@@ -38,6 +42,8 @@ defmodule Bee.Workbench do
             terminals: [],
             active_term: nil,
             open_menu: nil,
+            context_menu: nil,
+            clipboard: nil,
             palette: nil,
             can_undo: false,
             can_redo: false,
@@ -61,6 +67,8 @@ defmodule Bee.Workbench do
     :terminals,
     :active_term,
     :open_menu,
+    :context_menu,
+    :clipboard,
     :palette,
     :can_undo,
     :can_redo,
@@ -240,6 +248,27 @@ defmodule Bee.Workbench do
 
   ## Menus and palette
 
+  @doc """
+  Opens context menu `menu` (e.g. `"explorer/context"`) at `x`, `y` (px).
+  Its commands get `args`; `context` adds `when` keys for its items (e.g.
+  `explorerResourceIsFolder`). Both come from the element right-clicked.
+  """
+  def open_context_menu(wb, menu, x, y, args, context) do
+    %{
+      wb
+      | context_menu: %{menu: menu, x: x, y: y, args: args, context: context},
+        open_menu: nil
+    }
+  end
+
+  def close_context_menu(wb), do: %{wb | context_menu: nil}
+
+  @doc "The Explorer's cut or copied files (`op` `:cut` or `:copy`), for pasting."
+  def set_clipboard(wb, op, paths) when op in [:cut, :copy],
+    do: %{wb | clipboard: %{op: op, paths: paths}}
+
+  def clear_clipboard(wb), do: %{wb | clipboard: nil}
+
   def toggle_menu(wb, menu), do: %{wb | open_menu: if(wb.open_menu == menu, do: nil, else: menu)}
   def close_menu(wb), do: %{wb | open_menu: nil}
 
@@ -329,7 +358,8 @@ defmodule Bee.Workbench do
       "searchWholeWord" => wb.search != nil and wb.search.whole_word,
       "searchRegex" => wb.search != nil and wb.search.regex,
       "inQuickOpen" => wb.palette != nil,
-      "menuOpen" => wb.open_menu != nil
+      "menuOpen" => wb.open_menu != nil,
+      "explorerCanPaste" => wb.clipboard != nil
     })
   end
 end

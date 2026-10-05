@@ -28,6 +28,7 @@ defmodule BeeWeb.EditorLive do
   alias Bee.Commands.Registry, as: CommandRegistry
   alias Bee.Commands.Keybindings
   alias Bee.Editor.Buffer
+  alias Bee.Workspace.Files
   alias Bee.Workbench.Search
 
   @impl true
@@ -73,9 +74,29 @@ defmodule BeeWeb.EditorLive do
   def handle_event("run_command", %{"command" => id} = params, socket) do
     {:noreply,
      socket
-     |> change(&(&1 |> Workbench.close_menu() |> Workbench.close_palette()))
+     |> change(
+       &(&1
+         |> Workbench.close_menu()
+         |> Workbench.close_palette()
+         |> Workbench.close_context_menu())
+     )
      |> run_command(id, decode_args(params["args"]))}
   end
+
+  ## Context menus (ContextMenus hook): the element right-clicked names the
+  ## menu, its commands' arguments and extra `when` keys.
+
+  def handle_event("open_context_menu", %{"menu" => menu, "x" => x, "y" => y} = params, socket)
+      when is_binary(menu) and is_number(x) and is_number(y) do
+    args = if is_list(params["args"]), do: params["args"], else: []
+    context = if is_map(params["context"]), do: params["context"], else: %{}
+
+    {:noreply,
+     change(socket, &Workbench.open_context_menu(&1, menu, round(x), round(y), args, context))}
+  end
+
+  def handle_event("close_context_menu", _params, socket),
+    do: {:noreply, change(socket, &Workbench.close_context_menu/1)}
 
   ## Sidebar views
 
@@ -406,6 +427,15 @@ defmodule BeeWeb.EditorLive do
     end
   end
 
+  # The Explorer created or renamed a file (see FileTree).
+  def handle_info({:explorer_changed, request, path}, socket) do
+    case request do
+      %{kind: :new_file} -> {:noreply, change(socket, &Workbench.open_editor(&1, path))}
+      %{kind: :rename, path: from} -> {:noreply, files_moved(socket, [{from, path}])}
+      _ -> {:noreply, socket}
+    end
+  end
+
   def handle_info({:fs_changed, path}, socket) do
     send_update(BeeWeb.Workbench.FileTree, id: "explorer", fs_changed: path)
     {:noreply, socket}
@@ -533,23 +563,28 @@ defmodule BeeWeb.EditorLive do
 
   defp run_effect({:push, event, payload}, socket), do: push_event(socket, event, payload)
 
-  defp run_effect({:open_file, path}, socket) do
-    case Buffer.open(path) do
-      {:ok, buffer} ->
-        lang = Languages.detect(path, first_line: Languages.first_line(buffer.text))
+  defp run_effect({:open_file, path}, socket), do: open_buffer(socket, path)
 
-        socket
-        |> change(&Workbench.editor_opened(&1, path, Buffer.dirty?(buffer), lang))
-        |> push_event("cm:open", %{
-          path: path,
-          text: buffer.text,
-          lang: lang,
-          mode: Languages.mode(lang)
-        })
+  defp run_effect({:explorer_edit, edit}, socket) do
+    send_update(BeeWeb.Workbench.FileTree, id: "explorer", edit: edit)
+    socket
+  end
 
-      {:error, reason} ->
-        message = "Cannot open #{display_path(socket.assigns.root, path)}: #{inspect(reason)}"
-        put_flash(socket, :error, message)
+  defp run_effect({:delete_file, path}, socket) do
+    case Files.delete(socket.assigns.root, path) do
+      {:ok, path} -> socket |> files_deleted(path) |> files_changed()
+      {:error, message} -> put_flash(socket, :error, message)
+    end
+  end
+
+  defp run_effect({:paste_files, op, paths, dir}, socket) do
+    case Files.paste(socket.assigns.root, paths, dir, op) do
+      {:ok, pairs} ->
+        socket = files_changed(socket)
+        if op == :cut, do: files_moved(socket, pairs), else: socket
+
+      {:error, message} ->
+        socket |> files_changed() |> put_flash(:error, message)
     end
   end
 
@@ -674,6 +709,73 @@ defmodule BeeWeb.EditorLive do
 
     push_event(socket, "search:focus", %{})
   end
+
+  # Opens `path` in a new tab. `text`: unsaved text to carry over (a file
+  # that was moved with unsaved changes).
+  defp open_buffer(socket, path, text \\ nil) do
+    with {:ok, buffer} <- Buffer.open(path) do
+      buffer = if text, do: Buffer.update(path, text), else: buffer
+      lang = Languages.detect(path, first_line: Languages.first_line(buffer.text))
+
+      socket
+      |> change(&Workbench.editor_opened(&1, path, Buffer.dirty?(buffer), lang))
+      |> push_event("cm:open", %{
+        path: path,
+        text: buffer.text,
+        lang: lang,
+        mode: Languages.mode(lang)
+      })
+    else
+      {:error, reason} ->
+        message = "Cannot open #{display_path(socket.assigns.root, path)}: #{inspect(reason)}"
+        put_flash(socket, :error, message)
+    end
+  end
+
+  ## Explorer file operations
+
+  # Bee changed files: the tree shows them now, not when the watcher tells.
+  defp files_changed(socket) do
+    send_update(BeeWeb.Workbench.FileTree, id: "explorer", refresh: true)
+    socket
+  end
+
+  # Tabs of moved files (or files in moved folders) follow them, unsaved
+  # changes included; the active one stays active.
+  defp files_moved(socket, pairs) do
+    Enum.reduce(pairs, socket, fn {from, to}, socket ->
+      moved =
+        for %{path: path} = tab <- socket.assigns.tabs, under?(path, from) do
+          {tab, to <> String.replace_prefix(path, from, "")}
+        end
+
+      Enum.reduce(moved, socket, fn {tab, new_path}, socket ->
+        active? = socket.assigns.active == tab.path
+        text = if tab.dirty, do: Buffer.get(tab.path).text
+
+        socket
+        |> change(&Workbench.close_editor(&1, tab.path))
+        |> open_buffer(new_path, text)
+        |> then(
+          &if(active?,
+            do: change(&1, fn wb -> Workbench.activate_editor(wb, new_path) end),
+            else: &1
+          )
+        )
+      end)
+    end)
+  end
+
+  # Tabs of deleted files close (their buffers had nothing left to save to).
+  defp files_deleted(socket, path) do
+    socket.assigns.tabs
+    |> Enum.filter(&under?(&1.path, path))
+    |> Enum.reduce(socket, fn tab, socket ->
+      change(socket, &Workbench.close_editor(&1, tab.path))
+    end)
+  end
+
+  defp under?(path, dir), do: path == dir or String.starts_with?(path, dir <> "/")
 
   ## Command execution
 
@@ -1057,6 +1159,39 @@ defmodule BeeWeb.EditorLive do
         disabled: not CommandRegistry.enabled?(command, ctx)
       }
     end
+  end
+
+  @doc false
+  # Items of the open context menu: its contributed entries whose `when`
+  # holds (the element's keys on top of the window's), grouped like VS
+  # Code's – "navigation" first, then by group name – with separators.
+  # "inline" groups are buttons, not menu items.
+  def context_menu_items(%{context_menu: nil}), do: []
+
+  def context_menu_items(%{context_menu: menu} = assigns) do
+    ctx = Map.merge(context(assigns), menu.context)
+    commands = Map.new(assigns.commands, &{&1.id, &1})
+
+    menu.menu
+    |> CommandRegistry.menu()
+    |> Enum.reject(&String.starts_with?(&1.group, "inline"))
+    |> Enum.sort_by(&(&1.group != "navigation"))
+    |> Enum.chunk_by(& &1.group)
+    |> Enum.map(fn group ->
+      for %{command: id, when_ast: when_ast} <- group,
+          command = commands[id],
+          command != nil and Bee.Commands.When.eval(when_ast, ctx) do
+        %{
+          command: id,
+          label: command.title,
+          shortcut: Keybindings.label(id, assigns.keybindings),
+          disabled: not CommandRegistry.enabled?(command, ctx)
+        }
+      end
+    end)
+    |> Enum.reject(&(&1 == []))
+    |> Enum.intersperse([:separator])
+    |> List.flatten()
   end
 
   # No leading, trailing or doubled separators once hidden items are gone.

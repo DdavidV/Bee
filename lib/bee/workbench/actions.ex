@@ -102,6 +102,76 @@ defmodule Bee.Workbench.Actions do
 
   def set_icon_theme(wb, _args), do: wb
 
+  ## Explorer (its right-click menu, explorer/context)
+  #
+  # The menu passes the file's or folder's absolute path; from the palette
+  # or the Explorer's title buttons there is none: the workspace folder.
+
+  @command "explorer.newFile"
+  def new_file(wb, args), do: explorer_edit(wb, %{kind: :new_file, dir: folder(wb, args)})
+
+  @command "explorer.newFolder"
+  def new_folder(wb, args), do: explorer_edit(wb, %{kind: :new_folder, dir: folder(wb, args)})
+
+  @command "renameFile"
+  def rename_file(wb, [path]) when is_binary(path),
+    do: explorer_edit(wb, %{kind: :rename, path: path})
+
+  def rename_file(wb, _args), do: wb
+
+  # Asks first, in the quick input.
+  @command "deleteFile"
+  def delete_file(wb, [path]) when is_binary(path) do
+    name = Path.basename(path)
+    what = if File.dir?(path), do: "the folder '#{name}' and its contents", else: "'#{name}'"
+
+    Workbench.open_quick_pick(wb, %{
+      items: [
+        %{
+          label: "Delete",
+          description: "permanently: #{Bee.Workspace.FS.relative(wb.root, path)}",
+          value: path
+        },
+        %{label: "Cancel", description: "", value: ""}
+      ],
+      command: "deleteFile.confirmed",
+      placeholder: "Are you sure you want to delete #{what}?"
+    })
+  end
+
+  def delete_file(wb, _args), do: wb
+
+  @command "deleteFile.confirmed"
+  def delete_file_confirmed(wb, [path]) when is_binary(path) and path != "",
+    do: {wb, [{:delete_file, path}]}
+
+  def delete_file_confirmed(wb, _args), do: wb
+
+  @command "filesExplorer.cut"
+  def cut_file(wb, [path]) when is_binary(path), do: Workbench.set_clipboard(wb, :cut, [path])
+  def cut_file(wb, _args), do: wb
+
+  @command "filesExplorer.copy"
+  def copy_file(wb, [path]) when is_binary(path), do: Workbench.set_clipboard(wb, :copy, [path])
+  def copy_file(wb, _args), do: wb
+
+  # Into the folder right-clicked, or the folder of the file.
+  @command "filesExplorer.paste"
+  def paste_file(%{clipboard: %{op: op, paths: paths}} = wb, args) do
+    wb = if op == :cut, do: Workbench.clear_clipboard(wb), else: wb
+    {wb, [{:paste_files, op, paths, folder(wb, args)}]}
+  end
+
+  def paste_file(wb, _args), do: wb
+
+  defp explorer_edit(wb, edit),
+    do: {Workbench.reveal_view(wb, "explorer"), [{:explorer_edit, edit}]}
+
+  defp folder(_wb, [path | _]) when is_binary(path),
+    do: if(File.dir?(path), do: path, else: Path.dirname(path))
+
+  defp folder(wb, _args), do: wb.root
+
   @command "bee.plugins.reload"
   def reload_plugins(wb), do: {wb, [:reload_plugins]}
 

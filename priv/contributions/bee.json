@@ -182,6 +182,57 @@
         "runtime": "server"
       },
       {
+        "command": "explorer.newFile",
+        "category": "File",
+        "title": "New File…",
+        "icon": "document-plus",
+        "runtime": "server"
+      },
+      {
+        "command": "explorer.newFolder",
+        "category": "File",
+        "title": "New Folder…",
+        "icon": "folder-plus",
+        "runtime": "server"
+      },
+      {
+        "command": "filesExplorer.cut",
+        "category": "File",
+        "title": "Cut",
+        "runtime": "server"
+      },
+      {
+        "command": "filesExplorer.copy",
+        "category": "File",
+        "title": "Copy",
+        "runtime": "server"
+      },
+      {
+        "command": "filesExplorer.paste",
+        "category": "File",
+        "title": "Paste",
+        "runtime": "server",
+        "enablement": "explorerCanPaste"
+      },
+      {
+        "command": "renameFile",
+        "category": "File",
+        "title": "Rename…",
+        "runtime": "server"
+      },
+      {
+        "command": "deleteFile",
+        "category": "File",
+        "title": "Delete",
+        "runtime": "server"
+      },
+      {
+        "command": "deleteFile.confirmed",
+        "category": "File",
+        "title": "Delete (confirmed)",
+        "runtime": "server"
+      },
+      {
         "command": "workbench.extensions.action.installVSIX",
         "category": "Plugins",
         "title": "Install from VSIX…",
@@ -276,6 +327,8 @@
         {"command": "search.action.refreshSearchResults", "group": "navigation@1", "when": "view == workbench.view.search"},
         {"command": "search.action.clearSearchResults", "group": "navigation@2", "when": "view == workbench.view.search"},
         {"command": "search.action.collapseSearchResults", "group": "navigation@3", "when": "view == workbench.view.search"},
+        {"command": "explorer.newFile", "group": "navigation@1", "when": "view == workbench.explorer.fileView"},
+        {"command": "explorer.newFolder", "group": "navigation@2", "when": "view == workbench.explorer.fileView"},
         {"command": "workbench.extensions.action.installVSIX", "group": "navigation@1", "when": "view == workbench.extensions.installed"},
         {"command": "bee.plugins.reload", "group": "navigation@2", "when": "view == workbench.extensions.installed"}
       ],
@@ -284,7 +337,22 @@
         {"command": "bee.plugins.enable", "group": "inline@1", "when": "view == workbench.extensions.installed && viewItem =~ /^plugin\\.disabled\\./"},
         {"command": "bee.plugins.uninstall", "group": "inline@2", "when": "view == workbench.extensions.installed && viewItem =~ /\\.user$/"}
       ],
+      "explorer/context": [
+        {"command": "explorer.newFile", "group": "navigation@1", "when": "explorerResourceIsFolder"},
+        {"command": "explorer.newFolder", "group": "navigation@2", "when": "explorerResourceIsFolder"},
+        {"command": "filesExplorer.cut", "group": "5_cutcopypaste@1", "when": "!explorerResourceIsRoot"},
+        {"command": "filesExplorer.copy", "group": "5_cutcopypaste@2", "when": "!explorerResourceIsRoot"},
+        {"command": "filesExplorer.paste", "group": "5_cutcopypaste@3"},
+        {"command": "renameFile", "group": "7_modification@1", "when": "!explorerResourceIsRoot"},
+        {"command": "deleteFile", "group": "7_modification@2", "when": "!explorerResourceIsRoot"}
+      ],
       "commandPalette": [
+        {"command": "filesExplorer.cut", "when": "false"},
+        {"command": "filesExplorer.copy", "when": "false"},
+        {"command": "filesExplorer.paste", "when": "false"},
+        {"command": "renameFile", "when": "false"},
+        {"command": "deleteFile", "when": "false"},
+        {"command": "deleteFile.confirmed", "when": "false"},
         {"command": "bee.plugins.enable", "when": "false"},
         {"command": "bee.plugins.uninstall", "when": "false"},
         {"command": "bee.plugins.uninstallConfirmed", "when": "false"},
