@@ -54,6 +54,7 @@ export const Keybindings = {
       editorFocus: inEditor,
       editorTextFocus: inEditor,
       terminalFocus: inTerminal,
+      searchViewletFocus: !!el?.closest?.("#search-view"),
       textInputFocus: textInput,
       inputFocus: textInput,
       isMac,

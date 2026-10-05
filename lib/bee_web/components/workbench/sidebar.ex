@@ -5,7 +5,8 @@ defmodule BeeWeb.Workbench.Sidebar do
   The activity bar has one button per views container (`show_view`), with
   the summed badges of its plugin views. The sidebar shows the container's
   title, then its views: Bee's own (Explorer, Plugins) rendered by their
-  components, plugins' views by `BeeWeb.Workbench.ContributedView`. With a
+  components (Explorer, Search, Plugins), plugins' views by
+  `BeeWeb.Workbench.ContributedView`. With a
   single view its `view/title` buttons sit in the container's header,
   otherwise each view gets a header of its own.
 
@@ -14,10 +15,11 @@ defmodule BeeWeb.Workbench.Sidebar do
   """
   use BeeWeb, :html
 
-  alias BeeWeb.Workbench.{ContributedView, PluginsView, Toolbar}
+  alias BeeWeb.Workbench.{ContributedView, PluginsView, SearchView, Toolbar}
 
   @explorer "workbench.explorer.fileView"
   @plugins "workbench.extensions.installed"
+  @search "workbench.view.search"
 
   attr :containers, :list, required: true, doc: "with :badge"
   attr :sidebar_view, :string, required: true
@@ -68,6 +70,7 @@ defmodule BeeWeb.Workbench.Sidebar do
   attr :view_contents, :map, required: true
   attr :view_inputs, :map, required: true
   attr :collapsed, :any, required: true
+  attr :search, :map, required: true
 
   def sidebar(assigns) do
     assigns =
@@ -75,7 +78,8 @@ defmodule BeeWeb.Workbench.Sidebar do
         explorer_shown: Enum.any?(assigns.views, &(&1.view.id == @explorer)),
         single: match?([_], assigns.views),
         explorer_id: @explorer,
-        plugins_id: @plugins
+        plugins_id: @plugins,
+        search_id: @search
       )
 
     ~H"""
@@ -115,13 +119,14 @@ defmodule BeeWeb.Workbench.Sidebar do
           <span class="flex-1 truncate">{entry.view.name}</span>
           <Toolbar.toolbar actions={entry.title_actions} class="normal-case" />
         </div>
+        <SearchView.search_view :if={entry.view.id == @search_id} search={@search} />
         <PluginsView.plugins_view
           :if={entry.view.id == @plugins_id}
           plugins={@plugins}
           user_dir={Bee.Plugins.user_dir()}
         />
         <ContributedView.contributed_view
-          :if={entry.view.id not in [@explorer_id, @plugins_id]}
+          :if={entry.view.id not in [@explorer_id, @plugins_id, @search_id]}
           view={entry.view}
           content={@view_contents[entry.view.id]}
           input={Map.get(@view_inputs, entry.view.id, "")}

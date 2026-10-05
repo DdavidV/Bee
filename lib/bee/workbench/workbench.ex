@@ -17,6 +17,7 @@ defmodule Bee.Workbench do
     * `{:run_plugin_command, command}` – run a plugin's server command
     * `:reload_plugins`
     * `{:flash, kind, message}`
+    * search effects, see `Bee.Workbench.Search`
 
   Commands (`Bee.Workbench.Actions`) are built from these functions.
   """
@@ -33,7 +34,8 @@ defmodule Bee.Workbench do
             open_menu: nil,
             palette: nil,
             can_undo: false,
-            can_redo: false
+            can_redo: false,
+            search: nil
 
   @type tab :: %{path: String.t(), dirty: boolean(), lang: String.t()}
   @type terminal :: %{id: integer(), name: String.t()}
@@ -53,13 +55,14 @@ defmodule Bee.Workbench do
     :palette,
     :can_undo,
     :can_redo,
+    :search,
     :root
   ]
 
   @doc "The struct's fields (the LiveView keeps them as individual assigns)."
   def fields, do: @fields
 
-  def new(root), do: %__MODULE__{root: root}
+  def new(root), do: %__MODULE__{root: root, search: Bee.Workbench.Search.new()}
 
   @doc "Normalizes a handler result to `{workbench, effects}`."
   def wrap({%__MODULE__{} = wb, effects}) when is_list(effects), do: {wb, effects}
@@ -141,7 +144,10 @@ defmodule Bee.Workbench do
   def show_view(%{sidebar_open: true, sidebar_view: view} = wb, view),
     do: %{wb | sidebar_open: false}
 
-  def show_view(wb, view), do: %{wb | sidebar_open: true, sidebar_view: view}
+  def show_view(wb, view), do: reveal_view(wb, view)
+
+  @doc "Shows sidebar view `view`, also when it is already shown."
+  def reveal_view(wb, view), do: %{wb | sidebar_open: true, sidebar_view: view}
 
   @doc """
   Closing the panel keeps the shells running (their views re-attach on
@@ -271,6 +277,11 @@ defmodule Bee.Workbench do
       "activeViewlet" => wb.sidebar_open && "workbench.view.#{wb.sidebar_view}",
       "panelVisible" => wb.panel_open,
       "terminalCount" => length(wb.terminals),
+      "searchHasQuery" => wb.search != nil and String.trim(wb.search.query) != "",
+      "hasSearchResult" => wb.search != nil and wb.search.results != %{},
+      "searchCaseSensitive" => wb.search != nil and wb.search.case_sensitive,
+      "searchWholeWord" => wb.search != nil and wb.search.whole_word,
+      "searchRegex" => wb.search != nil and wb.search.regex,
       "inQuickOpen" => wb.palette != nil,
       "menuOpen" => wb.open_menu != nil
     })

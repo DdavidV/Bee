@@ -68,6 +68,19 @@
       "default": false,
       "description": "Load plugins from the workspace's .bee/plugins folder. Off by default: plugins run with your permissions, so only enable this for folders you trust. Only takes effect in user settings."
     },
+    "search.exclude": {
+      "type": "object",
+      "additionalProperties": {"type": "boolean"},
+      "default": {},
+      "description": "Glob patterns (relative to the workspace) left out of searches, on top of files.exclude. Set a pattern to false to search it again."
+    },
+    "search.maxResults": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000000,
+      "default": 20000,
+      "description": "A search stops after this many matches."
+    },
     "terminal.integrated.shell": {
       "type": "string",
       "minLength": 1,

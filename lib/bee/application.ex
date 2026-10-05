@@ -17,6 +17,7 @@ defmodule Bee.Application do
       {DynamicSupervisor, name: Bee.BufferSup, strategy: :one_for_one},
       {DynamicSupervisor, name: Bee.TerminalSup, strategy: :one_for_one},
       Bee.UI,
+      {Task.Supervisor, name: Bee.Search.TaskSup},
       Bee.Plugins.Supervisor,
       BeeWeb.Endpoint
     ]

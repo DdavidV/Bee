@@ -54,6 +54,70 @@
         "toggled": "activeViewlet == 'workbench.view.explorer'"
       },
       {
+        "command": "workbench.view.search",
+        "category": "View",
+        "title": "Show Search",
+        "runtime": "server",
+        "toggled": "activeViewlet == 'workbench.view.search'"
+      },
+      {
+        "command": "workbench.action.findInFiles",
+        "category": "Search",
+        "title": "Find in Files",
+        "runtime": "server"
+      },
+      {
+        "command": "workbench.action.replaceInFiles",
+        "category": "Search",
+        "title": "Replace in Files",
+        "runtime": "server"
+      },
+      {
+        "command": "search.action.refreshSearchResults",
+        "category": "Search",
+        "title": "Refresh",
+        "icon": "arrow-path",
+        "runtime": "server",
+        "enablement": "searchHasQuery"
+      },
+      {
+        "command": "search.action.clearSearchResults",
+        "category": "Search",
+        "title": "Clear Search Results",
+        "icon": "x-mark",
+        "runtime": "server",
+        "enablement": "searchHasQuery"
+      },
+      {
+        "command": "search.action.collapseSearchResults",
+        "category": "Search",
+        "title": "Collapse All",
+        "icon": "chevron-double-up",
+        "runtime": "server",
+        "enablement": "hasSearchResult"
+      },
+      {
+        "command": "toggleSearchCaseSensitive",
+        "category": "Search",
+        "title": "Toggle Match Case",
+        "runtime": "server",
+        "toggled": "searchCaseSensitive"
+      },
+      {
+        "command": "toggleSearchWholeWord",
+        "category": "Search",
+        "title": "Toggle Match Whole Word",
+        "runtime": "server",
+        "toggled": "searchWholeWord"
+      },
+      {
+        "command": "toggleSearchRegex",
+        "category": "Search",
+        "title": "Toggle Use Regular Expression",
+        "runtime": "server",
+        "toggled": "searchRegex"
+      },
+      {
         "command": "workbench.view.extensions",
         "category": "View",
         "title": "Show Plugins",
@@ -117,6 +181,11 @@
       {"key": "ctrl+j", "mac": "cmd+j", "command": "workbench.action.togglePanel"},
       {"key": "ctrl+shift+e", "mac": "cmd+shift+e", "command": "workbench.view.explorer"},
       {"key": "ctrl+shift+x", "mac": "cmd+shift+x", "command": "workbench.view.extensions"},
+      {"key": "ctrl+shift+f", "mac": "cmd+shift+f", "command": "workbench.action.findInFiles"},
+      {"key": "ctrl+shift+h", "mac": "cmd+shift+h", "command": "workbench.action.replaceInFiles"},
+      {"key": "alt+c", "mac": "cmd+alt+c", "command": "toggleSearchCaseSensitive", "when": "searchViewletFocus"},
+      {"key": "alt+w", "mac": "cmd+alt+w", "command": "toggleSearchWholeWord", "when": "searchViewletFocus"},
+      {"key": "alt+r", "mac": "cmd+alt+r", "command": "toggleSearchRegex", "when": "searchViewletFocus"},
       {"key": "ctrl+,", "mac": "cmd+,", "command": "workbench.action.openSettingsJson"},
       {"key": "ctrl+k ctrl+s", "mac": "cmd+k cmd+s", "command": "workbench.action.openGlobalKeybindingsFile"}
     ],
@@ -124,12 +193,14 @@
     "viewsContainers": {
       "activitybar": [
         {"id": "explorer", "title": "Explorer", "icon": "document-duplicate"},
+        {"id": "search", "title": "Search", "icon": "magnifying-glass"},
         {"id": "extensions", "title": "Plugins", "icon": "puzzle-piece"}
       ]
     },
 
     "views": {
       "explorer": [{"id": "workbench.explorer.fileView", "name": "Folders"}],
+      "search": [{"id": "workbench.view.search", "name": "Search"}],
       "extensions": [{"id": "workbench.extensions.installed", "name": "Installed"}]
     },
 
@@ -150,9 +221,14 @@
       ],
       "menubar/edit": [
         {"command": "undo", "group": "1_do@1"},
-        {"command": "redo", "group": "1_do@2"}
+        {"command": "redo", "group": "1_do@2"},
+        {"command": "workbench.action.findInFiles", "group": "2_find@1"},
+        {"command": "workbench.action.replaceInFiles", "group": "2_find@2"}
       ],
       "view/title": [
+        {"command": "search.action.refreshSearchResults", "group": "navigation@1", "when": "view == workbench.view.search"},
+        {"command": "search.action.clearSearchResults", "group": "navigation@2", "when": "view == workbench.view.search"},
+        {"command": "search.action.collapseSearchResults", "group": "navigation@3", "when": "view == workbench.view.search"},
         {"command": "bee.plugins.reload", "group": "navigation@1", "when": "view == workbench.extensions.installed"}
       ],
       "editor/title": [
@@ -162,7 +238,8 @@
       "menubar/view": [
         {"command": "workbench.action.showCommands", "group": "1_commands@1"},
         {"command": "workbench.view.explorer", "group": "2_views@1"},
-        {"command": "workbench.view.extensions", "group": "2_views@2"},
+        {"command": "workbench.view.search", "group": "2_views@2"},
+        {"command": "workbench.view.extensions", "group": "2_views@3"},
         {"command": "workbench.action.toggleSidebarVisibility", "group": "3_layout@1"},
         {"command": "workbench.action.togglePanel", "group": "3_layout@2"}
       ],

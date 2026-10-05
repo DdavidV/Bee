@@ -28,6 +28,7 @@ defmodule BeeWeb.EditorLive do
   alias Bee.Commands.Registry, as: CommandRegistry
   alias Bee.Commands.Keybindings
   alias Bee.Editor.Buffer
+  alias Bee.Workbench.Search
 
   @impl true
   def mount(_params, _session, socket) do
@@ -74,6 +75,58 @@ defmodule BeeWeb.EditorLive do
     if socket.assigns.sidebar_open, do: views_shown(socket)
     {:noreply, socket}
   end
+
+  ## Search view
+
+  def handle_event("search_update", params, socket) do
+    fields =
+      for {key, value} <- params,
+          key in ~w(query replace include exclude),
+          into: %{},
+          do: {String.to_existing_atom(key), value}
+
+    {:noreply, change(socket, &Search.update(&1, fields))}
+  end
+
+  def handle_event("search_toggle", %{"key" => key}, socket)
+      when key in ~w(show_replace show_details),
+      do: {:noreply, change(socket, &Search.toggle(&1, String.to_existing_atom(key)))}
+
+  def handle_event("search_refresh", _params, socket),
+    do: {:noreply, change(socket, &Search.refresh/1)}
+
+  def handle_event("search_toggle_file", %{"path" => path}, socket),
+    do: {:noreply, change(socket, &Search.toggle_file(&1, path))}
+
+  # A match: open its file and select it.
+  def handle_event("search_open", %{"path" => rel, "from" => from, "to" => to}, socket) do
+    case Workspace.resolve(rel) do
+      {:ok, path} ->
+        socket = change(socket, &Workbench.open_editor(&1, path))
+
+        if Workbench.open?(workbench(socket), path),
+          do:
+            {:noreply,
+             push_event(socket, "cm:reveal", %{path: path, from: int(from), to: int(to)})},
+          else: {:noreply, socket}
+
+      {:error, _} ->
+        {:noreply, socket}
+    end
+  end
+
+  def handle_event("search_replace", %{"target" => "all"}, socket),
+    do: {:noreply, change(socket, &Search.replace(&1, :all))}
+
+  def handle_event("search_replace", %{"target" => "file", "path" => path}, socket),
+    do: {:noreply, change(socket, &Search.replace(&1, {:file, path}))}
+
+  def handle_event(
+        "search_replace",
+        %{"target" => "match", "path" => path, "from" => from},
+        socket
+      ),
+      do: {:noreply, change(socket, &Search.replace(&1, {:match, path, int(from)}))}
 
   def handle_event("toggle_view_item", %{"view" => view, "item" => item}, socket) do
     key = {view, item}
@@ -292,6 +345,12 @@ defmodule BeeWeb.EditorLive do
   def handle_info({:keybindings_changed, bindings, errors}, socket),
     do: {:noreply, load_keybindings(socket, bindings, errors)}
 
+  def handle_info({:search_results, ref, files}, socket),
+    do: {:noreply, change(socket, &Search.results(&1, ref, files))}
+
+  def handle_info({:search_done, ref, stats}, socket),
+    do: {:noreply, change(socket, &Search.done(&1, ref, stats))}
+
   def handle_info({:ui_changed, {:view, id}}, socket),
     do: {:noreply, update(socket, :view_contents, &Map.put(&1, id, Bee.UI.view(id)))}
 
@@ -454,6 +513,54 @@ defmodule BeeWeb.EditorLive do
 
   defp run_effect({:flash, kind, message}, socket), do: put_flash(socket, kind, message)
 
+  defp run_effect({:start_search, opts}, socket) do
+    case Bee.Search.start(opts, self()) do
+      {:ok, handle} -> change(socket, &Search.started(&1, handle))
+      {:error, message} -> change(socket, &Search.failed(&1, message))
+    end
+  end
+
+  defp run_effect({:cancel_search, handle}, socket) do
+    Bee.Search.cancel(handle)
+    socket
+  end
+
+  defp run_effect({:replace, paths, opts, replacement, only}, socket) do
+    case Bee.Search.replace(paths, opts, replacement, only) do
+      {:ok, count} ->
+        socket
+        |> put_flash(
+          :info,
+          "Replaced #{count} #{if count == 1, do: "occurrence", else: "occurrences"}"
+        )
+        |> change(&Search.refresh/1)
+
+      {:error, message} ->
+        put_flash(socket, :error, message)
+    end
+  end
+
+  # Find / Replace in Files: the selected text (one line) becomes the query.
+  defp run_effect({:find_in_files, replace?}, socket) do
+    socket =
+      case selected_text(socket.assigns) do
+        text when is_binary(text) and text != "" ->
+          if String.contains?(text, "\n"),
+            do: socket,
+            else: change(socket, &Search.update(&1, %{query: text}))
+
+        _ ->
+          socket
+      end
+
+    socket =
+      if replace? and not socket.assigns.search.show_replace,
+        do: change(socket, &Search.toggle(&1, :show_replace)),
+        else: socket
+
+    push_event(socket, "search:focus", %{})
+  end
+
   ## Command execution
 
   # `args` reach plugin and client commands; Bee's own server commands
@@ -545,6 +652,20 @@ defmodule BeeWeb.EditorLive do
     do: push_event(socket, "plugin:reply", %{ref: ref, error: message})
 
   defp plugin_request(socket, _unknown), do: socket
+
+  defp int(value) when is_integer(value), do: value
+  defp int(value) when is_binary(value), do: String.to_integer(value)
+
+  # Text of the active editor's first selection, if any.
+  defp selected_text(assigns) do
+    with %{active: active, selection: {active, [{from, to} | _]}} when to > from <- assigns,
+         text when is_binary(text) <- Bee.API.text(active),
+         true <- to <= byte_size(text) do
+      binary_part(text, from, to - from)
+    else
+      _ -> nil
+    end
+  end
 
   defp decode_args(nil), do: []
 

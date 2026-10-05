@@ -777,6 +777,102 @@ defmodule BeeWeb.EditorLiveTest do
     end
   end
 
+  describe "search" do
+    defp await(fun, tries \\ 60) do
+      cond do
+        fun.() -> :ok
+        tries == 0 -> flunk("condition not met")
+        true -> Process.sleep(30) && await(fun, tries - 1)
+      end
+    end
+
+    defp search_for(view, query) do
+      view |> form("#search-form", %{query: query}) |> render_change()
+      await(fn -> render(view) =~ "result" end)
+    end
+
+    test "Find in Files shows the view; results arrive grouped by file", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      run(view, "workbench.action.findInFiles")
+      assert has_element?(view, "#sidebar-title", "Search")
+      assert has_element?(view, "#search-query")
+      assert_push_event(view, "search:focus", %{})
+
+      search_for(view, "defmodule")
+      assert has_element?(view, "#search-status", "1 result in 1 file")
+      assert has_element?(view, "[data-search-file='mix.exs']", "mix.exs")
+
+      assert has_element?(
+               view,
+               "[data-search-match='mix.exs:0'] span.bg-warning\\/35",
+               "defmodule"
+             )
+
+      # case sensitivity is a toggle
+      search_for(view, "DEFMODULE")
+      assert has_element?(view, "#search-status", "1 result")
+      view |> element("#search-view [data-command='toggleSearchCaseSensitive']") |> render_click()
+      await(fn -> has_element?(view, "#search-status", "No results found") end)
+
+      assert has_element?(
+               view,
+               "#search-view [data-command='toggleSearchCaseSensitive'][aria-pressed='true']"
+             )
+    end
+
+    test "clicking a match opens the file and selects it", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      run(view, "workbench.view.search")
+      search_for(view, "end")
+
+      view |> element("[data-search-match='mix.exs:15']") |> render_click()
+      path = Path.join(Bee.Workspace.root(), "mix.exs")
+      assert_push_event(view, "cm:open", %{path: ^path})
+      assert_push_event(view, "cm:reveal", %{path: ^path, from: 15, to: 18})
+    end
+
+    test "the selection seeds Find in Files", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      open_file(view, "mix.exs")
+      path = Path.join(Bee.Workspace.root(), "mix.exs")
+      render_hook(view, "selection_changed", %{"path" => path, "ranges" => [[10, 11]]})
+
+      run(view, "workbench.action.findInFiles")
+      assert has_element?(view, "#search-query[value='M']")
+    end
+
+    test "replace all writes closed files and edits open ones", %{conn: conn} do
+      File.write!(Path.join(Bee.Workspace.root(), "README.md"), "# Readme\nmodule M\n")
+      {:ok, view, _html} = live(conn, ~p"/")
+      open_file(view, "mix.exs")
+
+      run(view, "workbench.action.replaceInFiles")
+      assert has_element?(view, "#search-replace")
+      search_for(view, "M")
+      view |> form("#search-form", %{query: "M", replace: "N"}) |> render_change()
+      _ = render(view)
+
+      view |> element("#search-replace-all") |> render_click()
+
+      readme = Path.join(Bee.Workspace.root(), "README.md")
+      mix = Path.join(Bee.Workspace.root(), "mix.exs")
+      # case-insensitive by default: the m of Readme too
+      assert File.read!(readme) == "# ReadNe\nNodule N\n"
+      # open: changed in the editor (undoable), not on disk
+      assert_push_event(view, "cm:edit", %{path: ^mix, text: "defNodule N do\nend\n"})
+      assert File.read!(mix) == "defmodule M do\nend\n"
+      assert has_element?(view, "#flash-info", "Replaced")
+    end
+
+    test "invalid regexes are reported", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      run(view, "workbench.view.search")
+      run(view, "toggleSearchRegex")
+      view |> form("#search-form", %{query: "(oops"}) |> render_change()
+      assert has_element?(view, "#search-status .text-error", "Invalid regular expression")
+    end
+  end
+
   describe "plugins" do
     @examples Path.expand("../../../examples/plugins", __DIR__)
 
