@@ -10,7 +10,8 @@ defmodule BeeWeb.EditorLiveTest do
     root = Bee.Workspace.root()
     File.rm_rf!(root)
     File.mkdir_p!(Path.join(root, "lib/bee"))
-    File.mkdir_p!(Path.join(root, "_build"))
+    # Hidden by the default files.exclude
+    File.mkdir_p!(Path.join(root, ".elixir_ls"))
     File.write!(Path.join(root, "mix.exs"), "defmodule M do\nend\n")
     File.write!(Path.join(root, "lib/bee/app.ex"), "")
     File.write!(Path.join(root, "README.md"), "# Readme")
@@ -80,7 +81,7 @@ defmodule BeeWeb.EditorLiveTest do
 
     assert has_element?(view, "#explorer button[phx-value-path='lib']")
     assert has_element?(view, "#explorer button[phx-value-path='mix.exs']")
-    refute has_element?(view, "#explorer button[phx-value-path='_build']")
+    refute has_element?(view, "#explorer button[phx-value-path='.elixir_ls']")
   end
 
   test "expanding directories lazily lists children", %{conn: conn} do
@@ -455,13 +456,13 @@ defmodule BeeWeb.EditorLiveTest do
     test "files.exclude changes refresh the explorer", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
       assert has_element?(view, "#explorer button[phx-value-path='README.md']")
-      refute has_element?(view, "#explorer button[phx-value-path='_build']")
+      refute has_element?(view, "#explorer button[phx-value-path='.elixir_ls']")
 
-      put_user_settings(%{"files.exclude" => %{"README.md" => true, "**/_build" => false}})
+      put_user_settings(%{"files.exclude" => %{"README.md" => true, "**/.elixir_ls" => false}})
       _ = render(view)
 
       refute has_element?(view, "#explorer button[phx-value-path='README.md']")
-      assert has_element?(view, "#explorer button[phx-value-path='_build']")
+      assert has_element?(view, "#explorer button[phx-value-path='.elixir_ls']")
     end
 
     test "problems are shown and open the offending file", %{conn: conn} do
@@ -774,6 +775,53 @@ defmodule BeeWeb.EditorLiveTest do
                Enum.find(bindings, &(&1["command"] == "workbench.action.togglePanel")),
                "client"
              )
+    end
+  end
+
+  describe "file decorations" do
+    test "colour the Explorer, its folders and the tabs", %{conn: conn} do
+      root = Bee.Workspace.root()
+      on_exit(fn -> Bee.UI.forget("deco-test") end)
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      Bee.UI.put_decorations("deco-test", %{
+        Path.join(root, "lib/bee/app.ex") => %{badge: "M", color: "modified", tooltip: "Modified"},
+        Path.join(root, "README.md") => %{badge: "U", color: "untracked"}
+      })
+
+      _ = render(view)
+
+      assert has_element?(
+               view,
+               "#explorer button[phx-value-path='README.md'][data-decoration='untracked']",
+               "U"
+             )
+
+      assert has_element?(
+               view,
+               "#explorer button[phx-value-path='README.md'] .text-success",
+               "README.md"
+             )
+
+      # the folder takes the colour, without a badge
+      assert has_element?(
+               view,
+               "#explorer button[phx-value-path='lib'][data-decoration='modified']"
+             )
+
+      refute has_element?(view, "#explorer button[phx-value-path='lib']", "M")
+
+      view |> element("#explorer button[phx-value-path='lib']") |> render_click()
+      view |> element("#explorer button[phx-value-path='lib/bee']") |> render_click()
+
+      assert has_element?(
+               view,
+               "#explorer button[phx-value-path='lib/bee/app.ex'][title='lib/bee/app.ex • Modified']",
+               "M"
+             )
+
+      open_file(view, "README.md")
+      assert has_element?(view, "#tabs .text-success", "README.md")
     end
   end
 
@@ -1182,6 +1230,80 @@ defmodule BeeWeb.EditorLiveTest do
       assert build_conn() |> get("/plugins/insert-date/plugin.json") |> response(404)
       assert build_conn() |> get("/plugins/insert-date/../../settings.json") |> response(404)
       assert build_conn() |> get("/plugins/nope/browser.js") |> response(404)
+    end
+  end
+
+  describe "sidebar views" do
+    setup do
+      on_exit(fn ->
+        Bee.Contributions.unregister({:plugin, "pane-test"})
+        Bee.UI.forget("pane-test")
+      end)
+
+      :ok =
+        Bee.Contributions.register({:plugin, "pane-test"}, %{
+          "name" => "pane-test",
+          "contributes" => %{
+            "viewsContainers" => %{
+              "activitybar" => [%{"id" => "panes", "title" => "Panes", "icon" => "star"}]
+            },
+            "views" => %{
+              "panes" => [
+                %{"id" => "panes.a", "name" => "A"},
+                %{"id" => "panes.b", "name" => "B"}
+              ]
+            }
+          }
+        })
+
+      ctx = %Bee.Plugins.Context{plugin: "pane-test"}
+      :ok = Bee.API.set_view(ctx, "panes.a", %{message: "first"})
+      :ok = Bee.API.set_view(ctx, "panes.b", %{message: "second"})
+      :ok
+    end
+
+    defp show_panes(conn) do
+      {:ok, view, _html} = live(conn, ~p"/")
+      view |> element("#view-panes") |> render_click()
+      view
+    end
+
+    defp pane_style(view, id), do: data(view, "#view-panes\\.#{id}", "style")
+
+    test "a view folds and unfolds from its header", %{conn: conn} do
+      view = show_panes(conn)
+      assert data(view, "#view-header-panes\\.b", "aria-expanded") == "true"
+      assert pane_style(view, "b") =~ "var(--pane-panes_b, 1) 1"
+      # Only the lower one has a sash, to the one above.
+      assert has_element?(view, "#sash-view-panes\\.b")
+      refute has_element?(view, "#sash-view-panes\\.a")
+
+      view |> element("#view-header-panes\\.b") |> render_click()
+      assert data(view, "#view-header-panes\\.b", "aria-expanded") == "false"
+      assert pane_style(view, "b") =~ "var(--pane-panes_b, 0) 1"
+      assert has_element?(view, "#view-panes\\.b [inert]")
+      refute has_element?(view, "#sash-view-panes\\.b")
+
+      view |> element("#view-header-panes\\.b") |> render_click()
+      assert data(view, "#view-header-panes\\.b", "aria-expanded") == "true"
+    end
+
+    test "the sash resizes the views and double-click shares the height again", %{conn: conn} do
+      view = show_panes(conn)
+
+      render_hook(view, "view_resize", %{"sizes" => %{"panes.a" => 120, "panes.b" => 300}})
+      assert pane_style(view, "a") =~ "var(--pane-panes_a, 120) 1"
+      assert pane_style(view, "b") =~ "var(--pane-panes_b, 300) 1"
+
+      # Folded views keep their size for when they are opened again.
+      view |> element("#view-header-panes\\.a") |> render_click()
+      assert pane_style(view, "a") =~ "var(--pane-panes_a, 0) 1"
+      view |> element("#view-header-panes\\.a") |> render_click()
+      assert pane_style(view, "a") =~ "var(--pane-panes_a, 120) 1"
+
+      render_hook(view, "view_resize", %{"reset" => ["panes.a", "panes.b"]})
+      assert pane_style(view, "a") =~ "var(--pane-panes_a, 1) 1"
+      assert pane_style(view, "b") =~ "var(--pane-panes_b, 1) 1"
     end
   end
 

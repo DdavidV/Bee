@@ -113,3 +113,12 @@
 .sash[data-dragging] {
   background-color: var(--color-primary);
 }
+
+/* Views in the sidebar: folding and resizing animate their share of the
+   height, except while a sash between them is dragged. */
+.view-pane {
+  transition: flex-grow 0.15s ease-out;
+}
+html[data-pane-drag] .view-pane {
+  transition: none;
+}

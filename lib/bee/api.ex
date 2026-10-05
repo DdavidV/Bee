@@ -73,6 +73,25 @@ defmodule Bee.API do
   def remove_status_item(%Context{plugin: plugin}, id),
     do: Bee.UI.delete_status_item(plugin, to_string(id))
 
+  @doc """
+  Colours and badges for files in the Explorer and editor tabs, like a VS
+  Code FileDecorationProvider: `%{path => %{badge: "M", color: "modified",
+  tooltip: "Modified"}}`, paths absolute or workspace-relative; replaces
+  the plugin's previous ones. Colours: `"modified"`, `"added"`,
+  `"untracked"`, `"deleted"`, `"conflict"`, `"ignored"`. Folders take the
+  colour of what they contain.
+  """
+  def set_file_decorations(%Context{plugin: plugin}, decorations),
+    do: Bee.UI.put_decorations(plugin, decorations)
+
+  @doc """
+  Sets a context key for `when` clauses (enablement, menus, keybindings,
+  views) in every window, like VS Code's `setContext`. `nil` removes it.
+  Name keys after the plugin, e.g. `"git.repository"`.
+  """
+  def set_context(%Context{plugin: plugin}, key, value),
+    do: Bee.UI.put_context(plugin, to_string(key), value)
+
   ## Asking the user
 
   @doc """

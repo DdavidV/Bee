@@ -1,0 +1,332 @@
+{
+  "$schema": "../../schemas/manifest.schema.json",
+  "name": "git",
+  "displayName": "Git",
+  "description": "Source control with git, like VS Code's: changed files, staging, commits, branches, push and pull. Plus GitLens-style blame: who changed the current line when, in the editor and on hover, and for the whole file in the gutter.",
+  "version": "0.1.0",
+  "server": {
+    "module": "BeeGit"
+  },
+  "browser": "browser.js",
+  "activationEvents": [
+    "*"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "scm",
+          "title": "Source Control",
+          "icon": "share"
+        }
+      ]
+    },
+    "views": {
+      "scm": [
+        {
+          "id": "git.changes",
+          "name": "Changes"
+        },
+        {
+          "id": "git.commits",
+          "name": "Commits",
+          "when": "git.repository"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "git.init",
+        "category": "Git",
+        "title": "Initialize Repository",
+        "runtime": "server",
+        "icon": "plus",
+        "enablement": "!git.repository"
+      },
+      {
+        "command": "git.refresh",
+        "category": "Git",
+        "title": "Refresh",
+        "runtime": "server",
+        "icon": "arrow-path",
+        "enablement": "git.repository"
+      },
+      {
+        "command": "git.commit",
+        "category": "Git",
+        "title": "Commit",
+        "runtime": "server",
+        "icon": "check",
+        "enablement": "git.repository"
+      },
+      {
+        "command": "git.stage",
+        "category": "Git",
+        "title": "Stage Changes",
+        "runtime": "server",
+        "icon": "plus"
+      },
+      {
+        "command": "git.stageAll",
+        "category": "Git",
+        "title": "Stage All Changes",
+        "runtime": "server",
+        "icon": "plus",
+        "enablement": "git.repository"
+      },
+      {
+        "command": "git.unstage",
+        "category": "Git",
+        "title": "Unstage Changes",
+        "runtime": "server",
+        "icon": "minus"
+      },
+      {
+        "command": "git.unstageAll",
+        "category": "Git",
+        "title": "Unstage All Changes",
+        "runtime": "server",
+        "icon": "minus",
+        "enablement": "git.repository"
+      },
+      {
+        "command": "git.clean",
+        "category": "Git",
+        "title": "Discard Changes",
+        "runtime": "server",
+        "icon": "arrow-uturn-left"
+      },
+      {
+        "command": "git.cleanConfirmed",
+        "category": "Git",
+        "title": "Discard Changes (confirmed)",
+        "runtime": "server"
+      },
+      {
+        "command": "git.cleanAll",
+        "category": "Git",
+        "title": "Discard All Changes",
+        "runtime": "server",
+        "icon": "arrow-uturn-left",
+        "enablement": "git.repository"
+      },
+      {
+        "command": "git.cleanAllConfirmed",
+        "category": "Git",
+        "title": "Discard All Changes (confirmed)",
+        "runtime": "server"
+      },
+      {
+        "command": "git.openFile",
+        "category": "Git",
+        "title": "Open File",
+        "runtime": "server",
+        "icon": "document-text"
+      },
+      {
+        "command": "git.checkout",
+        "category": "Git",
+        "title": "Checkout to…",
+        "runtime": "server",
+        "icon": "share",
+        "enablement": "git.repository"
+      },
+      {
+        "command": "git.checkoutTo",
+        "category": "Git",
+        "title": "Checkout to Branch",
+        "runtime": "server"
+      },
+      {
+        "command": "git.branch",
+        "category": "Git",
+        "title": "Create Branch…",
+        "runtime": "server",
+        "enablement": "git.repository"
+      },
+      {
+        "command": "git.pull",
+        "category": "Git",
+        "title": "Pull",
+        "runtime": "server",
+        "icon": "arrow-down-tray",
+        "enablement": "git.repository"
+      },
+      {
+        "command": "git.push",
+        "category": "Git",
+        "title": "Push",
+        "runtime": "server",
+        "icon": "arrow-up-tray",
+        "enablement": "git.repository"
+      },
+      {
+        "command": "git.fetch",
+        "category": "Git",
+        "title": "Fetch",
+        "runtime": "server",
+        "icon": "cloud-arrow-down",
+        "enablement": "git.repository"
+      },
+      {
+        "command": "git.sync",
+        "category": "Git",
+        "title": "Sync",
+        "runtime": "server",
+        "icon": "arrow-path-rounded-square",
+        "enablement": "git.repository"
+      },
+      {
+        "command": "git.toggleFileBlame",
+        "category": "Git",
+        "title": "Toggle File Blame",
+        "runtime": "client",
+        "icon": "user-circle",
+        "enablement": "git.repository && activeEditor"
+      },
+      {
+        "command": "git.toggleLineBlame",
+        "category": "Git",
+        "title": "Toggle Line Blame",
+        "runtime": "client",
+        "icon": "chat-bubble-bottom-center-text",
+        "enablement": "git.repository && activeEditor"
+      }
+    ],
+    "keybindings": [
+      {
+        "key": "ctrl+alt+b",
+        "command": "git.toggleFileBlame",
+        "when": "editorTextFocus"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "git.commit",
+          "group": "navigation@1",
+          "when": "view == git.changes && git.repository"
+        },
+        {
+          "command": "git.refresh",
+          "group": "navigation@2",
+          "when": "view == git.changes && git.repository"
+        },
+        {
+          "command": "git.pull",
+          "group": "navigation@3",
+          "when": "view == git.changes && git.repository"
+        },
+        {
+          "command": "git.push",
+          "group": "navigation@4",
+          "when": "view == git.changes && git.repository"
+        },
+        {
+          "command": "git.refresh",
+          "group": "navigation@1",
+          "when": "view == git.commits"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "git.openFile",
+          "group": "inline@1",
+          "when": "view == git.changes && viewItem =~ /^(change|staged|conflict)$/"
+        },
+        {
+          "command": "git.clean",
+          "group": "inline@2",
+          "when": "view == git.changes && viewItem == change"
+        },
+        {
+          "command": "git.stage",
+          "group": "inline@3",
+          "when": "view == git.changes && viewItem =~ /^(change|conflict)$/"
+        },
+        {
+          "command": "git.unstage",
+          "group": "inline@3",
+          "when": "view == git.changes && viewItem == staged"
+        },
+        {
+          "command": "git.cleanAll",
+          "group": "inline@1",
+          "when": "view == git.changes && viewItem == changesGroup"
+        },
+        {
+          "command": "git.stageAll",
+          "group": "inline@2",
+          "when": "view == git.changes && viewItem =~ /^(changesGroup|conflictGroup)$/"
+        },
+        {
+          "command": "git.unstageAll",
+          "group": "inline@1",
+          "when": "view == git.changes && viewItem == stagedGroup"
+        },
+        {
+          "command": "git.openFile",
+          "group": "inline@1",
+          "when": "view == git.commits && viewItem == commitFile"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "git.toggleFileBlame",
+          "group": "navigation@10",
+          "when": "git.repository && activeEditor"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "git.stage",
+          "when": "false"
+        },
+        {
+          "command": "git.unstage",
+          "when": "false"
+        },
+        {
+          "command": "git.clean",
+          "when": "false"
+        },
+        {
+          "command": "git.cleanConfirmed",
+          "when": "false"
+        },
+        {
+          "command": "git.cleanAllConfirmed",
+          "when": "false"
+        },
+        {
+          "command": "git.openFile",
+          "when": "false"
+        },
+        {
+          "command": "git.checkoutTo",
+          "when": "false"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Git",
+      "properties": {
+        "git.path": {
+          "type": "string",
+          "default": "git",
+          "description": "The git executable."
+        },
+        "git.blame.inline": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show who last changed the current line, and when, at its end (GitLens' current line blame)."
+        },
+        "git.decorations.gutter": {
+          "type": "boolean",
+          "default": true,
+          "description": "Mark added, modified and deleted lines in the editor's gutter."
+        }
+      }
+    }
+  }
+}

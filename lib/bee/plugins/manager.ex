@@ -181,8 +181,14 @@ defmodule Bee.Plugins.Manager do
   defp discover do
     {disabled, workspace?} = config()
 
+    builtin =
+      if Application.get_env(:bee, :builtin_plugins, true),
+        do: [{:builtin, Bee.Plugins.builtin_dir()}],
+        else: []
+
     dirs =
-      [{:user, Bee.Plugins.user_dir()}] ++
+      builtin ++
+        [{:user, Bee.Plugins.user_dir()}] ++
         if(workspace?, do: [{:workspace, Bee.Plugins.workspace_dir()}], else: [])
 
     {plugins, _seen} =

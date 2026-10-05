@@ -91,3 +91,88 @@ export const Sash = {
     this.el.addEventListener("pointercancel", stop)
   },
 }
+
+// The sash between two open views of the sidebar (Source Control's
+// Changes and Commits, say): dragging moves the border between this view
+// and the nearest open one above it.
+//
+// Each view's `flex-grow` is the height of its body, rendered by the
+// server as `var(--pane-…, size)`. During a drag the bodies' heights go
+// into those variables on <html> (out of LiveView's reach, as above); on
+// release they go to the server (`view_resize`) and the variables are
+// dropped once it has rendered them. Double-click shares the height evenly.
+const PANE_MIN = 40
+
+export const PaneSash = {
+  mounted() {
+    this.el.addEventListener("pointerdown", e => this.start(e))
+    this.el.addEventListener("dblclick", () => {
+      const views = this.panes().map(p => p.dataset.pane)
+      this.pushEvent("view_resize", {reset: views})
+    })
+  },
+
+  // The sash may go away (its view folded) before the server answers.
+  destroyed() {
+    this.clear?.()
+  },
+
+  panes() {
+    return [...this.el.closest("#sidebar").querySelectorAll(":scope > [data-pane]")]
+  },
+
+  // The height of a pane's body: the pane without its header.
+  body(pane) {
+    return pane.lastElementChild.getBoundingClientRect().height
+  },
+
+  start(e) {
+    if (e.button !== 0) return
+    e.preventDefault()
+    const open = this.panes().filter(p => p.dataset.open === "true")
+    const below = this.el.closest("[data-pane]")
+    const above = open[open.indexOf(below) - 1]
+    if (!above) return
+
+    const root = document.documentElement
+    const sizes = new Map(open.map(p => [p, this.body(p)]))
+    const set = () => sizes.forEach((size, p) => root.style.setProperty(p.dataset.var, size))
+    const clear = (this.clear = () => {
+      open.forEach(p => root.style.removeProperty(p.dataset.var))
+      delete root.dataset.paneDrag
+    })
+    const total = sizes.get(above) + sizes.get(below)
+    const startAbove = sizes.get(above)
+    const startY = e.clientY
+
+    root.dataset.paneDrag = ""
+    set()
+
+    const move = ev => {
+      const size = Math.min(total - PANE_MIN, Math.max(PANE_MIN, startAbove + ev.clientY - startY))
+      sizes.set(above, Math.round(size))
+      sizes.set(below, Math.round(total - size))
+      set()
+    }
+    const stop = () => {
+      this.el.releasePointerCapture(e.pointerId)
+      this.el.removeEventListener("pointermove", move)
+      this.el.removeEventListener("pointerup", stop)
+      this.el.removeEventListener("pointercancel", stop)
+      delete this.el.dataset.dragging
+      document.body.style.cursor = ""
+      document.body.classList.remove("select-none")
+
+      const payload = Object.fromEntries([...sizes].map(([p, size]) => [p.dataset.pane, size]))
+      this.pushEvent("view_resize", {sizes: payload}, clear)
+    }
+
+    this.el.setPointerCapture(e.pointerId)
+    this.el.dataset.dragging = ""
+    document.body.style.cursor = "row-resize"
+    document.body.classList.add("select-none")
+    this.el.addEventListener("pointermove", move)
+    this.el.addEventListener("pointerup", stop)
+    this.el.addEventListener("pointercancel", stop)
+  },
+}

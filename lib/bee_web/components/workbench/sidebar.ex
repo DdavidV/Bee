@@ -70,7 +70,10 @@ defmodule BeeWeb.Workbench.Sidebar do
   attr :view_contents, :map, required: true
   attr :view_inputs, :map, required: true
   attr :collapsed, :any, required: true
+  attr :collapsed_views, :any, required: true, doc: "MapSet of folded view ids"
+  attr :view_sizes, :map, required: true, doc: "view id → height of its body in px"
   attr :search, :map, required: true
+  attr :file_decorations, :map, required: true
 
   def sidebar(assigns) do
     assigns =
@@ -82,11 +85,13 @@ defmodule BeeWeb.Workbench.Sidebar do
         search_id: @search
       )
 
+    assigns = assign(assigns, panes: panes(assigns))
+
     ~H"""
     <aside
       id="sidebar"
       class={[
-        "bg-base-200 overflow-auto border-r border-base-300 flex flex-col",
+        "bg-base-200 overflow-hidden min-h-0 border-r border-base-300 flex flex-col",
         !@sidebar_open && "hidden"
       ]}
     >
@@ -98,43 +103,99 @@ defmodule BeeWeb.Workbench.Sidebar do
         <Toolbar.toolbar :if={@single} actions={hd(@views).title_actions} class="normal-case" />
       </div>
 
-      <div class={!@explorer_shown && "hidden"}>
+      <div class={["flex-1 min-h-0 overflow-auto", !@explorer_shown && "hidden"]}>
         <.live_component
           module={BeeWeb.Workbench.FileTree}
           id="explorer"
           root={@root}
           active={@active && Bee.Workspace.FS.relative(@root, @active)}
+          decorations={@file_decorations}
         />
       </div>
 
       <section
-        :for={entry <- @views}
-        :if={entry.view.id != @explorer_id}
-        id={"view-#{entry.view.id}"}
+        :for={pane <- @panes}
+        id={"view-#{pane.view.id}"}
+        data-pane={pane.view.id}
+        data-open={to_string(pane.open)}
+        data-var={pane.var}
+        class="view-pane relative flex flex-col min-h-7"
+        style={"flex: var(#{pane.var}, #{pane.grow}) 1 #{if @single, do: "0px", else: "1.75rem"}"}
       >
         <div
-          :if={!@single}
-          class="flex items-center h-7 pl-3 pr-2 text-xs font-semibold uppercase tracking-wide border-t border-base-300"
+          :if={pane.sash}
+          id={"sash-view-#{pane.view.id}"}
+          phx-hook="PaneSash"
+          class="sash absolute inset-x-0 top-0 h-1 -translate-y-1/2 z-10 cursor-row-resize"
         >
-          <span class="flex-1 truncate">{entry.view.name}</span>
-          <Toolbar.toolbar actions={entry.title_actions} class="normal-case" />
         </div>
-        <SearchView.search_view :if={entry.view.id == @search_id} search={@search} />
-        <PluginsView.plugins_view
-          :if={entry.view.id == @plugins_id}
-          plugins={@plugins}
-          user_dir={Bee.Plugins.user_dir()}
-        />
-        <ContributedView.contributed_view
-          :if={entry.view.id not in [@explorer_id, @plugins_id, @search_id]}
-          view={entry.view}
-          content={@view_contents[entry.view.id]}
-          input={Map.get(@view_inputs, entry.view.id, "")}
-          collapsed={@collapsed}
-          item_actions={entry.item_actions}
-        />
+        <div
+          :if={!@single}
+          id={"view-header-#{pane.view.id}"}
+          role="button"
+          aria-expanded={to_string(pane.open)}
+          class="flex items-center gap-0.5 h-7 shrink-0 pl-1 pr-2 text-xs font-semibold uppercase tracking-wide border-t border-base-300 cursor-pointer select-none"
+          phx-click="toggle_view"
+          phx-value-view={pane.view.id}
+        >
+          <.icon
+            name="hero-chevron-right-mini"
+            class={[
+              "size-4 shrink-0 opacity-70 transition-transform duration-150",
+              pane.open && "rotate-90"
+            ]}
+          />
+          <span class="flex-1 truncate">{pane.view.name}</span>
+          <Toolbar.toolbar :if={pane.open} actions={pane.title_actions} class="normal-case" />
+        </div>
+        <div class="flex-1 min-h-0 overflow-auto" inert={!pane.open}>
+          <SearchView.search_view :if={pane.view.id == @search_id} search={@search} />
+          <PluginsView.plugins_view
+            :if={pane.view.id == @plugins_id}
+            plugins={@plugins}
+            user_dir={Bee.Plugins.user_dir()}
+          />
+          <ContributedView.contributed_view
+            :if={pane.view.id not in [@explorer_id, @plugins_id, @search_id]}
+            view={pane.view}
+            content={@view_contents[pane.view.id]}
+            input={Map.get(@view_inputs, pane.view.id, "")}
+            collapsed={@collapsed}
+            item_actions={pane.item_actions}
+          />
+        </div>
       </section>
     </aside>
     """
+  end
+
+  # The views besides the explorer, each a pane: `flex-grow` is the height
+  # of its body (the space past the headers is shared by these weights),
+  # 0 when folded, so folding and resizing are animated by CSS. A view
+  # never resized gets the average of the open ones that were. A sash sits
+  # on top of an open pane with an open one somewhere above it; dragging
+  # it sets `var` (on <html>) for the open panes (see PaneSash).
+  defp panes(assigns) do
+    views = Enum.reject(assigns.views, &(&1.view.id == @explorer))
+    open = &(assigns.single or not MapSet.member?(assigns.collapsed_views, &1.view.id))
+    known = for e <- views, open.(e), size = assigns.view_sizes[e.view.id], do: size
+    default = if known == [], do: 1, else: Enum.sum(known) / length(known)
+
+    {panes, _} =
+      Enum.map_reduce(views, false, fn entry, open_above? ->
+        open? = open.(entry)
+
+        pane =
+          Map.merge(entry, %{
+            open: open?,
+            grow: if(open?, do: Map.get(assigns.view_sizes, entry.view.id, default), else: 0),
+            sash: open? and open_above?,
+            var: "--pane-" <> String.replace(entry.view.id, ~r/[^A-Za-z0-9_-]/, "_")
+          })
+
+        {pane, open_above? or open?}
+      end)
+
+    panes
   end
 end

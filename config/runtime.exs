@@ -11,7 +11,9 @@ if config_env() == :test do
     workspace_root: Path.join(System.tmp_dir!(), "bee_test_workspace"),
     config_dir: Path.join(System.tmp_dir!(), "bee_test_config"),
     watch_files: false,
-    plugin_timeout: 500
+    plugin_timeout: 500,
+    # Tests that need a built-in plugin (git) turn this on themselves.
+    builtin_plugins: false
 else
   # BEE_CONFIG_DIR: where settings.json / keybindings.json live (default ~/.config/bee)
   config :bee,

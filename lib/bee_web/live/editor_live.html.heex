@@ -47,7 +47,10 @@
     view_contents={@view_contents}
     view_inputs={@view_inputs}
     collapsed={@collapsed}
+    collapsed_views={@collapsed_views}
+    view_sizes={@view_sizes}
     search={@search}
+    file_decorations={@file_decorations}
   />
 
   <%!-- Editor area --%>
@@ -77,7 +80,9 @@
           phx-value-path={tab.path}
           title={Bee.Workspace.FS.relative(@root, tab.path)}
         >
-          <span>{Path.basename(tab.path)}</span>
+          <span class={tab_color(@file_decorations, @root, tab.path)}>
+            {Path.basename(tab.path)}
+          </span>
           <button
             class="size-5 grid place-items-center rounded cursor-pointer hover:bg-base-content/10"
             title="Close"

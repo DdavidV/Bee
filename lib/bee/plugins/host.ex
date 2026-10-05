@@ -57,7 +57,7 @@ defmodule Bee.Plugins.Host do
 
   @impl true
   def handle_continue(:activate, %{plugin: plugin} = s) do
-    with {:ok, module, modules} <- Loader.load(plugin.dir, plugin.manifest["server"]),
+    with {:ok, module, modules} <- load(plugin),
          :ok <- notify({:plugin_loaded, plugin.name, modules}),
          handlers = Bee.Plugin.commands(module),
          :ok <- check_handlers(plugin, handlers),
@@ -148,6 +148,18 @@ defmodule Bee.Plugins.Host do
       {:ok, nil}
     end
   end
+
+  # Built-in plugins are compiled with Bee: nothing to load (or unload).
+  defp load(%{scope: :builtin} = plugin) do
+    module = Module.concat([plugin.manifest["server"]["module"]])
+
+    case Code.ensure_loaded(module) do
+      {:module, module} -> {:ok, module, []}
+      {:error, reason} -> {:error, [problem(%{plugin: plugin}, "#{inspect(module)}: #{reason}")]}
+    end
+  end
+
+  defp load(plugin), do: Loader.load(plugin.dir, plugin.manifest["server"])
 
   defp check_handlers(plugin, handlers) do
     declared =

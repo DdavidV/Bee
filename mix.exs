@@ -28,8 +28,10 @@ defmodule Bee.MixProject do
     ]
   end
 
-  defp elixirc_paths(:test), do: ["lib", "test/support"]
-  defp elixirc_paths(_), do: ["lib"]
+  defp elixirc_paths(:test), do: ["lib", "test/support" | builtin_plugin_paths()]
+  defp elixirc_paths(_), do: ["lib" | builtin_plugin_paths()]
+
+  defp builtin_plugin_paths, do: Path.wildcard("priv/plugins/*/lib")
 
   defp deps do
     [

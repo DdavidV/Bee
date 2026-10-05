@@ -86,6 +86,40 @@ defmodule Bee.UI do
   def delete_status_item(owner, id),
     do: GenServer.call(__MODULE__, {:delete, {:status, owner, id}})
 
+  ## File decorations
+
+  @doc "All plugins' file decorations, `%{abs_path => decoration}` (see `Bee.UI.Decorations`)."
+  def decorations do
+    for {{:decorations, _owner}, _owner2, decorations} <- :ets.tab2list(@table),
+        reduce: %{},
+        do: (acc -> Map.merge(acc, decorations))
+  end
+
+  @doc "Replaces `owner`'s file decorations. Raises on bad data."
+  def put_decorations(owner, decorations) do
+    decorations = Bee.UI.Decorations.normalize!(decorations)
+    GenServer.call(__MODULE__, {:put, {:decorations, owner}, owner, decorations})
+  end
+
+  ## Context keys
+
+  @doc """
+  Context keys set by plugins (VS Code's `setContext`), merged into every
+  window's `when` context: `%{key => value}`.
+  """
+  def context do
+    for {{:context, _owner, key}, _owner2, value} <- :ets.tab2list(@table),
+        into: %{},
+        do: {key, value}
+  end
+
+  @doc "Sets context key `key` (JSON-like value) for `owner`; `nil` removes it."
+  def put_context(owner, key, nil),
+    do: GenServer.call(__MODULE__, {:delete, {:context, owner, key}})
+
+  def put_context(owner, key, value),
+    do: GenServer.call(__MODULE__, {:put, {:context, owner, key}, owner, value})
+
   @doc "Removes everything `owner` put on screen (it was unloaded)."
   def forget(owner), do: GenServer.call(__MODULE__, {:forget, owner})
 
@@ -247,4 +281,10 @@ defmodule Bee.UI do
 
   defp broadcast({:status, _, _}),
     do: Phoenix.PubSub.broadcast(Bee.PubSub, @topic, {:ui_changed, :status_items})
+
+  defp broadcast({:decorations, _}),
+    do: Phoenix.PubSub.broadcast(Bee.PubSub, @topic, {:ui_changed, :decorations})
+
+  defp broadcast({:context, _, _}),
+    do: Phoenix.PubSub.broadcast(Bee.PubSub, @topic, {:ui_changed, :context})
 end

@@ -42,9 +42,6 @@
       "additionalProperties": {"type": "boolean"},
       "default": {
         "**/.git": true,
-        "**/_build": true,
-        "**/deps": true,
-        "**/node_modules": true,
         "**/.elixir_ls": true,
         "**/.expert": true
       },

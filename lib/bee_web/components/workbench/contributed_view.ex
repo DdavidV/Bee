@@ -118,7 +118,9 @@ defmodule BeeWeb.Workbench.ContributedView do
         </span>
         <BeeWeb.Icons.named_icon :if={@item.icon} name={@item.icon} class="size-4 opacity-80" />
         <span class={["truncate", color(@item.decoration)]}>{@item.label}</span>
-        <span :if={@item.description} class="truncate text-xs opacity-50">{@item.description}</span>
+        <span :if={@item.description} class="truncate shrink-[4] text-xs opacity-50">
+          {@item.description}
+        </span>
         <span class="flex-1" />
         <Toolbar.toolbar
           actions={@actions}
@@ -154,9 +156,5 @@ defmodule BeeWeb.Workbench.ContributedView do
   defp click(%{command: %{}}, _view), do: "run_command"
   defp click(_item, _view), do: nil
 
-  defp color(%{color: "modified"}), do: "text-warning"
-  defp color(%{color: color}) when color in ["added", "untracked"], do: "text-success"
-  defp color(%{color: color}) when color in ["deleted", "conflict"], do: "text-error"
-  defp color(%{color: "ignored"}), do: "opacity-50"
-  defp color(_), do: nil
+  defp color(decoration), do: BeeWeb.Workbench.Decoration.color_class(decoration)
 end

@@ -3,6 +3,9 @@ defmodule Bee.Plugins do
   Plugins: folders with a `plugin.json` manifest
   (`priv/schemas/manifest.schema.json`) in
 
+    * `priv/plugins/<name>/` – Bee's own (built-in); their server code is
+      compiled with Bee, not at runtime
+
     * `<config_dir>/plugins/<name>/` – the user's plugins
     * `<workspace>/.bee/plugins/<name>/` – only with
       `"plugins.workspace.enabled": true` in user settings, since plugins run
@@ -24,6 +27,9 @@ defmodule Bee.Plugins do
   @table Bee.Plugins
 
   def subscribe, do: Phoenix.PubSub.subscribe(Bee.PubSub, "plugins")
+
+  @doc "Bee's own plugins (e.g. git), shipped in `priv/plugins/`, their code compiled with Bee."
+  def builtin_dir, do: Path.join(:code.priv_dir(:bee), "plugins")
 
   def user_dir, do: Path.join(Bee.Settings.user_dir(), "plugins")
   def workspace_dir, do: Path.join([Bee.Workspace.root(), ".bee", "plugins"])

@@ -47,9 +47,11 @@ defmodule BeeWeb.EditorLive do
      socket
      |> assign(page_title: Path.basename(Workspace.root()), term_seq: %{}, selection: nil)
      |> assign(connected: connected?(socket))
-     |> assign(view_inputs: %{}, collapsed: MapSet.new())
+     |> assign(view_inputs: %{}, collapsed: MapSet.new(), collapsed_views: MapSet.new())
+     |> assign(view_sizes: %{})
      |> load_views()
-     |> assign(status_items: Bee.UI.status_items())
+     |> assign(status_items: Bee.UI.status_items(), ui_context: Bee.UI.context())
+     |> load_decorations()
      |> put_workbench(restore_layout(Workbench.new(Workspace.root()), socket))
      |> load_settings(Settings.all(), Settings.errors())
      |> assign(keybindings: Keybindings.all(), keybinding_errors: Keybindings.errors())
@@ -159,6 +161,32 @@ defmodule BeeWeb.EditorLive do
 
     {:noreply, assign(socket, collapsed: collapsed)}
   end
+
+  # A view's header folds the view (when its container shows several).
+  def handle_event("toggle_view", %{"view" => view}, socket) do
+    collapsed =
+      if MapSet.member?(socket.assigns.collapsed_views, view),
+        do: MapSet.delete(socket.assigns.collapsed_views, view),
+        else: MapSet.put(socket.assigns.collapsed_views, view)
+
+    {:noreply, assign(socket, collapsed_views: collapsed)}
+  end
+
+  # A sash between views was dragged: the body heights of the open views.
+  def handle_event("view_resize", %{"sizes" => sizes}, socket) when is_map(sizes) do
+    sizes =
+      for {view, size} <- sizes,
+          is_number(size),
+          size >= 0,
+          into: %{},
+          do: {view, min(size, 10_000)}
+
+    {:noreply, update(socket, :view_sizes, &Map.merge(&1, sizes))}
+  end
+
+  # Double-clicked: these views share the height evenly again.
+  def handle_event("view_resize", %{"reset" => views}, socket) when is_list(views),
+    do: {:noreply, update(socket, :view_sizes, &Map.drop(&1, views))}
 
   def handle_event("view_input", %{"view" => view, "value" => value}, socket),
     do: {:noreply, update(socket, :view_inputs, &Map.put(&1, view, value))}
@@ -377,6 +405,11 @@ defmodule BeeWeb.EditorLive do
 
   def handle_info({:ui_changed, :status_items}, socket),
     do: {:noreply, assign(socket, status_items: Bee.UI.status_items())}
+
+  def handle_info({:ui_changed, :context}, socket),
+    do: {:noreply, assign(socket, ui_context: Bee.UI.context())}
+
+  def handle_info({:ui_changed, :decorations}, socket), do: {:noreply, load_decorations(socket)}
 
   def handle_info({:contributions_changed, keys}, socket) do
     socket = if :commands in keys, do: load_commands(socket), else: socket
@@ -812,7 +845,12 @@ defmodule BeeWeb.EditorLive do
   ## `when` context
 
   @doc false
-  def context(assigns), do: assigns |> workbench_from() |> Workbench.context(assigns.settings)
+  def context(assigns) do
+    assigns
+    |> workbench_from()
+    |> Workbench.context(assigns.settings)
+    |> Map.merge(assigns[:ui_context] || %{})
+  end
 
   ## Settings / keybindings → assigns
 
@@ -1019,6 +1057,21 @@ defmodule BeeWeb.EditorLive do
     else
       "--sidebar-width: var(--saved-sidebar-width, #{assigns.sidebar_width}px); " <>
         "--panel-height: var(--saved-panel-height, #{assigns.panel_height}px)"
+    end
+  end
+
+  ## File decorations
+
+  defp load_decorations(socket) do
+    decorations = Bee.UI.Decorations.for_workspace(Bee.UI.decorations(), Workspace.root())
+    assign(socket, file_decorations: decorations)
+  end
+
+  # Tabs are coloured like their file in the Explorer (git status…).
+  defp tab_color(decorations, root, path) do
+    case decorations[Bee.Workspace.FS.relative(root, path)] do
+      nil -> nil
+      decoration -> BeeWeb.Workbench.Decoration.color_class(decoration)
     end
   end
 
