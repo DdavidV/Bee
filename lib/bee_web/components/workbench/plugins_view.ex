@@ -6,8 +6,11 @@ defmodule BeeWeb.Workbench.PluginsView do
   """
   use BeeWeb, :html
 
+  alias BeeWeb.Workbench.Toolbar
+
   attr :plugins, :list, required: true
   attr :user_dir, :string, required: true
+  attr :item_actions, :map, required: true, doc: "row context → inline actions"
 
   def plugins_view(assigns) do
     ~H"""
@@ -24,10 +27,16 @@ defmodule BeeWeb.Workbench.PluginsView do
         id={"plugin-#{plugin.name}"}
         class="px-3 py-2 border-b border-base-300 hover:bg-base-content/5"
       >
-        <div class="flex items-baseline gap-2">
-          <span class="font-medium truncate">{plugin.display_name}</span>
+        <div class="flex items-center gap-2">
+          <span class={["font-medium truncate", plugin.status == :disabled && "opacity-50"]}>
+            {plugin.display_name}
+          </span>
           <span :if={plugin.version} class="text-xs opacity-50">{plugin.version}</span>
           <span class="flex-1" />
+          <Toolbar.toolbar
+            actions={Map.get(@item_actions, context(plugin), [])}
+            args={[plugin.name]}
+          />
           <span class={["badge badge-xs", status_class(plugin.status)]}>{status(plugin.status)}</span>
         </div>
         <div :if={plugin.description} class="text-xs opacity-70 truncate" title={plugin.description}>
@@ -48,6 +57,9 @@ defmodule BeeWeb.Workbench.PluginsView do
     </div>
     """
   end
+
+  defp context(%{status: :disabled}), do: "plugin.disabled"
+  defp context(_plugin), do: "plugin.enabled"
 
   defp status(:inactive), do: "installed"
   defp status(status), do: to_string(status)

@@ -40,11 +40,11 @@ defmodule Bee.Commands.CommandTest do
     end
   end
 
-  test "handlers take exactly one argument" do
-    assert_raise CompileError, ~r/must take 1 argument/, fn ->
+  test "handlers take the workbench and optionally the arguments" do
+    assert_raise CompileError, ~r/must take 1 or 2 argument/, fn ->
       compile("""
       @command "x"
-      def a(wb, extra), do: {wb, extra}
+      def a(wb, args, extra), do: {wb, args, extra}
       """)
     end
   end

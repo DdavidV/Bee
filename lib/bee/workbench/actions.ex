@@ -73,4 +73,17 @@ defmodule Bee.Workbench.Actions do
 
   @command "bee.plugins.reload"
   def reload_plugins(wb), do: {wb, [:reload_plugins]}
+
+  # From the Plugins view's buttons, with the plugin's name.
+  @command "bee.plugins.enable"
+  def enable_plugin(wb, [name]) when is_binary(name),
+    do: {wb, [{:set_plugin_enabled, name, true}]}
+
+  def enable_plugin(wb, _args), do: wb
+
+  @command "bee.plugins.disable"
+  def disable_plugin(wb, [name]) when is_binary(name),
+    do: {wb, [{:set_plugin_enabled, name, false}]}
+
+  def disable_plugin(wb, _args), do: wb
 end

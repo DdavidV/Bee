@@ -1032,6 +1032,39 @@ defmodule BeeWeb.EditorLiveTest do
       assert has_element?(view, "#sidebar.hidden")
     end
 
+    test "a plugin is disabled and enabled from the Plugins view", %{conn: conn} do
+      install(["word-count"])
+      {:ok, view, _html} = live(conn, ~p"/")
+      view |> element("#view-extensions") |> render_click()
+      refute has_element?(view, "#plugin-word-count [data-command='bee.plugins.enable']")
+
+      view |> element("#plugin-word-count [data-command='bee.plugins.disable']") |> render_click()
+      # Written to the user's settings, keeping what was there.
+      assert {:ok,
+              %{"plugins.disabled" => ["word-count"], "terminal.integrated.shell" => "/bin/sh"}} =
+               Bee.JSON.JSONC.decode(File.read!(Bee.Settings.user_path()))
+
+      eventually(fn -> has_element?(view, "#plugin-word-count", "disabled") end)
+      assert Bee.Commands.Registry.command("wordCount.count") == nil
+
+      view |> element("#plugin-word-count [data-command='bee.plugins.enable']") |> render_click()
+      eventually(fn -> has_element?(view, "#plugin-word-count", "installed") end)
+      assert Bee.Settings.get("plugins.disabled") == []
+    end
+
+    test "enabling a plugin disabled by the workspace edits the workspace settings" do
+      install(["word-count"])
+      path = Bee.Settings.workspace_path()
+      File.mkdir_p!(Path.dirname(path))
+      File.write!(path, ~s({\n  // mine\n  "plugins.disabled": ["word-count"]\n}\n))
+      Bee.Settings.reload()
+      on_exit(fn -> Bee.Settings.reload() end)
+
+      assert :ok = Bee.Plugins.set_enabled("word-count", true)
+      assert File.read!(path) == ~s({\n  // mine\n  "plugins.disabled": []\n}\n)
+      assert Bee.Settings.get("plugins.disabled") == []
+    end
+
     test "plugin commands are in the palette and answer through Bee.API", %{conn: conn} do
       install(["word-count"])
       {:ok, view, _html} = live(conn, ~p"/")
@@ -1231,6 +1264,27 @@ defmodule BeeWeb.EditorLiveTest do
       assert build_conn() |> get("/plugins/insert-date/../../settings.json") |> response(404)
       assert build_conn() |> get("/plugins/nope/browser.js") |> response(404)
     end
+  end
+
+  test "activity bar icons are rendered in the order they were dragged to", %{conn: conn} do
+    ids = fn html ->
+      Regex.scan(~r/data-container="([^"]+)"/, html) |> Enum.map(&List.last/1)
+    end
+
+    {:ok, view, html} = live(conn, ~p"/")
+    assert ["explorer", "search" | _] = default = ids.(html)
+
+    order = [List.last(default) | Enum.drop(default, -1)]
+    render_hook(view, "reorder_activity", %{"order" => order})
+    assert ids.(view |> element("#activity-bar") |> render()) == order
+
+    # The browser keeps the order and sends it along when it connects.
+    {:ok, view, _html} =
+      conn
+      |> put_connect_params(%{"layout" => %{"activity" => Enum.reverse(default)}})
+      |> live(~p"/")
+
+    assert ids.(view |> element("#activity-bar") |> render()) == Enum.reverse(default)
   end
 
   describe "sidebar views" do

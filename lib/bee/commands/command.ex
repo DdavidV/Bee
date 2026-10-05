@@ -9,8 +9,9 @@ defmodule Bee.Commands.Command do
         def toggle_panel(workbench), do: ...
       end
 
-  Handlers take a `%Bee.Workbench{}` and return either the new workbench or
-  `{workbench, effects}` (see `Bee.Workbench` for effects). Their metadata
+  Handlers take a `%Bee.Workbench{}`, optionally followed by the command's
+  arguments (a list, e.g. from a menu item), and return either the new
+  workbench or `{workbench, effects}` (see `Bee.Workbench` for effects). Their metadata
   (title, keys, menus) lives in a contributions manifest; `Bee.Commands.Registry`
   joins the two.
 
@@ -24,7 +25,7 @@ defmodule Bee.Commands.Command do
 
   defmacro __using__(opts) do
     quote do
-      @bee_command_arity unquote(Keyword.get(opts, :arity, 1))
+      @bee_command_arity List.wrap(unquote(Keyword.get(opts, :arity, [1, 2])))
       Module.register_attribute(__MODULE__, :command, accumulate: false)
       Module.register_attribute(__MODULE__, :bee_commands, accumulate: true)
       @on_definition Bee.Commands.Command
@@ -45,10 +46,10 @@ defmodule Bee.Commands.Command do
           kind != :def ->
             compile_error!(env, "@command #{inspect(id)} must be on a public function (def)")
 
-          length(args) != (arity = Module.get_attribute(env.module, :bee_command_arity)) ->
+          length(args) not in (arities = Module.get_attribute(env.module, :bee_command_arity)) ->
             compile_error!(
               env,
-              "@command #{inspect(id)}: #{name} must take #{arity} argument(s)"
+              "@command #{inspect(id)}: #{name} must take #{Enum.join(arities, " or ")} argument(s)"
             )
 
           Enum.any?(Module.get_attribute(env.module, :bee_commands), &(elem(&1, 0) == id)) ->

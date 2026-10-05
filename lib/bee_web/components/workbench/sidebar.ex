@@ -3,7 +3,8 @@ defmodule BeeWeb.Workbench.Sidebar do
   The activity bar and the sidebar, built from `Bee.Views` contributions.
 
   The activity bar has one button per views container (`show_view`), with
-  the summed badges of its plugin views. The sidebar shows the container's
+  the summed badges of its plugin views. Its icons can be dragged into
+  another order (the `ActivityBar` hook, `reorder_activity`). The sidebar shows the container's
   title, then its views: Bee's own (Explorer, Plugins) rendered by their
   components (Explorer, Search, Plugins), plugins' views by
   `BeeWeb.Workbench.ContributedView`. With a
@@ -28,10 +29,15 @@ defmodule BeeWeb.Workbench.Sidebar do
 
   def activity_bar(assigns) do
     ~H"""
-    <aside id="activity-bar" class="bg-base-300 flex flex-col items-center gap-1 py-2">
+    <aside
+      id="activity-bar"
+      phx-hook="ActivityBar"
+      class="bg-base-300 flex flex-col items-center gap-1 py-2"
+    >
       <button
         :for={container <- @containers}
         id={"view-#{container.id}"}
+        data-container={container.id}
         class={[
           "relative btn btn-ghost btn-square btn-sm",
           @sidebar_open && @sidebar_view == container.id && "btn-active"
@@ -154,6 +160,7 @@ defmodule BeeWeb.Workbench.Sidebar do
             :if={pane.view.id == @plugins_id}
             plugins={@plugins}
             user_dir={Bee.Plugins.user_dir()}
+            item_actions={pane.item_actions}
           />
           <ContributedView.contributed_view
             :if={pane.view.id not in [@explorer_id, @plugins_id, @search_id]}

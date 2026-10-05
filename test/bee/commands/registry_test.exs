@@ -28,9 +28,11 @@ defmodule Bee.Commands.RegistryTest do
     end
 
     test "every server command runs against a fresh workbench" do
-      for %{runtime: :server, handler: {module, fun}, id: id} <- CommandRegistry.commands() do
+      for %{runtime: :server, handler: {_, _} = handler, id: id} <- CommandRegistry.commands() do
         assert {%Workbench{}, effects} =
-                 Workbench.wrap(apply(module, fun, [Workbench.new("/tmp/ws")])),
+                 Workbench.wrap(
+                   CommandRegistry.run_handler(handler, Workbench.new("/tmp/ws"), [])
+                 ),
                "#{id} must return a workbench"
 
         assert is_list(effects)

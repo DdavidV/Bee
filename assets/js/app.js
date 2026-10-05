@@ -32,6 +32,7 @@ import {Palette} from "./hooks/palette"
 import {Plugins} from "./hooks/plugins"
 import {ViewInput} from "./hooks/view_input"
 import {SearchInput} from "./hooks/search_input"
+import {ActivityBar} from "./hooks/activity_bar"
 import {PaneSash, Sash} from "./hooks/sash"
 import {loadLayout} from "./layout/storage"
 
@@ -40,7 +41,7 @@ const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   // A function: evaluated on every (re)connect, so the saved layout is current.
   params: () => ({_csrf_token: csrfToken, layout: loadLayout()}),
-  hooks: {...colocatedHooks, CodeEditor, Keybindings, Palette, PaneSash, Plugins, Sash, SearchInput, Terminal, ViewInput},
+  hooks: {...colocatedHooks, ActivityBar, CodeEditor, Keybindings, Palette, PaneSash, Plugins, Sash, SearchInput, Terminal, ViewInput},
 })
 
 // Show progress bar on live navigation and form submits

@@ -16,6 +16,7 @@ defmodule Bee.Workbench do
     * `{:exec_client, command}` – run a client-side command in the browser
     * `{:run_plugin_command, command}` – run a plugin's server command
     * `:reload_plugins`
+    * `{:set_plugin_enabled, name, enabled?}` – see `Bee.Plugins.set_enabled/2`
     * `{:flash, kind, message}`
     * search effects, see `Bee.Workbench.Search`
 
@@ -30,6 +31,7 @@ defmodule Bee.Workbench do
             sidebar_view: "explorer",
             sidebar_width: 256,
             panel_height: 288,
+            activity_order: [],
             panel_open: false,
             terminals: [],
             active_term: nil,
@@ -50,6 +52,7 @@ defmodule Bee.Workbench do
     :status,
     :sidebar_open,
     :sidebar_view,
+    :activity_order,
     :sidebar_width,
     :panel_height,
     :panel_open,
@@ -165,6 +168,26 @@ defmodule Bee.Workbench do
       :sidebar -> %{wb | sidebar_width: size}
       :panel -> %{wb | panel_height: size}
     end
+  end
+
+  @doc """
+  Remembers the order of the activity bar's icons (views container ids),
+  as the user dragged them. Non-strings are dropped.
+  """
+  def reorder_activity(wb, order) when is_list(order),
+    do: %{wb | activity_order: order |> Enum.filter(&is_binary/1) |> Enum.uniq()}
+
+  @doc """
+  Sorts views containers by an `activity_order`; those it doesn't name (a
+  plugin's, installed since) keep their order, after the others.
+  """
+  def sort_activity(containers, order) do
+    index = order |> Enum.with_index() |> Map.new()
+
+    containers
+    |> Enum.with_index()
+    |> Enum.sort_by(fn {c, i} -> {Map.get(index, c.id, length(order)), i} end)
+    |> Enum.map(&elem(&1, 0))
   end
 
   @doc "Shows sidebar view `view`, also when it is already shown."

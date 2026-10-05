@@ -153,4 +153,15 @@ defmodule Bee.WorkbenchTest do
     resized = Workbench.resize(wb, :panel, 400)
     assert Workbench.resize(resized, :panel, nil).panel_height == wb.panel_height
   end
+
+  test "the activity bar's order: dragged ones first, unknown ones after in their order" do
+    containers = for id <- ~w(explorer search scm extensions), do: %{id: id}
+    wb = Workbench.reorder_activity(wb(), ["scm", 1, "explorer", "gone", "scm"])
+    assert wb.activity_order == ["scm", "explorer", "gone"]
+
+    assert Workbench.sort_activity(containers, wb.activity_order) |> Enum.map(& &1.id) ==
+             ~w(scm explorer search extensions)
+
+    assert Workbench.sort_activity(containers, []) == containers
+  end
 end

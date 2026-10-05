@@ -91,6 +91,22 @@ defmodule Bee.Plugins do
   def request(name, method, params, %Context{} = ctx, ref),
     do: GenServer.call(Manager, {:request, name, method, params, ctx, ref})
 
+  @doc """
+  Enables or disables plugin `name` by editing `plugins.disabled` in the
+  settings file that decides it: the workspace's when it sets the list,
+  the user's otherwise. The manager starts or stops the plugin when the
+  settings reload. Returns `:ok` or `{:error, message}`.
+  """
+  def set_enabled(name, enabled?) when is_binary(name) and is_boolean(enabled?) do
+    key = "plugins.disabled"
+    scope = if Map.has_key?(Bee.Settings.layer(:workspace), key), do: :workspace, else: :user
+
+    Bee.Settings.update(scope, key, fn current ->
+      current = if is_list(current), do: current, else: []
+      if enabled?, do: List.delete(current, name), else: Enum.uniq(current ++ [name])
+    end)
+  end
+
   @doc "Stops every plugin and loads them again from disk."
   def reload, do: GenServer.call(Manager, :reload, 30_000)
 end

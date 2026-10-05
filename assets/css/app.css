@@ -122,3 +122,26 @@
 html[data-pane-drag] .view-pane {
   transition: none;
 }
+
+/* Activity bar icons (hooks/activity_bar.js): pressed ones shrink, held or
+   dragged ones lift; the others slide out of the way. */
+#activity-bar > [data-container] {
+  transition: scale 0.15s ease-out, translate 0.15s ease-out, box-shadow 0.15s ease-out;
+}
+#activity-bar > [data-pressed] {
+  scale: 0.9;
+}
+#activity-bar > [data-lifted] {
+  scale: 1.12;
+  z-index: 10;
+  background-color: var(--color-base-100);
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.35);
+  cursor: grabbing;
+}
+/* The dragged icon follows the pointer without lag. */
+#activity-bar > [data-lifted][style*="translate"] {
+  transition: scale 0.15s ease-out, box-shadow 0.15s ease-out;
+}
+#activity-bar[data-dragging] {
+  cursor: grabbing;
+}

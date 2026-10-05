@@ -79,6 +79,10 @@ defmodule BeeWeb.EditorLive do
     {:noreply, socket}
   end
 
+  # An activity bar icon was dragged to another place: the containers' new order.
+  def handle_event("reorder_activity", %{"order" => order}, socket) when is_list(order),
+    do: {:noreply, change(socket, &Workbench.reorder_activity(&1, order))}
+
   ## Search view
 
   def handle_event("search_update", params, socket) do
@@ -565,6 +569,13 @@ defmodule BeeWeb.EditorLive do
     socket |> load_plugins() |> put_flash(:info, "Plugins reloaded")
   end
 
+  defp run_effect({:set_plugin_enabled, name, enabled?}, socket) do
+    case Plugins.set_enabled(name, enabled?) do
+      :ok -> socket
+      {:error, message} -> put_flash(socket, :error, message)
+    end
+  end
+
   defp run_effect({:flash, kind, message}, socket), do: put_flash(socket, kind, message)
 
   defp run_effect({:start_search, opts}, socket) do
@@ -617,8 +628,8 @@ defmodule BeeWeb.EditorLive do
 
   ## Command execution
 
-  # `args` reach plugin and client commands; Bee's own server commands
-  # don't take any.
+  # `args` reach plugin and client commands, and Bee's own server commands
+  # whose handler takes them.
   defp run_command(socket, id, args \\ []) do
     case Enum.find(socket.assigns.commands, &(&1.id == id)) do
       nil ->
@@ -636,12 +647,10 @@ defmodule BeeWeb.EditorLive do
             run_effect({:run_plugin_command, command, args}, socket)
 
           true ->
-            change(socket, fn wb -> apply_handler(command.handler, wb) end)
+            change(socket, &CommandRegistry.run_handler(command.handler, &1, args))
         end
     end
   end
-
-  defp apply_handler({module, fun}, wb), do: apply(module, fun, [wb])
 
   ## Plugins
 
@@ -770,6 +779,8 @@ defmodule BeeWeb.EditorLive do
       contexts =
         case assigns.view_contents[view.id] do
           %{items: items} -> item_contexts(items)
+          # Bee's Plugins view: its rows (BeeWeb.Workbench.PluginsView).
+          _ when view.id == "workbench.extensions.installed" -> ~w(plugin.enabled plugin.disabled)
           _ -> []
         end
 
@@ -799,7 +810,7 @@ defmodule BeeWeb.EditorLive do
   @doc false
   # Activity bar entries with the summed badges of their plugin views.
   def activity_bar(assigns) do
-    for container <- assigns.containers do
+    for container <- Workbench.sort_activity(assigns.containers, assigns.activity_order) do
       badge =
         assigns.views
         |> Enum.filter(&(&1.container == container.id))
@@ -1039,9 +1050,14 @@ defmodule BeeWeb.EditorLive do
 
     case layout do
       %{} ->
-        Enum.reduce([{"sidebar", :sidebar}, {"panel", :panel}], wb, fn {key, part}, wb ->
-          if is_number(layout[key]), do: Workbench.resize(wb, part, layout[key]), else: wb
-        end)
+        wb =
+          Enum.reduce([{"sidebar", :sidebar}, {"panel", :panel}], wb, fn {key, part}, wb ->
+            if is_number(layout[key]), do: Workbench.resize(wb, part, layout[key]), else: wb
+          end)
+
+        if is_list(layout["activity"]),
+          do: Workbench.reorder_activity(wb, layout["activity"]),
+          else: wb
 
       _ ->
         wb

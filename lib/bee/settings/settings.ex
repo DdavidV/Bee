@@ -122,6 +122,45 @@ defmodule Bee.Settings do
     "// #{header}\n// Uncomment and change any of the settings below.\n{\n#{documented}\n}\n"
   end
 
+  ## Writing
+
+  @doc """
+  The settings a file (`:user` or `:workspace`) sets itself, `%{}` when it
+  is missing or unreadable.
+  """
+  def layer(scope) do
+    case read(path(scope)) do
+      {:ok, map} -> map
+      {:error, _} -> %{}
+    end
+  end
+
+  @doc """
+  Changes `key` in the `:user` or `:workspace` settings file to
+  `fun.(value)`, where `value` is what the file sets it to (`nil` when it
+  doesn't). Comments and formatting are kept (`Bee.JSON.JSONC.put/3`); the
+  file is created if needed and the settings reloaded. Returns `:ok` or
+  `{:error, message}` (an invalid value, an unreadable file).
+  """
+  def update(scope, key, fun) when scope in [:user, :workspace] do
+    path = if scope == :user, do: ensure_user_file!(), else: ensure_workspace_file!()
+
+    with {:ok, text} <- File.read(path),
+         {:ok, current} <- read(path),
+         value = fun.(current[key]),
+         :ok <- validate(key, value),
+         {:ok, text} <- Bee.JSON.JSONC.put(text, key, value) do
+      File.write!(path, text)
+      reload()
+    else
+      {:error, reason} when is_atom(reason) -> {:error, "#{path}: #{:file.format_error(reason)}"}
+      {:error, message} -> {:error, "#{path}: #{message}"}
+    end
+  end
+
+  defp path(:user), do: user_path()
+  defp path(:workspace), do: workspace_path()
+
   ## Validation
 
   @doc """

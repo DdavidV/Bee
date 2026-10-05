@@ -61,6 +61,16 @@ defmodule Bee.Commands.Registry do
   def label(%{category: nil, title: title}), do: title
   def label(%{category: category, title: title}), do: "#{category}: #{title}"
 
+  @doc """
+  Runs one of Bee's own server command handlers on `workbench`, passing
+  `args` when the handler takes them (see `Bee.Commands.Command`).
+  """
+  def run_handler({module, fun}, workbench, args) do
+    if function_exported?(module, fun, 2),
+      do: apply(module, fun, [workbench, args]),
+      else: apply(module, fun, [workbench])
+  end
+
   def enabled?(%{enablement_ast: ast}, context), do: Bee.Commands.When.eval(ast, context)
   def toggled?(%{toggled_ast: nil}, _context), do: nil
   def toggled?(%{toggled_ast: ast}, context), do: Bee.Commands.When.eval(ast, context)

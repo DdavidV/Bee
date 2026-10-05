@@ -168,6 +168,20 @@
         "title": "Reload Plugins",
         "icon": "arrow-path",
         "runtime": "server"
+      },
+      {
+        "command": "bee.plugins.enable",
+        "category": "Plugins",
+        "title": "Enable",
+        "icon": "play",
+        "runtime": "server"
+      },
+      {
+        "command": "bee.plugins.disable",
+        "category": "Plugins",
+        "title": "Disable",
+        "icon": "no-symbol",
+        "runtime": "server"
       }
     ],
 
@@ -230,6 +244,14 @@
         {"command": "search.action.clearSearchResults", "group": "navigation@2", "when": "view == workbench.view.search"},
         {"command": "search.action.collapseSearchResults", "group": "navigation@3", "when": "view == workbench.view.search"},
         {"command": "bee.plugins.reload", "group": "navigation@1", "when": "view == workbench.extensions.installed"}
+      ],
+      "view/item/context": [
+        {"command": "bee.plugins.disable", "group": "inline@1", "when": "view == workbench.extensions.installed && viewItem == plugin.enabled"},
+        {"command": "bee.plugins.enable", "group": "inline@1", "when": "view == workbench.extensions.installed && viewItem == plugin.disabled"}
+      ],
+      "commandPalette": [
+        {"command": "bee.plugins.enable", "when": "false"},
+        {"command": "bee.plugins.disable", "when": "false"}
       ],
       "editor/title": [
         {"command": "undo", "group": "navigation@1", "when": "activeEditor"},
