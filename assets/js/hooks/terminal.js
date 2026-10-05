@@ -83,11 +83,23 @@ export const Terminal = {
       if (id === this.id) this.term.write(decode(data))
     })
     this.term.onData(data => this.pushEvent("term_input", {id: this.id, data}))
+    // While a sash is dragged the size changes on every mouse move: tell the
+    // shell (which redraws on SIGWINCH) only once it settles.
     this.term.onResize(({cols, rows}) => {
-      if (this.ready) this.pushEvent("term_resize", {id: this.id, cols, rows})
+      clearTimeout(this.resizeTimer)
+      this.resizeTimer = setTimeout(() => {
+        if (this.ready) this.pushEvent("term_resize", {id: this.id, cols, rows})
+      }, 150)
     })
 
-    this.observer = new ResizeObserver(() => this.fit())
+    // At most one fit per frame.
+    this.observer = new ResizeObserver(() => {
+      if (this.fitFrame) return
+      this.fitFrame = requestAnimationFrame(() => {
+        this.fitFrame = null
+        this.fit()
+      })
+    })
     this.observer.observe(this.el)
 
     this.pushEvent("term_ready", {id: this.id, cols: this.term.cols, rows: this.term.rows}, ({data}) => {
@@ -110,6 +122,8 @@ export const Terminal = {
   },
 
   destroyed() {
+    clearTimeout(this.resizeTimer)
+    cancelAnimationFrame(this.fitFrame)
     this.observer.disconnect()
     this.term.dispose()
   },

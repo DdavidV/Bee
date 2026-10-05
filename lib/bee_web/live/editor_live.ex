@@ -46,10 +46,11 @@ defmodule BeeWeb.EditorLive do
     {:ok,
      socket
      |> assign(page_title: Path.basename(Workspace.root()), term_seq: %{}, selection: nil)
+     |> assign(connected: connected?(socket))
      |> assign(view_inputs: %{}, collapsed: MapSet.new())
      |> load_views()
      |> assign(status_items: Bee.UI.status_items())
-     |> put_workbench(Workbench.new(Workspace.root()))
+     |> put_workbench(restore_layout(Workbench.new(Workspace.root()), socket))
      |> load_settings(Settings.all(), Settings.errors())
      |> assign(keybindings: Keybindings.all(), keybinding_errors: Keybindings.errors())
      |> load_commands()
@@ -127,6 +128,26 @@ defmodule BeeWeb.EditorLive do
         socket
       ),
       do: {:noreply, change(socket, &Search.replace(&1, {:match, path, int(from)}))}
+
+  ## Layout
+
+  # A sash was dragged (or double-clicked: size nil) – see the Sash hook.
+  def handle_event("layout_resize", %{"part" => part, "size" => size}, socket)
+      when part in ["sidebar", "panel"],
+      do: {:noreply, change(socket, &Workbench.resize(&1, String.to_existing_atom(part), size))}
+
+  # A sash was pulled past the minimum and released: hide that part.
+  def handle_event("layout_hide", %{"part" => "sidebar"}, socket) do
+    if socket.assigns.sidebar_open,
+      do: {:noreply, change(socket, &Workbench.toggle_sidebar/1)},
+      else: {:noreply, socket}
+  end
+
+  def handle_event("layout_hide", %{"part" => "panel"}, socket) do
+    if socket.assigns.panel_open,
+      do: {:noreply, change(socket, &Workbench.toggle_panel/1)},
+      else: {:noreply, socket}
+  end
 
   def handle_event("toggle_view_item", %{"view" => view, "item" => item}, socket) do
     key = {view, item}
@@ -970,6 +991,36 @@ defmodule BeeWeb.EditorLive do
 
   defp problems(assigns),
     do: assigns.settings_errors ++ assigns.keybinding_errors ++ assigns.plugin_errors
+
+  ## Layout
+
+  # Sizes the browser remembered (sent with the connection), so the first
+  # connected render already has them.
+  defp restore_layout(wb, socket) do
+    layout = if connected?(socket), do: get_connect_params(socket)["layout"], else: nil
+
+    case layout do
+      %{} ->
+        Enum.reduce([{"sidebar", :sidebar}, {"panel", :panel}], wb, fn {key, part}, wb ->
+          if is_number(layout[key]), do: Workbench.resize(wb, part, layout[key]), else: wb
+        end)
+
+      _ ->
+        wb
+    end
+  end
+
+  @doc false
+  # The layout's CSS variables. Before the LiveView connects, the sizes the
+  # browser saved (root.html.heex) win over the defaults.
+  def layout_style(assigns, connected?) do
+    if connected? do
+      "--sidebar-width: #{assigns.sidebar_width}px; --panel-height: #{assigns.panel_height}px"
+    else
+      "--sidebar-width: var(--saved-sidebar-width, #{assigns.sidebar_width}px); " <>
+        "--panel-height: var(--saved-panel-height, #{assigns.panel_height}px)"
+    end
+  end
 
   ## Status bar
 

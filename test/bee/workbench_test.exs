@@ -142,4 +142,15 @@ defmodule Bee.WorkbenchTest do
       assert Workbench.context(Workbench.toggle_sidebar(wb()))["activeViewlet"] == false
     end
   end
+
+  test "resizing the sidebar and panel clamps, nil restores the default" do
+    wb = wb()
+    assert Workbench.resize(wb, :sidebar, 300.4).sidebar_width == 300
+    assert Workbench.resize(wb, :sidebar, 10).sidebar_width == 170
+    assert Workbench.resize(wb, :sidebar, 5000).sidebar_width == 800
+    assert Workbench.resize(wb, :panel, 50).panel_height == 80
+
+    resized = Workbench.resize(wb, :panel, 400)
+    assert Workbench.resize(resized, :panel, nil).panel_height == wb.panel_height
+  end
 end

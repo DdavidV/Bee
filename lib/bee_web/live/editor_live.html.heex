@@ -6,9 +6,14 @@
   data-theme={@settings["workbench.colorTheme"]}
   data-keybindings={Jason.encode!(@client_keybindings)}
   data-context={Jason.encode!(context(assigns))}
+  data-root={@root}
+  style={layout_style(assigns, @connected)}
   class={[
     "h-screen w-screen grid grid-rows-[auto_1fr_auto] bg-base-100 text-base-content overflow-hidden",
-    if(@sidebar_open, do: "grid-cols-[3rem_16rem_1fr]", else: "grid-cols-[3rem_1fr]")
+    if(@sidebar_open,
+      do: "grid-cols-[3rem_var(--drag-sidebar-width,var(--sidebar-width))_1fr]",
+      else: "grid-cols-[3rem_1fr]"
+    )
   ]}
 >
   <BeeWeb.Workbench.TitleBar.title_bar
@@ -46,7 +51,16 @@
   />
 
   <%!-- Editor area --%>
-  <main class="min-w-0 min-h-0 flex flex-col">
+  <main class="relative min-w-0 min-h-0 flex flex-col">
+    <%!-- Sash between sidebar and editors: drag to resize, double-click to reset --%>
+    <div
+      :if={@sidebar_open}
+      id="sash-sidebar"
+      phx-hook="Sash"
+      data-part="sidebar"
+      class="sash absolute inset-y-0 left-0 w-1 -translate-x-1/2 z-30 cursor-col-resize"
+    >
+    </div>
     <div class="flex bg-base-200 shrink-0">
       <div id="tabs" class="flex flex-1 min-w-0 overflow-x-auto text-sm">
         <div
@@ -126,8 +140,15 @@
     <section
       :if={@panel_open}
       id="panel"
-      class="h-72 shrink-0 border-t border-base-300 flex flex-col bg-base-100"
+      class="relative h-[var(--drag-panel-height,var(--panel-height))] max-h-[calc(100%-4rem)] shrink-0 overflow-hidden border-t border-base-300 flex flex-col bg-base-100"
     >
+      <div
+        id="sash-panel"
+        phx-hook="Sash"
+        data-part="panel"
+        class="sash absolute inset-x-0 top-0 h-1 z-30 cursor-row-resize"
+      >
+      </div>
       <div class="flex items-center gap-1 px-2 text-xs shrink-0">
         <span class="uppercase tracking-wide opacity-60 mr-2">Terminal</span>
         <button

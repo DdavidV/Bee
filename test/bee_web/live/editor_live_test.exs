@@ -777,6 +777,63 @@ defmodule BeeWeb.EditorLiveTest do
     end
   end
 
+  describe "layout" do
+    test "sashes resize the sidebar and the panel", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      assert data(view, "#workbench", "style") =~ "--sidebar-width: 256px"
+      assert has_element?(view, "#sash-sidebar[phx-hook='Sash']")
+
+      render_hook(view, "layout_resize", %{"part" => "sidebar", "size" => 333})
+      assert data(view, "#workbench", "style") =~ "--sidebar-width: 333px"
+
+      render_hook(view, "layout_resize", %{"part" => "panel", "size" => 9999})
+      assert data(view, "#workbench", "style") =~ "--panel-height: 1200px"
+
+      # double-click: back to the default
+      render_hook(view, "layout_resize", %{"part" => "sidebar", "size" => nil})
+      assert data(view, "#workbench", "style") =~ "--sidebar-width: 256px"
+
+      # no sash for a hidden sidebar
+      run(view, "workbench.action.toggleSidebarVisibility")
+      refute has_element?(view, "#sash-sidebar")
+    end
+
+    test "the browser's saved sizes come with the connection: no jump after connecting", %{
+      conn: conn
+    } do
+      # before connecting: the saved sizes (applied by root.html.heex), else the defaults
+      html = conn |> get(~p"/") |> html_response(200)
+      assert html =~ "--sidebar-width: var(--saved-sidebar-width, 256px)"
+
+      {:ok, view, _html} =
+        conn
+        |> put_connect_params(%{"layout" => %{"sidebar" => 400, "panel" => 9999}})
+        |> live(~p"/")
+
+      assert data(view, "#workbench", "style") =~ "--sidebar-width: 400px; --panel-height: 1200px"
+    end
+
+    test "pulling a sash past the minimum hides the part, keeping its size", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      render_hook(view, "layout_resize", %{"part" => "sidebar", "size" => 300})
+
+      render_hook(view, "layout_hide", %{"part" => "sidebar"})
+      assert has_element?(view, "#sidebar.hidden")
+      refute has_element?(view, "#sash-sidebar")
+
+      run(view, "workbench.action.toggleSidebarVisibility")
+      assert data(view, "#workbench", "style") =~ "--sidebar-width: 300px"
+
+      run(view, "workbench.action.togglePanel")
+      assert has_element?(view, "#panel")
+      render_hook(view, "layout_hide", %{"part" => "panel"})
+      refute has_element?(view, "#panel")
+      # already hidden: nothing happens
+      render_hook(view, "layout_hide", %{"part" => "panel"})
+      refute has_element?(view, "#panel")
+    end
+  end
+
   describe "search" do
     defp await(fun, tries \\ 60) do
       cond do

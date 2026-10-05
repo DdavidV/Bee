@@ -4,11 +4,26 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="csrf-token" content={get_csrf_token()} />
+    <meta name="bee-workspace" content={Bee.Workspace.root()} />
     <.live_title default="Bee" suffix=" · Phoenix Framework" phx-no-format>{assigns[:page_title]}</.live_title>
     <link phx-track-static rel="stylesheet" href={~p"/assets/css/app.css"} />
     <%!-- CSS imported from JS dependencies (xterm.js), emitted by esbuild --%>
     <link phx-track-static rel="stylesheet" href={~p"/assets/js/app.css"} />
     <script defer phx-track-static type="text/javascript" src={~p"/assets/js/app.js"}>
+    </script>
+    <script>
+      // The saved sidebar width / panel height (assets/js/layout/storage.js),
+      // before the first paint: the page renders them until the LiveView
+      // connects, which then renders them itself.
+      (() => {
+        try {
+          const root = document.querySelector("meta[name=bee-workspace]").content;
+          const layout = JSON.parse(localStorage.getItem(`bee:layout:${root}`) || "{}");
+          const style = document.documentElement.style;
+          if (layout.sidebar) style.setProperty("--saved-sidebar-width", `${layout.sidebar}px`);
+          if (layout.panel) style.setProperty("--saved-panel-height", `${layout.panel}px`);
+        } catch (_e) {}
+      })();
     </script>
     <script>
       (() => {

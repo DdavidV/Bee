@@ -103,3 +103,13 @@
 [data-phx-session], [data-phx-teleported-src] { display: contents }
 
 /* This file is for your main application CSS */
+
+/* Sashes (resize handles between sidebar, editors and panel), VS Code style:
+   invisible until hovered or dragged. */
+.sash {
+  transition: background-color 0.1s 0.3s;
+}
+.sash:hover,
+.sash[data-dragging] {
+  background-color: var(--color-primary);
+}

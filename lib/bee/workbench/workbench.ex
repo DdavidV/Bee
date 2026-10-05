@@ -28,6 +28,8 @@ defmodule Bee.Workbench do
             status: nil,
             sidebar_open: true,
             sidebar_view: "explorer",
+            sidebar_width: 256,
+            panel_height: 288,
             panel_open: false,
             terminals: [],
             active_term: nil,
@@ -48,6 +50,8 @@ defmodule Bee.Workbench do
     :status,
     :sidebar_open,
     :sidebar_view,
+    :sidebar_width,
+    :panel_height,
     :panel_open,
     :terminals,
     :active_term,
@@ -145,6 +149,23 @@ defmodule Bee.Workbench do
     do: %{wb | sidebar_open: false}
 
   def show_view(wb, view), do: reveal_view(wb, view)
+
+  # Sizes in CSS pixels: {default, min, max}.
+  @sizes %{sidebar: {256, 170, 800}, panel: {288, 80, 1200}}
+
+  @doc """
+  Sets the sidebar width or panel height (dragging their sash), clamped to
+  sensible bounds; `nil` restores the default (double-clicking the sash).
+  """
+  def resize(wb, part, size) when is_map_key(@sizes, part) do
+    {default, min, max} = @sizes[part]
+    size = if is_number(size), do: size |> round() |> max(min) |> min(max), else: default
+
+    case part do
+      :sidebar -> %{wb | sidebar_width: size}
+      :panel -> %{wb | panel_height: size}
+    end
+  end
 
   @doc "Shows sidebar view `view`, also when it is already shown."
   def reveal_view(wb, view), do: %{wb | sidebar_open: true, sidebar_view: view}
