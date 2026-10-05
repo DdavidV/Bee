@@ -49,7 +49,8 @@ defmodule Bee.Commands.RegistryTest do
                :separator,
                "workbench.action.openSettingsJson",
                "workbench.action.openWorkspaceSettingsFile",
-               "workbench.action.openGlobalKeybindingsFile"
+               "workbench.action.openGlobalKeybindingsFile",
+               "workbench.action.selectIconTheme"
              ]
     end
   end

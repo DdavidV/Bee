@@ -80,6 +80,7 @@ defmodule BeeWeb.Workbench.Sidebar do
   attr :view_sizes, :map, required: true, doc: "view id → height of its body in px"
   attr :search, :map, required: true
   attr :file_decorations, :map, required: true
+  attr :icon_theme, :any, required: true
 
   def sidebar(assigns) do
     assigns =
@@ -116,6 +117,7 @@ defmodule BeeWeb.Workbench.Sidebar do
           root={@root}
           active={@active && Bee.Workspace.FS.relative(@root, @active)}
           decorations={@file_decorations}
+          icon_theme={@icon_theme}
         />
       </div>
 
@@ -155,7 +157,11 @@ defmodule BeeWeb.Workbench.Sidebar do
           <Toolbar.toolbar :if={pane.open} actions={pane.title_actions} class="normal-case" />
         </div>
         <div class="flex-1 min-h-0 overflow-auto" inert={!pane.open}>
-          <SearchView.search_view :if={pane.view.id == @search_id} search={@search} />
+          <SearchView.search_view
+            :if={pane.view.id == @search_id}
+            search={@search}
+            icon_theme={@icon_theme}
+          />
           <PluginsView.plugins_view
             :if={pane.view.id == @plugins_id}
             plugins={@plugins}
@@ -169,6 +175,7 @@ defmodule BeeWeb.Workbench.Sidebar do
             input={Map.get(@view_inputs, pane.view.id, "")}
             collapsed={@collapsed}
             item_actions={pane.item_actions}
+            icon_theme={@icon_theme}
           />
         </div>
       </section>

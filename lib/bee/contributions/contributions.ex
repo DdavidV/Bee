@@ -14,6 +14,7 @@ defmodule Bee.Contributions do
     * `Bee.Languages` – languages, grammars
     * `Bee.Settings.Configuration` – configuration (settings)
     * `Bee.Views` – viewsContainers, views
+    * `Bee.IconThemes` – iconThemes (plugins only)
 
   Reads go straight to ETS. Changes broadcast `{:contributions_changed, keys}`
   on the `"contributions"` topic, `keys` being the point keys affected.
@@ -23,7 +24,13 @@ defmodule Bee.Contributions do
   @table __MODULE__
   @topic "contributions"
 
-  @points [Bee.Commands.Registry, Bee.Languages, Bee.Settings.Configuration, Bee.Views]
+  @points [
+    Bee.Commands.Registry,
+    Bee.Languages,
+    Bee.Settings.Configuration,
+    Bee.Views,
+    Bee.IconThemes
+  ]
 
   # Bee's own manifests, embedded and schema-checked at compile time (see
   # Bee.Priv): a mistake fails `mix compile`. Point checks that need other
@@ -57,7 +64,7 @@ defmodule Bee.Contributions do
   @doc """
   Registers (or replaces) what `source` contributes. `opts` are passed to the
   points (`handlers:` – the `use Bee.Commands.Command` modules of built-in
-  server commands). Returns `:ok` or `{:error, message}`.
+  server commands; `dir:` – a plugin's folder, which its files are relative to). Returns `:ok` or `{:error, message}`.
   """
   def register(source, manifest, opts \\ []) do
     with {:ok, data} <- normalize(source, manifest, opts),

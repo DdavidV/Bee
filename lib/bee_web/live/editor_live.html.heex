@@ -51,6 +51,7 @@
     view_sizes={@view_sizes}
     search={@search}
     file_decorations={@file_decorations}
+    icon_theme={@icon_theme}
   />
 
   <%!-- Editor area --%>
@@ -80,6 +81,12 @@
           phx-value-path={tab.path}
           title={Bee.Workspace.FS.relative(@root, tab.path)}
         >
+          <BeeWeb.Workbench.FileIcon.file_icon
+            :if={@icon_theme}
+            theme={@icon_theme}
+            path={tab.path}
+            language={tab.lang}
+          />
           <span class={tab_color(@file_decorations, @root, tab.path)}>
             {Path.basename(tab.path)}
           </span>
@@ -241,6 +248,11 @@
       {Bee.Languages.name(lang)}
     </span>
   </footer>
+
+  <%!-- The file picker of Plugins: Install from VSIX… (VsixInstall hook) --%>
+  <form id="vsix-form" phx-hook="VsixInstall" phx-change="vsix_validate" class="hidden">
+    <.live_file_input upload={@uploads.vsix} accept=".vsix" />
+  </form>
 
   <%!-- Browser parts of plugins, loaded by the Plugins hook --%>
   <div

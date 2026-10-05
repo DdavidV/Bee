@@ -98,6 +98,8 @@ defmodule Bee.Plugins.Manager do
     {:reply, :ok, rescan(s)}
   end
 
+  def handle_call({:reload, name}, _from, s), do: {:reply, :ok, s |> remove(name) |> rescan()}
+
   @impl true
   def handle_cast({:plugin_loaded, name, modules}, s),
     do: {:noreply, update_plugin(s, name, &%{&1 | modules: modules})}
@@ -286,7 +288,7 @@ defmodule Bee.Plugins.Manager do
 
   defp add(s, %{status: :inactive} = plugin) do
     plugin =
-      case Contributions.register({:plugin, plugin.name}, plugin.manifest) do
+      case Contributions.register({:plugin, plugin.name}, plugin.manifest, dir: plugin.dir) do
         :ok -> %{plugin | browser: browser(plugin)}
         {:error, message} -> invalid(plugin, message)
       end

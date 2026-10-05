@@ -17,6 +17,8 @@ defmodule Bee.Workbench do
     * `{:run_plugin_command, command}` – run a plugin's server command
     * `:reload_plugins`
     * `{:set_plugin_enabled, name, enabled?}` – see `Bee.Plugins.set_enabled/2`
+    * `{:update_setting, key, value}` – write it to the user settings file
+    * `{:uninstall_plugin, name}` – see `Bee.Plugins.uninstall/1`
     * `{:flash, kind, message}`
     * search effects, see `Bee.Workbench.Search`
 

@@ -16,6 +16,7 @@ defmodule BeeWeb.Workbench.SearchView do
   @render_limit 2_000
 
   attr :search, :map, required: true
+  attr :icon_theme, :any, default: nil
 
   def search_view(assigns) do
     assigns =
@@ -186,7 +187,7 @@ defmodule BeeWeb.Workbench.SearchView do
               }
               class="size-4 shrink-0 opacity-70"
             />
-            <BeeWeb.Icons.named_icon name="document" class="size-4 opacity-70" />
+            <BeeWeb.Workbench.FileIcon.file_icon theme={@icon_theme} path={file.path} />
             <span class="truncate">{Path.basename(file.path)}</span>
             <span class="truncate text-xs opacity-50">{dir(file.path)}</span>
             <span class="flex-1" />

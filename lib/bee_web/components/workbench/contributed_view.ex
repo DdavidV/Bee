@@ -2,7 +2,8 @@ defmodule BeeWeb.Workbench.ContributedView do
   @moduledoc """
   Renders a plugin's view from its data (`Bee.UI`): a message with buttons,
   an input box with an action, and a tree of items with inline buttons
-  (`view/item/context` menu, group `inline`).
+  (`view/item/context` menu, group `inline`). An item naming a file
+  (`resource`) and no `icon` gets the file icon theme's icon for it.
 
   Clicking an item with children folds it (`toggle_view_item`, state kept
   per window); clicking a leaf runs its command. The input box submits with
@@ -10,13 +11,14 @@ defmodule BeeWeb.Workbench.ContributedView do
   """
   use BeeWeb, :html
 
-  alias BeeWeb.Workbench.Toolbar
+  alias BeeWeb.Workbench.{FileIcon, Toolbar}
 
   attr :view, :map, required: true
   attr :content, :map, default: nil, doc: "nil until the plugin sets it"
   attr :input, :string, default: ""
   attr :collapsed, :any, required: true, doc: "MapSet of {view_id, item_id}"
   attr :item_actions, :map, required: true, doc: "item context → inline actions"
+  attr :icon_theme, :any, default: nil
 
   def contributed_view(%{content: nil} = assigns) do
     ~H"""
@@ -76,6 +78,7 @@ defmodule BeeWeb.Workbench.ContributedView do
           view={@view}
           collapsed={@collapsed}
           item_actions={@item_actions}
+          icon_theme={@icon_theme}
         />
       </ul>
     </div>
@@ -87,6 +90,7 @@ defmodule BeeWeb.Workbench.ContributedView do
   attr :view, :map, required: true
   attr :collapsed, :any, required: true
   attr :item_actions, :map, required: true
+  attr :icon_theme, :any, required: true
 
   defp item(assigns) do
     assigns =
@@ -117,6 +121,11 @@ defmodule BeeWeb.Workbench.ContributedView do
           />
         </span>
         <BeeWeb.Icons.named_icon :if={@item.icon} name={@item.icon} class="size-4 opacity-80" />
+        <FileIcon.file_icon
+          :if={!@item.icon and @item.resource}
+          theme={@icon_theme}
+          path={@item.resource}
+        />
         <span class={["truncate", color(@item.decoration)]}>{@item.label}</span>
         <span :if={@item.description} class="truncate shrink-[4] text-xs opacity-50">
           {@item.description}
@@ -142,6 +151,7 @@ defmodule BeeWeb.Workbench.ContributedView do
           view={@view}
           collapsed={@collapsed}
           item_actions={@item_actions}
+          icon_theme={@icon_theme}
         />
       </ul>
     </li>

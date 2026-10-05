@@ -56,12 +56,21 @@ defmodule Bee.Plugins do
         do: %{name: name, url: url}
   end
 
-  @doc "Absolute path of a plugin's browser module, if `rel` is it."
-  def browser_path(name, rel) do
+  @doc """
+  The file `rel` of plugin `name` that may be served to the browser: its
+  browser module, or an icon of one of its icon themes (`Bee.IconThemes`).
+  `{:ok, absolute_path, :module | :icon}` or `:error`.
+  """
+  def asset_path(name, rel) do
     case get(name) do
-      %{browser: %{path: path}, dir: dir, status: status}
-      when status not in [:invalid, :disabled] ->
-        if Path.expand(rel, dir) == path, do: {:ok, path}, else: :error
+      %{dir: dir, status: status} = plugin when status not in [:invalid, :disabled] ->
+        path = Path.expand(rel, dir)
+
+        cond do
+          match?(%{browser: %{path: ^path}}, plugin) -> {:ok, path, :module}
+          Bee.IconThemes.icon_file?(name, path) -> {:ok, path, :icon}
+          true -> :error
+        end
 
       _ ->
         :error
@@ -109,4 +118,45 @@ defmodule Bee.Plugins do
 
   @doc "Stops every plugin and loads them again from disk."
   def reload, do: GenServer.call(Manager, :reload, 30_000)
+
+  @doc "Stops plugin `name` (if loaded) and loads it again from disk, if it's still there."
+  def reload(name), do: GenServer.call(Manager, {:reload, name}, 30_000)
+
+  @doc """
+  Uninstalls plugin `name` from the user's plugins folder: its folder is
+  deleted (only the link, when it is a symlink to one elsewhere). Built-in
+  and workspace plugins can't be uninstalled. Returns `:ok` or
+  `{:error, message}`.
+  """
+  def uninstall(name) do
+    case get(name) do
+      # `dir` is the folder's entry in user_dir(), a symlink not resolved.
+      %{scope: :user, dir: entry} ->
+        result =
+          case File.lstat(entry) do
+            {:ok, %File.Stat{type: :symlink}} -> File.rm(entry)
+            {:ok, _} -> with {:ok, _} <- File.rm_rf(entry), do: :ok
+            {:error, reason} -> {:error, reason}
+          end
+
+        reload(name)
+
+        case result do
+          :ok ->
+            :ok
+
+          {:error, reason, _file} ->
+            {:error, "can't delete #{entry}: #{:file.format_error(reason)}"}
+
+          {:error, reason} ->
+            {:error, "can't delete #{entry}: #{:file.format_error(reason)}"}
+        end
+
+      %{scope: scope} ->
+        {:error, "#{name} is a #{scope} plugin; only plugins in #{user_dir()} can be uninstalled"}
+
+      nil ->
+        {:error, "no plugin #{inspect(name)}"}
+    end
+  end
 end

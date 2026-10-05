@@ -151,6 +151,18 @@
         "runtime": "server"
       },
       {
+        "command": "workbench.action.selectIconTheme",
+        "category": "Preferences",
+        "title": "File Icon Theme",
+        "runtime": "server"
+      },
+      {
+        "command": "workbench.action.setIconTheme",
+        "category": "Preferences",
+        "title": "Set File Icon Theme",
+        "runtime": "server"
+      },
+      {
         "command": "workbench.action.openWorkspaceSettingsFile",
         "category": "Preferences",
         "title": "Open Workspace Settings (JSON)",
@@ -167,6 +179,26 @@
         "category": "Developer",
         "title": "Reload Plugins",
         "icon": "arrow-path",
+        "runtime": "server"
+      },
+      {
+        "command": "workbench.extensions.action.installVSIX",
+        "category": "Plugins",
+        "title": "Install from VSIX…",
+        "icon": "arrow-down-tray",
+        "runtime": "client"
+      },
+      {
+        "command": "bee.plugins.uninstall",
+        "category": "Plugins",
+        "title": "Uninstall",
+        "icon": "trash",
+        "runtime": "server"
+      },
+      {
+        "command": "bee.plugins.uninstallConfirmed",
+        "category": "Plugins",
+        "title": "Uninstall (confirmed)",
         "runtime": "server"
       },
       {
@@ -231,7 +263,8 @@
         {"command": "workbench.action.closeActiveEditor", "group": "1_save@2"},
         {"command": "workbench.action.openSettingsJson", "group": "2_preferences@1"},
         {"command": "workbench.action.openWorkspaceSettingsFile", "group": "2_preferences@2"},
-        {"command": "workbench.action.openGlobalKeybindingsFile", "group": "2_preferences@3"}
+        {"command": "workbench.action.openGlobalKeybindingsFile", "group": "2_preferences@3"},
+        {"command": "workbench.action.selectIconTheme", "group": "2_preferences@4"}
       ],
       "menubar/edit": [
         {"command": "undo", "group": "1_do@1"},
@@ -243,14 +276,19 @@
         {"command": "search.action.refreshSearchResults", "group": "navigation@1", "when": "view == workbench.view.search"},
         {"command": "search.action.clearSearchResults", "group": "navigation@2", "when": "view == workbench.view.search"},
         {"command": "search.action.collapseSearchResults", "group": "navigation@3", "when": "view == workbench.view.search"},
-        {"command": "bee.plugins.reload", "group": "navigation@1", "when": "view == workbench.extensions.installed"}
+        {"command": "workbench.extensions.action.installVSIX", "group": "navigation@1", "when": "view == workbench.extensions.installed"},
+        {"command": "bee.plugins.reload", "group": "navigation@2", "when": "view == workbench.extensions.installed"}
       ],
       "view/item/context": [
-        {"command": "bee.plugins.disable", "group": "inline@1", "when": "view == workbench.extensions.installed && viewItem == plugin.enabled"},
-        {"command": "bee.plugins.enable", "group": "inline@1", "when": "view == workbench.extensions.installed && viewItem == plugin.disabled"}
+        {"command": "bee.plugins.disable", "group": "inline@1", "when": "view == workbench.extensions.installed && viewItem =~ /^plugin\\.enabled\\./"},
+        {"command": "bee.plugins.enable", "group": "inline@1", "when": "view == workbench.extensions.installed && viewItem =~ /^plugin\\.disabled\\./"},
+        {"command": "bee.plugins.uninstall", "group": "inline@2", "when": "view == workbench.extensions.installed && viewItem =~ /\\.user$/"}
       ],
       "commandPalette": [
         {"command": "bee.plugins.enable", "when": "false"},
+        {"command": "bee.plugins.uninstall", "when": "false"},
+        {"command": "bee.plugins.uninstallConfirmed", "when": "false"},
+        {"command": "workbench.action.setIconTheme", "when": "false"},
         {"command": "bee.plugins.disable", "when": "false"}
       ],
       "editor/title": [

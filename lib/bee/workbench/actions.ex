@@ -71,6 +71,37 @@ defmodule Bee.Workbench.Actions do
   def open_global_keybindings_file(wb),
     do: Workbench.open_editor(wb, Bee.Commands.Keybindings.ensure_user_file!())
 
+  # Like VS Code's: pick one of the contributed file icon themes (or none).
+  @command "workbench.action.selectIconTheme"
+  def select_icon_theme(wb) do
+    current = Bee.Settings.get("workbench.iconTheme")
+
+    items =
+      for {label, plugin, id} <- [
+            {"None", "Bee's own icons", nil}
+            | for(t <- Bee.IconThemes.themes(), do: {t.label, t.plugin, t.id})
+          ] do
+        %{
+          label: label,
+          description: if(id == current, do: "#{plugin} · current", else: plugin),
+          value: id || ""
+        }
+      end
+
+    Workbench.open_quick_pick(wb, %{
+      items: items,
+      command: "workbench.action.setIconTheme",
+      placeholder: "Select File Icon Theme"
+    })
+  end
+
+  # The pick's choice: a theme id, "" for none. Saved in the user settings.
+  @command "workbench.action.setIconTheme"
+  def set_icon_theme(wb, [id]) when is_binary(id),
+    do: {wb, [{:update_setting, "workbench.iconTheme", if(id == "", do: nil, else: id)}]}
+
+  def set_icon_theme(wb, _args), do: wb
+
   @command "bee.plugins.reload"
   def reload_plugins(wb), do: {wb, [:reload_plugins]}
 
@@ -80,6 +111,33 @@ defmodule Bee.Workbench.Actions do
     do: {wb, [{:set_plugin_enabled, name, true}]}
 
   def enable_plugin(wb, _args), do: wb
+
+  # Asks first: the plugin's folder is deleted.
+  @command "bee.plugins.uninstall"
+  def uninstall_plugin(wb, [name]) when is_binary(name) do
+    case Bee.Plugins.get(name) do
+      %{display_name: display, dir: dir} ->
+        Workbench.open_quick_pick(wb, %{
+          items: [
+            %{label: "Uninstall #{display}", description: "deletes #{dir}", value: name},
+            %{label: "Cancel", description: "", value: ""}
+          ],
+          command: "bee.plugins.uninstallConfirmed",
+          placeholder: "Uninstall #{display}?"
+        })
+
+      nil ->
+        wb
+    end
+  end
+
+  def uninstall_plugin(wb, _args), do: wb
+
+  @command "bee.plugins.uninstallConfirmed"
+  def uninstall_plugin_confirmed(wb, [name]) when is_binary(name) and name != "",
+    do: {wb, [{:uninstall_plugin, name}]}
+
+  def uninstall_plugin_confirmed(wb, _args), do: wb
 
   @command "bee.plugins.disable"
   def disable_plugin(wb, [name]) when is_binary(name),

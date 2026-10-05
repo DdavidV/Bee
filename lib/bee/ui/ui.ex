@@ -24,6 +24,8 @@ defmodule Bee.UI do
         description: "src",                    # dimmed, after the label
         tooltip: "…",
         icon: "document",                      # a Heroicons outline name
+        resource: "/abs/src/a.ex",             # the file it stands for: without
+                                               # `icon`, the file icon theme's icon
         decoration: %{text: "M", color: "modified"},
         context: "change",                     # `viewItem` in menu `when` clauses
         command: %{command: "git.open", arguments: ["src/a.ex"]},  # on click
@@ -170,6 +172,7 @@ defmodule Bee.UI do
       description: string(item, :description),
       tooltip: string(item, :tooltip),
       icon: string(item, :icon),
+      resource: string(item, :resource),
       decoration:
         case get(item, :decoration) do
           nil -> nil

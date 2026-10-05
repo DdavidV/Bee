@@ -70,7 +70,8 @@
           "type": "object",
           "description": "Views container id (yours, or e.g. \"explorer\") to the views shown in it.",
           "additionalProperties": {"type": "array", "items": {"$ref": "#/definitions/view"}}
-        }
+        },
+        "iconThemes": {"type": "array", "items": {"$ref": "#/definitions/iconTheme"}}
       }
     }
   },
@@ -152,6 +153,17 @@
         "id": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+$"},
         "name": {"type": "string", "minLength": 1},
         "when": {"$ref": "#/definitions/whenClause"}
+      }
+    },
+    "iconTheme": {
+      "type": "object",
+      "required": ["id", "label", "path"],
+      "additionalProperties": false,
+      "description": "A file icon theme, in VS Code's format; picked with the workbench.iconTheme setting.",
+      "properties": {
+        "id": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+$"},
+        "label": {"type": "string", "minLength": 1},
+        "path": {"type": "string", "minLength": 1, "description": "The theme's JSON file, relative to the plugin's folder."}
       }
     },
     "language": {

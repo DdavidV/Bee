@@ -37,6 +37,11 @@
       "default": "dark",
       "description": "Color theme of the workbench, editor and terminal."
     },
+    "workbench.iconTheme": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "File icon theme (the id of one a plugin contributes) for the explorer, tabs and views. null: Bee's own icons."
+    },
     "files.exclude": {
       "type": "object",
       "additionalProperties": {"type": "boolean"},

@@ -6,9 +6,12 @@ defmodule BeeWeb.Workbench.FileTree do
   `decorations` (workspace-relative path → decoration, see
   `Bee.UI.Decorations`) colour entries and give files a badge, e.g. git's
   "M" in yellow; folders take the colour of what they contain. Everything
-  inside an ignored folder is dimmed too.
+  inside an ignored folder is dimmed too. Icons come from the file icon
+  theme (`BeeWeb.Workbench.FileIcon`).
   """
   use BeeWeb, :live_component
+
+  alias BeeWeb.Workbench.FileIcon
 
   @impl true
   def mount(socket) do
@@ -16,7 +19,8 @@ defmodule BeeWeb.Workbench.FileTree do
      assign(socket,
        expanded: MapSet.new([""]),
        children: %{"" => Bee.Workspace.list_dir("")},
-       decorations: %{}
+       decorations: %{},
+       icon_theme: nil
      )}
   end
 
@@ -74,6 +78,7 @@ defmodule BeeWeb.Workbench.FileTree do
         children={@children}
         active={@active}
         decorations={@decorations}
+        icon_theme={@icon_theme}
         myself={@myself}
       />
     </nav>
@@ -86,6 +91,7 @@ defmodule BeeWeb.Workbench.FileTree do
   attr :children, :map, required: true
   attr :active, :string
   attr :decorations, :map, required: true
+  attr :icon_theme, :any, required: true
   attr :myself, :any, required: true
 
   defp level(assigns) do
@@ -106,7 +112,7 @@ defmodule BeeWeb.Workbench.FileTree do
           ]}
         >
           <.icon
-            :if={entry.type == :dir}
+            :if={entry.type == :dir and not FileIcon.hides_arrows?(@icon_theme)}
             name={
               if MapSet.member?(@expanded, entry.path),
                 do: "hero-chevron-down-mini",
@@ -114,10 +120,15 @@ defmodule BeeWeb.Workbench.FileTree do
             }
             class="size-4 shrink-0 opacity-70"
           />
-          <.icon
-            :if={entry.type == :file}
-            name="hero-document-mini"
-            class="size-4 shrink-0 opacity-50"
+          <span
+            :if={(entry.type == :file and @icon_theme) && not FileIcon.hides_arrows?(@icon_theme)}
+            class="w-4 shrink-0"
+          />
+          <FileIcon.file_icon
+            theme={@icon_theme}
+            path={entry.path}
+            folder={entry.type == :dir}
+            expanded={entry.type == :dir and MapSet.member?(@expanded, entry.path)}
           />
           <span class={["truncate", color_class(decoration(@decorations, entry.path))]}>
             {entry.name}
@@ -137,6 +148,7 @@ defmodule BeeWeb.Workbench.FileTree do
           children={@children}
           active={@active}
           decorations={@decorations}
+          icon_theme={@icon_theme}
           myself={@myself}
         />
       </li>

@@ -1065,6 +1065,102 @@ defmodule BeeWeb.EditorLiveTest do
       assert Bee.Settings.get("plugins.disabled") == []
     end
 
+    test "the file icon theme draws the Explorer's and tabs' icons", %{conn: conn} do
+      dir = Path.join(Bee.Plugins.user_dir(), "icons")
+      File.mkdir_p!(Path.join(dir, "i"))
+
+      for icon <- ~w(file folder open md),
+          do: File.write!(Path.join(dir, "i/#{icon}.svg"), "<svg/>")
+
+      File.write!(Path.join(dir, "plugin.json"), ~s({"name": "icons", "contributes":
+        {"iconThemes": [{"id": "test-icons", "label": "Test Icons", "path": "theme.json"}]}}))
+
+      File.write!(Path.join(dir, "theme.json"), ~s({"iconDefinitions": {
+        "f": {"iconPath": "i/file.svg"}, "d": {"iconPath": "i/folder.svg"},
+        "o": {"iconPath": "i/open.svg"}, "m": {"iconPath": "i/md.svg"}},
+        "file": "f", "folder": "d", "folderExpanded": "o", "fileExtensions": {"md": "m"}}))
+
+      Bee.Plugins.reload()
+      {:ok, view, _html} = live(conn, ~p"/")
+      # No theme yet: Bee's own icons.
+      refute has_element?(view, "#explorer img")
+
+      # Picked like in VS Code: the palette's File Icon Theme.
+      run(view, "workbench.action.selectIconTheme")
+      assert has_element?(view, "#palette-items", "Test Icons")
+      view |> form("#palette-form", %{query: "test icons"}) |> render_change()
+      view |> form("#palette-form") |> render_submit()
+      assert Bee.Settings.get("workbench.iconTheme") == "test-icons"
+
+      icon = fn selector ->
+        data(view, selector <> " img", "src") |> String.replace(~r/\?.*/, "")
+      end
+
+      assert icon.("#explorer button[phx-value-path='README.md']") == "/plugins/icons/i/md.svg"
+      assert icon.("#explorer button[phx-value-path='mix.exs']") == "/plugins/icons/i/file.svg"
+      assert icon.("#explorer button[phx-value-path='lib']") == "/plugins/icons/i/folder.svg"
+      view |> element("#explorer button[phx-value-path='lib']") |> render_click()
+      assert icon.("#explorer button[phx-value-path='lib']") == "/plugins/icons/i/open.svg"
+
+      open_file(view, "README.md")
+      assert icon.("#tabs") == "/plugins/icons/i/md.svg"
+
+      # Served from the plugin's folder; nothing else is.
+      conn = get(build_conn(), "/plugins/icons/i/md.svg")
+      assert response(conn, 200) == "<svg/>"
+      assert get_resp_header(conn, "content-type") |> hd() =~ "image/svg+xml"
+      assert build_conn() |> get("/plugins/icons/theme.json") |> response(404)
+
+      # Back to none.
+      run(view, "workbench.action.selectIconTheme")
+      view |> form("#palette-form", %{query: "none"}) |> render_change()
+      view |> form("#palette-form") |> render_submit()
+      refute has_element?(view, "#explorer img")
+    end
+
+    test "an icon theme is installed from a VSIX and uninstalled again", %{conn: conn} do
+      zip = Path.join(System.tmp_dir!(), "bee-lv-test-#{System.unique_integer([:positive])}.vsix")
+      on_exit(fn -> File.rm(zip) end)
+
+      package = %{
+        name: "tiny-icons",
+        version: "1.0.0",
+        contributes: %{iconThemes: [%{id: "tiny", label: "Tiny", path: "t.json"}]}
+      }
+
+      {:ok, _} =
+        :zip.create(String.to_charlist(zip), [
+          {~c"extension/package.json", Jason.encode!(package)},
+          {~c"extension/t.json", ~s({"iconDefinitions": {}})}
+        ])
+
+      {:ok, view, _html} = live(conn, ~p"/")
+      view |> element("#view-extensions") |> render_click()
+      assert has_element?(view, "[data-command='workbench.extensions.action.installVSIX']")
+
+      upload =
+        file_input(view, "#vsix-form", :vsix, [
+          %{name: "tiny.vsix", content: File.read!(zip), type: "application/octet-stream"}
+        ])
+
+      render_upload(upload, "tiny.vsix")
+      assert render(view) =~ "Installed tiny-icons from tiny.vsix"
+      assert has_element?(view, "#plugin-tiny-icons", "installed")
+      assert [%{id: "tiny"}] = Bee.IconThemes.themes()
+
+      # Built-in plugins have no Uninstall button; this user one has.
+      view
+      |> element("#plugin-tiny-icons [data-command='bee.plugins.uninstall']")
+      |> render_click()
+
+      assert has_element?(view, "#palette-items", "Uninstall tiny-icons")
+      view |> form("#palette-form") |> render_submit()
+
+      refute has_element?(view, "#plugin-tiny-icons")
+      refute File.exists?(Path.join(Bee.Plugins.user_dir(), "tiny-icons"))
+      assert render(view) =~ "Uninstalled tiny-icons"
+    end
+
     test "plugin commands are in the palette and answer through Bee.API", %{conn: conn} do
       install(["word-count"])
       {:ok, view, _html} = live(conn, ~p"/")

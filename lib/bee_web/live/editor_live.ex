@@ -56,7 +56,14 @@ defmodule BeeWeb.EditorLive do
      |> load_settings(Settings.all(), Settings.errors())
      |> assign(keybindings: Keybindings.all(), keybinding_errors: Keybindings.errors())
      |> load_commands()
-     |> load_plugins()}
+     |> load_plugins()
+     |> allow_upload(:vsix,
+       accept: :any,
+       max_entries: 1,
+       max_file_size: 200_000_000,
+       auto_upload: true,
+       progress: &vsix_progress/3
+     )}
   end
 
   ## Commands
@@ -164,6 +171,28 @@ defmodule BeeWeb.EditorLive do
         else: MapSet.put(socket.assigns.collapsed, key)
 
     {:noreply, assign(socket, collapsed: collapsed)}
+  end
+
+  ## Installing from VSIX (workbench.extensions.action.installVSIX)
+
+  # Required by uploads; the file goes up as soon as it is picked.
+  def handle_event("vsix_validate", _params, socket) do
+    case socket.assigns.uploads.vsix.entries do
+      [%{} = entry] ->
+        case upload_errors(socket.assigns.uploads.vsix, entry) do
+          [] ->
+            {:noreply, socket}
+
+          errors ->
+            {:noreply,
+             socket
+             |> cancel_upload(:vsix, entry.ref)
+             |> put_flash(:error, "Can't upload #{entry.client_name}: #{inspect(errors)}")}
+        end
+
+      _ ->
+        {:noreply, socket}
+    end
   end
 
   # A view's header folds the view (when its container shows several).
@@ -431,6 +460,12 @@ defmodule BeeWeb.EditorLive do
       end
 
     socket = if :languages in keys, do: redetect_languages(socket), else: socket
+
+    socket =
+      if :icon_themes in keys,
+        do: assign(socket, icon_theme: icon_theme(socket.assigns.settings)),
+        else: socket
+
     {:noreply, socket}
   end
 
@@ -569,6 +604,20 @@ defmodule BeeWeb.EditorLive do
     socket |> load_plugins() |> put_flash(:info, "Plugins reloaded")
   end
 
+  defp run_effect({:update_setting, key, value}, socket) do
+    case Settings.update(:user, key, fn _ -> value end) do
+      :ok -> socket
+      {:error, message} -> put_flash(socket, :error, message)
+    end
+  end
+
+  defp run_effect({:uninstall_plugin, name}, socket) do
+    case Plugins.uninstall(name) do
+      :ok -> socket |> load_plugins() |> put_flash(:info, "Uninstalled #{name}")
+      {:error, message} -> put_flash(socket, :error, message)
+    end
+  end
+
   defp run_effect({:set_plugin_enabled, name, enabled?}, socket) do
     case Plugins.set_enabled(name, enabled?) do
       :ok -> socket
@@ -653,6 +702,27 @@ defmodule BeeWeb.EditorLive do
   end
 
   ## Plugins
+
+  defp vsix_progress(:vsix, %{done?: false}, socket), do: {:noreply, socket}
+
+  defp vsix_progress(:vsix, entry, socket) do
+    result =
+      consume_uploaded_entry(socket, entry, fn %{path: path} ->
+        {:ok, Bee.Plugins.Vsix.install(path)}
+      end)
+
+    case result do
+      {:ok, name} ->
+        {:noreply,
+         socket
+         |> load_plugins()
+         |> change(&Workbench.reveal_view(&1, "extensions"))
+         |> put_flash(:info, "Installed #{name} from #{entry.client_name}")}
+
+      {:error, message} ->
+        {:noreply, put_flash(socket, :error, "#{entry.client_name}: #{message}")}
+    end
+  end
 
   defp plugin_context(assigns) do
     active = assigns.active
@@ -778,10 +848,15 @@ defmodule BeeWeb.EditorLive do
     for view <- visible_views(assigns) do
       contexts =
         case assigns.view_contents[view.id] do
-          %{items: items} -> item_contexts(items)
+          %{items: items} ->
+            item_contexts(items)
+
           # Bee's Plugins view: its rows (BeeWeb.Workbench.PluginsView).
-          _ when view.id == "workbench.extensions.installed" -> ~w(plugin.enabled plugin.disabled)
-          _ -> []
+          _ when view.id == "workbench.extensions.installed" ->
+            BeeWeb.Workbench.PluginsView.contexts()
+
+          _ ->
+            []
         end
 
       %{
@@ -866,7 +941,9 @@ defmodule BeeWeb.EditorLive do
   ## Settings / keybindings → assigns
 
   defp load_settings(socket, settings, errors) do
-    assign(socket,
+    socket
+    |> assign(icon_theme: icon_theme(settings))
+    |> assign(
       settings: settings,
       settings_errors: errors,
       editor_settings: %{
@@ -881,6 +958,19 @@ defmodule BeeWeb.EditorLive do
         theme: settings["workbench.colorTheme"]
       }
     )
+  end
+
+  # The file icon theme picked in workbench.iconTheme, in its light or dark
+  # variant; nil (Bee's own icons) when none is set or it isn't loaded (yet).
+  defp icon_theme(settings) do
+    variant = if settings["workbench.colorTheme"] == "light", do: :light, else: :dark
+
+    with id when is_binary(id) <- settings["workbench.iconTheme"],
+         {:ok, theme} <- Bee.IconThemes.load(id, variant) do
+      theme
+    else
+      _ -> nil
+    end
   end
 
   defp load_commands(socket) do

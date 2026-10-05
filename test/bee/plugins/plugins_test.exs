@@ -133,9 +133,9 @@ defmodule Bee.PluginsTest do
     assert [%{name: "dotenv", url: "/plugins/dotenv/browser.js?v=" <> _}, %{name: "insert-date"}] =
              Plugins.browser_modules()
 
-    assert {:ok, _} = Plugins.browser_path("dotenv", "browser.js")
-    assert :error = Plugins.browser_path("dotenv", "plugin.json")
-    assert :error = Plugins.browser_path("word-count", "lib/word_count.ex")
+    assert {:ok, _, :module} = Plugins.asset_path("dotenv", "browser.js")
+    assert :error = Plugins.asset_path("dotenv", "plugin.json")
+    assert :error = Plugins.asset_path("word-count", "lib/word_count.ex")
 
     assert Host.whereis("word-count") == nil
   end

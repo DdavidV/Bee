@@ -2,7 +2,10 @@ defmodule BeeWeb.Workbench.PluginsView do
   @moduledoc """
   The Plugins sidebar view (`workbench.extensions.installed`): installed
   plugins from `Bee.Plugins.list/0` with their status and problems. Its
-  reload button is a `view/title` menu item in `bee.json`.
+  Install from VSIX and reload buttons are `view/title` menu items in
+  `bee.json`; each row's Enable/Disable and Uninstall buttons
+  `view/item/context` ones (`viewItem` is
+  `plugin.<enabled|disabled>.<builtin|user|workspace>`).
   """
   use BeeWeb, :html
 
@@ -58,8 +61,17 @@ defmodule BeeWeb.Workbench.PluginsView do
     """
   end
 
-  defp context(%{status: :disabled}), do: "plugin.disabled"
-  defp context(_plugin), do: "plugin.enabled"
+  @doc "Every row context: `plugin.<enabled|disabled>.<scope>`."
+  def contexts,
+    do:
+      for(
+        state <- ~w(enabled disabled),
+        scope <- ~w(builtin user workspace),
+        do: "plugin.#{state}.#{scope}"
+      )
+
+  defp context(%{status: :disabled, scope: scope}), do: "plugin.disabled.#{scope}"
+  defp context(%{scope: scope}), do: "plugin.enabled.#{scope}"
 
   defp status(:inactive), do: "installed"
   defp status(status), do: to_string(status)
