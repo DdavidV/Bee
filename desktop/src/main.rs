@@ -203,6 +203,7 @@ fn bridge_open(
     channel: Channel<Value>,
 ) {
     let win = webview.label().to_string();
+    let sid = socket_id(&webview, &sid);
     bee.sockets
         .lock()
         .unwrap()
@@ -211,14 +212,28 @@ fn bridge_open(
 }
 
 #[tauri::command]
-fn bridge_send(bee: tauri::State<'_, Arc<Bee>>, sid: String, data: String, bin: bool) {
+fn bridge_send(
+    webview: tauri::Webview,
+    bee: tauri::State<'_, Arc<Bee>>,
+    sid: String,
+    data: String,
+    bin: bool,
+) {
+    let sid = socket_id(&webview, &sid);
     bee.send(&json!({"t": "msg", "sid": sid, "data": data, "bin": bin}));
 }
 
 #[tauri::command]
-fn bridge_close(bee: tauri::State<'_, Arc<Bee>>, sid: String) {
+fn bridge_close(webview: tauri::Webview, bee: tauri::State<'_, Arc<Bee>>, sid: String) {
+    let sid = socket_id(&webview, &sid);
     bee.sockets.lock().unwrap().remove(&sid);
     bee.send(&json!({"t": "close", "sid": sid}));
+}
+
+/// A page's socket id, unique among all windows' (`w2:s1`): pages number
+/// their sockets themselves, so two windows have an `s1` each.
+fn socket_id(webview: &tauri::Webview, sid: &str) -> String {
+    format!("{}:{sid}", webview.label())
 }
 
 // Windows.

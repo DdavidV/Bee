@@ -95,7 +95,14 @@
     await invoke("selftest_close_window", {folder: lib})
     const left = await waitFor(async () => (await invoke("selftest_windows")).length === 1, 5000)
     await check(left, "closed lib/'s window")
-    await sleep(500)
+
+    // This window still talks to Bee: closing another one mustn't close its
+    // sockets (pages number them alike).
+    const term = document.querySelector(".xterm-helper-textarea")
+    term?.focus()
+    term?.dispatchEvent(new InputEvent("input", {inputType: "insertText", data: "echo still-$((20+1))\r", bubbles: true}))
+    await check(await waitFor(() => document.querySelector(".xterm-rows")?.textContent.includes("still-21"), 10000),
+      "this window still works after another closed")
 
     await invoke("selftest_done", {ok})
   }

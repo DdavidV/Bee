@@ -7,6 +7,7 @@
 // it calls transport._opened(), _message(data) and _closed(reason).
 
 let nextId = 1
+const pageId = Math.random().toString(36).slice(2, 10)
 
 export class BridgeTransport {
   static CONNECTING = 0
@@ -19,7 +20,9 @@ export class BridgeTransport {
     this.readyState = BridgeTransport.CONNECTING
     this.binaryType = "arraybuffer"
     this.bufferedAmount = 0
-    this.sid = `s${nextId++}`
+    // Unique for this page load (the shell adds the window): a reloaded
+    // page's sockets mustn't take the ids of the ones going away.
+    this.sid = `${pageId}-s${nextId++}`
     window.__bridge.open(this.sid, url, this)
   }
 
