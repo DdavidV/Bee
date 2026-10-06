@@ -28,8 +28,8 @@ defmodule BeeWeb.EditorLive do
   alias Bee.Commands.Registry, as: CommandRegistry
   alias Bee.Commands.Keybindings
   alias Bee.Editor.Buffer
-  alias Bee.Workspace.Files
-  alias Bee.Workbench.Search
+  alias Bee.Workspace.{FileFinder, Files, RecentFiles}
+  alias Bee.Workbench.{QuickOpen, Search}
 
   @impl true
   def mount(params, _session, socket) do
@@ -55,6 +55,7 @@ defmodule BeeWeb.EditorLive do
      |> assign(connected: connected?(socket))
      |> assign(view_inputs: %{}, collapsed: MapSet.new(), collapsed_views: MapSet.new())
      |> assign(view_sizes: %{})
+     |> assign(quick_open: nil)
      |> load_views()
      |> assign(status_items: Bee.UI.status_items(root), ui_context: Bee.UI.context(root))
      |> load_decorations()
@@ -538,6 +539,30 @@ defmodule BeeWeb.EditorLive do
 
   def handle_info(:plugins_changed, socket), do: {:noreply, load_plugins(socket)}
 
+  # Quick Open's file finder answered.
+  def handle_info(
+        {:file_finder, finder, query, paths, loading?},
+        %{assigns: %{quick_open: %{finder: finder} = data}} = socket
+      ),
+      do:
+        {:noreply,
+         assign(socket,
+           quick_open: %{data | results: paths, results_for: query, loading?: loading?}
+         )}
+
+  def handle_info({:file_finder, _old, _query, _paths, _loading?}, socket), do: {:noreply, socket}
+
+  # It stopped: on purpose, or it crashed (no results then, nothing worse).
+  def handle_info({:DOWN, _ref, :process, finder, _reason}, socket) do
+    case socket.assigns.quick_open do
+      %{finder: ^finder} = data ->
+        {:noreply, assign(socket, quick_open: %{data | finder: nil, loading?: false})}
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
   # Requests from plugins (Bee.API).
   def handle_info({:bee_api, request}, socket), do: {:noreply, plugin_request(socket, request)}
 
@@ -592,7 +617,7 @@ defmodule BeeWeb.EditorLive do
   # Applies `fun` (a Workbench function or command handler) and its effects.
   defp change(socket, fun) do
     {wb, effects} = Workbench.wrap(fun.(workbench(socket)))
-    socket |> put_workbench(wb) |> run_effects(effects)
+    socket |> put_workbench(wb) |> run_effects(effects) |> sync_quick_open()
   end
 
   @doc false
@@ -788,6 +813,7 @@ defmodule BeeWeb.EditorLive do
   defp open_buffer(socket, path, text \\ nil) do
     with {:ok, buffer} <- Buffer.open(path) do
       buffer = if text, do: Buffer.update(path, text), else: buffer
+      RecentFiles.add(socket.assigns.root, path)
       lang = Languages.detect(path, first_line: Languages.first_line(buffer.text))
 
       socket
@@ -1284,19 +1310,27 @@ defmodule BeeWeb.EditorLive do
 
     items
     |> Enum.with_index()
-    |> Enum.map(fn {item, i} -> Map.merge(item, %{id: nil, key: i, shortcut: nil}) end)
+    |> Enum.map(fn {item, i} -> Map.merge(item, %{kind: :pick, key: i}) end)
     |> Enum.filter(&fuzzy_match?(String.downcase(&1.label), query))
   end
 
-  defp palette_items(assigns) do
+  defp palette_items(%{palette: %{mode: :quick_open, query: query}} = assigns) do
+    case QuickOpen.mode(query) do
+      {:commands, rest} -> command_items(assigns, String.downcase(rest))
+      :recent -> mode_items() ++ recent_items(assigns)
+      {:files, query} -> file_items(assigns, query)
+    end
+  end
+
+  defp command_items(assigns, query) do
     ctx = context(assigns)
-    query = String.downcase(assigns.palette.query)
     hidden = hidden_from_palette(ctx)
 
     assigns.commands
     |> Enum.filter(&(CommandRegistry.enabled?(&1, ctx) and &1.id not in hidden))
     |> Enum.map(
       &%{
+        kind: :command,
         id: &1.id,
         label: CommandRegistry.label(&1),
         shortcut: Keybindings.label(&1.id, assigns.keybindings)
@@ -1307,6 +1341,103 @@ defmodule BeeWeb.EditorLive do
     |> Enum.sort_by(&{not String.contains?(String.downcase(&1.label), query), &1.label})
   end
 
+  defp mode_items do
+    for %{prefix: prefix, label: label} <- QuickOpen.modes(),
+        do: %{kind: :mode, prefix: prefix, label: label, description: prefix}
+  end
+
+  defp recent_items(%{quick_open: %{recent: recent}} = assigns) do
+    recent
+    |> Enum.take(assigns.settings["workbench.quickOpen.recentFiles"] || 10)
+    |> Enum.with_index()
+    |> Enum.map(fn {path, i} ->
+      Map.put(file_item(assigns.root, path), :section, if(i == 0, do: "recently opened"))
+    end)
+  end
+
+  defp recent_items(_assigns), do: []
+
+  # The finder's latest answer (a newer query's is on its way).
+  defp file_items(%{quick_open: %{results: results}} = assigns, _query),
+    do: Enum.map(results, &file_item(assigns.root, Path.join(assigns.root, &1)))
+
+  defp file_items(_assigns, _query), do: []
+
+  # Its name, and the folder it is in (relative to the workspace).
+  defp file_item(root, path) do
+    dir = Path.dirname(Bee.Workspace.FS.relative(root, path))
+
+    %{
+      kind: :file,
+      path: path,
+      label: Path.basename(path),
+      description: if(dir == ".", do: "", else: dir)
+    }
+  end
+
+  # Quick Open's data: the recent files, read when it opens, and a file
+  # finder (Bee.Workspace.FileFinder) searching the workspace's files off
+  # this process, started with it (unless it opens on commands), stopped
+  # when it closes. Its answers come as {:file_finder, …} messages.
+  defp sync_quick_open(%{assigns: %{palette: %{mode: :quick_open, query: query}}} = socket) do
+    data =
+      socket.assigns.quick_open ||
+        %{
+          recent: RecentFiles.list(socket.assigns.root),
+          finder: nil,
+          sent: nil,
+          results: [],
+          results_for: nil,
+          loading?: false
+        }
+
+    mode = QuickOpen.mode(query)
+
+    data =
+      case {data.finder, mode} do
+        {nil, {:commands, _}} ->
+          data
+
+        {nil, _} ->
+          {:ok, finder} = FileFinder.start(socket.assigns.root)
+          Process.monitor(finder)
+          %{data | finder: finder, loading?: true}
+
+        _ ->
+          data
+      end
+
+    data =
+      case mode do
+        {:files, q} when q != data.sent and data.finder != nil ->
+          FileFinder.query(data.finder, q)
+          %{data | sent: q}
+
+        _ ->
+          data
+      end
+
+    assign(socket, quick_open: data)
+  end
+
+  defp sync_quick_open(%{assigns: %{quick_open: nil}} = socket), do: socket
+
+  defp sync_quick_open(%{assigns: %{quick_open: data}} = socket) do
+    if data.finder, do: FileFinder.stop(data.finder)
+    assign(socket, quick_open: nil)
+  end
+
+  # Quick Open waits for its file finder: listing, or a query not answered yet.
+  @doc false
+  def quick_open_busy?(%{palette: %{mode: :quick_open, query: query}, quick_open: %{} = data}) do
+    case QuickOpen.mode(query) do
+      {:files, q} -> data.loading? or data.results_for != q
+      _ -> false
+    end
+  end
+
+  def quick_open_busy?(_assigns), do: false
+
   # Commands whose "commandPalette" menu entry has a `when` that is false
   # (e.g. commands that need arguments from a view item).
   defp hidden_from_palette(ctx) do
@@ -1315,8 +1446,23 @@ defmodule BeeWeb.EditorLive do
         do: id
   end
 
-  defp palette_choose(socket, %{id: id}) when is_binary(id),
+  defp palette_choose(socket, %{kind: :command, id: id}),
     do: socket |> change(&Workbench.close_palette/1) |> run_command(id)
+
+  defp palette_choose(socket, %{kind: :mode, prefix: prefix}),
+    do: change(socket, &Workbench.open_quick_open(&1, prefix))
+
+  defp palette_choose(socket, %{kind: :file, path: path}) do
+    socket = change(socket, &Workbench.close_palette/1)
+
+    if File.regular?(path) do
+      # Already open: switched to (open_buffer records the others).
+      if Workbench.open?(workbench(socket), path), do: RecentFiles.add(socket.assigns.root, path)
+      change(socket, &Workbench.open_editor(&1, path))
+    else
+      put_flash(socket, :error, "Cannot open #{path}: no such file")
+    end
+  end
 
   defp palette_choose(%{assigns: %{palette: palette}} = socket, item) do
     socket

@@ -15,6 +15,8 @@ defmodule BeeWeb.Workbench.TitleBar do
   attr :palette, :map, default: nil
   attr :palette_items, :list, default: []
   attr :palette_shortcut, :string, default: nil
+  attr :icon_theme, :any, default: nil, doc: "for Quick Open's file icons"
+  attr :palette_busy, :boolean, default: false
   attr :menus, :list, required: true, doc: "[%{id, label, items: [item | :separator]}]"
   attr :open_menu, :string, default: nil
   attr :sidebar_open, :boolean, required: true
@@ -45,6 +47,8 @@ defmodule BeeWeb.Workbench.TitleBar do
           palette={@palette}
           items={@palette_items}
           shortcut={@palette_shortcut}
+          icon_theme={@icon_theme}
+          busy={@palette_busy}
         />
       </div>
 

@@ -337,7 +337,11 @@ defmodule BeeWeb.EditorLiveTest do
     test "lives in the title bar: the command center opens it in place", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
       assert has_element?(view, "#titlebar #command-center #window-title")
-      assert has_element?(view, "#command-center[title='Show All Commands (Ctrl+Shift+P)']")
+
+      assert has_element?(
+               view,
+               "#command-center[title='Search files by name, > for commands (Ctrl+P)']"
+             )
 
       view |> element("#command-center") |> render_click()
       assert has_element?(view, "#titlebar #palette #palette-input")
@@ -373,11 +377,11 @@ defmodule BeeWeb.EditorLiveTest do
       {:ok, view, _html} = live(conn, ~p"/")
       run(view, "workbench.action.showCommands")
 
-      view |> form("#palette-form", %{query: "tgl pnl"}) |> render_change()
+      view |> form("#palette-form", %{query: ">tgl pnl"}) |> render_change()
       assert has_element?(view, "#palette [data-command='workbench.action.togglePanel']")
       refute has_element?(view, "#palette [data-command='workbench.action.terminal.new']")
 
-      view |> form("#palette-form", %{query: "terminal"}) |> render_change()
+      view |> form("#palette-form", %{query: "> terminal"}) |> render_change()
 
       assert has_element?(view, "#palette li:first-child [aria-selected=true]"),
              "the first match is selected after filtering"
@@ -393,7 +397,7 @@ defmodule BeeWeb.EditorLiveTest do
     test "contiguous matches rank above scattered ones", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
       run(view, "workbench.action.showCommands")
-      view |> form("#palette-form", %{query: "term"}) |> render_change()
+      view |> form("#palette-form", %{query: ">term"}) |> render_change()
 
       assert has_element?(
                view,
@@ -415,6 +419,61 @@ defmodule BeeWeb.EditorLiveTest do
       run(view, "workbench.action.showCommands")
       render_click(view, "close_palette", %{})
       refute has_element?(view, "#palette")
+    end
+
+    test "Quick Open: recent files, then files by name; > switches to commands", %{conn: conn} do
+      Bee.Workspace.RecentFiles.clear()
+      on_exit(&Bee.Workspace.RecentFiles.clear/0)
+      root = Bee.Workspace.root()
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      view |> element("#command-center") |> render_click()
+      refute has_element?(view, "#palette [data-file]")
+      assert has_element?(view, "#palette [data-mode='>']", "Show and Run Commands")
+      render_click(view, "close_palette", %{})
+
+      open_file(view, "README.md")
+      open_file(view, "mix.exs")
+      run(view, "workbench.action.quickOpen")
+
+      # Most recent first, the first one labelled.
+      assert has_element?(view, "#palette li:nth-child(2) [data-file='#{root}/mix.exs']")
+      assert has_element?(view, "#palette li:nth-child(2)", "recently opened")
+      assert has_element?(view, "#palette li:nth-child(3) [data-file='#{root}/README.md']")
+
+      # Typing searches the workspace's files (off the window's process: the
+      # results come a moment later).
+      view |> form("#palette-form", %{query: "app"}) |> render_change()
+
+      eventually(fn ->
+        has_element?(view, "#palette [data-file='#{root}/lib/bee/app.ex']", "lib/bee")
+      end)
+
+      refute has_element?(view, "#palette-busy")
+      refute has_element?(view, "#palette [data-file='#{root}/mix.exs']")
+      view |> form("#palette-form") |> render_submit()
+      refute has_element?(view, "#palette")
+      assert has_element?(view, "#tabs", "app.ex")
+
+      # The commands entry: the query becomes ">".
+      run(view, "workbench.action.quickOpen")
+      view |> element("#palette [data-mode='>']") |> render_click()
+      assert_push_event(view, "palette:query", %{query: ">"})
+      assert has_element?(view, "#palette [data-command='workbench.action.togglePanel']")
+      refute has_element?(view, "#palette [data-file]")
+    end
+
+    test "how many recent files it lists is a setting", %{conn: conn} do
+      Bee.Workspace.RecentFiles.clear()
+      on_exit(&Bee.Workspace.RecentFiles.clear/0)
+      {:ok, view, _html} = live(conn, ~p"/")
+      open_file(view, "README.md")
+      open_file(view, "mix.exs")
+
+      put_user_settings(%{"workbench.quickOpen.recentFiles" => 1})
+      run(view, "workbench.action.quickOpen")
+      assert has_element?(view, "#palette [data-file$='/mix.exs']")
+      refute has_element?(view, "#palette [data-file$='/README.md']")
     end
 
     test "clicking an item runs it", %{conn: conn} do
@@ -1169,7 +1228,7 @@ defmodule BeeWeb.EditorLiveTest do
       open_file(view, "README.md")
 
       run(view, "workbench.action.showCommands")
-      view |> form("#palette-form", %{query: "count words"}) |> render_change()
+      view |> form("#palette-form", %{query: ">count words"}) |> render_change()
       assert has_element?(view, "#palette-items", "Word Count: Count Words")
       view |> form("#palette-form") |> render_submit()
 
@@ -1311,7 +1370,7 @@ defmodule BeeWeb.EditorLiveTest do
 
       # commands for view items stay out of the palette
       run(view, "workbench.action.showCommands")
-      view |> form("#palette-form", %{query: "todos"}) |> render_change()
+      view |> form("#palette-form", %{query: ">todos"}) |> render_change()
       assert has_element?(view, "#palette [data-command='todos.goTo']")
       refute has_element?(view, "#palette [data-command='todos.open']")
     end

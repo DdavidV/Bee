@@ -20,9 +20,9 @@
     title={window_title(@active, @root)}
     palette={@palette}
     palette_items={palette_items(assigns)}
-    palette_shortcut={
-      Bee.Commands.Keybindings.label("workbench.action.showCommands", @keybindings)
-    }
+    palette_shortcut={Bee.Commands.Keybindings.label("workbench.action.quickOpen", @keybindings)}
+    icon_theme={@icon_theme}
+    palette_busy={quick_open_busy?(assigns)}
     menus={menubar(assigns)}
     open_menu={@open_menu}
     sidebar_open={@sidebar_open}
@@ -133,6 +133,7 @@
           <div :for={
             {label, command} <- [
               {"Show All Commands", "workbench.action.showCommands"},
+              {"Go to File", "workbench.action.quickOpen"},
               {"Toggle Terminal", "workbench.action.togglePanel"},
               {"Open Settings", "workbench.action.openSettingsJson"}
             ]

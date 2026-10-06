@@ -11,6 +11,16 @@ defmodule Bee.Workbench.Actions do
   @command "workbench.action.showCommands"
   def show_commands(wb), do: Workbench.open_palette(wb)
 
+  @command "workbench.action.quickOpen"
+  def quick_open(wb), do: Workbench.open_quick_open(wb)
+
+  # Quick Open's other modes (`>` for commands): the query becomes the prefix.
+  @command "workbench.action.quickOpenPrefix"
+  def quick_open_prefix(wb, [prefix]) when is_binary(prefix),
+    do: Workbench.open_quick_open(wb, prefix)
+
+  def quick_open_prefix(wb, _args), do: wb
+
   @command "workbench.action.closeActiveEditor"
   def close_active_editor(%{active: nil} = wb), do: wb
   def close_active_editor(wb), do: Workbench.close_editor(wb, wb.active)

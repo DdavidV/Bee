@@ -16,6 +16,7 @@ defmodule Bee.Application do
       Bee.Settings,
       Bee.Commands.Keybindings,
       Bee.Workspace.Watcher,
+      Bee.Workspace.RecentFiles,
       {DynamicSupervisor, name: Bee.WorkspaceSup, strategy: :one_for_one},
       {DynamicSupervisor, name: Bee.BufferSup, strategy: :one_for_one},
       {DynamicSupervisor, name: Bee.TerminalSup, strategy: :one_for_one},

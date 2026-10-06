@@ -10,6 +10,16 @@
         "runtime": "server"
       },
       {
+        "command": "workbench.action.quickOpen",
+        "title": "Go to File...",
+        "runtime": "server"
+      },
+      {
+        "command": "workbench.action.quickOpenPrefix",
+        "title": "Quick Open (mode)",
+        "runtime": "server"
+      },
+      {
         "command": "workbench.action.files.openFolder",
         "category": "File",
         "title": "Open Folder…",
@@ -295,6 +305,8 @@
     "keybindings": [
       {"key": "f1", "command": "workbench.action.showCommands"},
       {"key": "ctrl+shift+p", "mac": "cmd+shift+p", "command": "workbench.action.showCommands"},
+      {"key": "ctrl+e", "mac": "cmd+e", "command": "workbench.action.quickOpen"},
+      {"key": "ctrl+p", "mac": "cmd+p", "command": "workbench.action.quickOpen"},
       {"key": "ctrl+s", "mac": "cmd+s", "command": "workbench.action.files.save"},
       {"key": "ctrl+k ctrl+o", "mac": "cmd+k cmd+o", "command": "workbench.action.files.openFolder"},
       {"key": "ctrl+z", "mac": "cmd+z", "command": "undo", "when": "editorTextFocus"},
@@ -383,6 +395,7 @@
         {"command": "bee.plugins.enable", "when": "false"},
         {"command": "bee.openFolder", "when": "false"},
         {"command": "bee.openFile", "when": "false"},
+        {"command": "workbench.action.quickOpenPrefix", "when": "false"},
         {"command": "bee.plugins.uninstall", "when": "false"},
         {"command": "bee.plugins.uninstallConfirmed", "when": "false"},
         {"command": "workbench.action.setIconTheme", "when": "false"},
@@ -394,6 +407,7 @@
       ],
       "menubar/view": [
         {"command": "workbench.action.showCommands", "group": "1_commands@1"},
+        {"command": "workbench.action.quickOpen", "group": "1_commands@2"},
         {"command": "workbench.view.explorer", "group": "2_views@1"},
         {"command": "workbench.view.search", "group": "2_views@2"},
         {"command": "workbench.view.extensions", "group": "2_views@3"},

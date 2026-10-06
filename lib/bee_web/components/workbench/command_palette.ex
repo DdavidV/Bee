@@ -2,30 +2,39 @@ defmodule BeeWeb.Workbench.CommandPalette do
   @moduledoc """
   The command center in the middle of the title bar, as in VS Code.
 
-  Closed, it shows the window title; clicking it (or Ctrl+Shift+P / F1)
-  turns it into the palette input in place, with the matching commands and
-  their keybindings dropping down below. Plugins use the same widget to ask
-  the user (`Bee.API.quick_pick/4`, `input_box/3`): see
-  `Bee.Workbench.open_palette/1` for the modes. Enter submits the form
+  Closed, it shows the window title; clicking it (or Ctrl+P) turns it into
+  Quick Open in place: the recently opened files, files by name as you
+  type, commands after `>` (Ctrl+Shift+P / F1 open it that way), with the
+  matches dropping down below (`Bee.Workbench.QuickOpen`). Plugins use the
+  same widget to ask the user (`Bee.API.quick_pick/4`, `input_box/3`): see
+  `Bee.Workbench.open_quick_open/2` for the modes. Enter submits the form
   (`palette_run`); arrow keys and Escape are handled by the LiveView
-  (`palette_key`). The `Palette` hook focuses the input and gives focus back
-  to where it was when the palette closes.
+  (`palette_key`). The `Palette` hook focuses the input, gives focus back to
+  where it was when the palette closes, and sets the query when Bee does
+  (`palette:query`).
+
+  Items have a `kind`: `:command` (`id`, `label`, `shortcut`), `:pick`
+  (`label`, `description`), `:file` (`path`, `label`, `description`) or
+  `:mode` (`prefix`, `label`); any may have a `section` title, shown on the
+  first item of a group.
   """
   use BeeWeb, :html
 
   attr :title, :string, required: true
   attr :palette, :map, default: nil, doc: "nil when closed, else %{mode, query, index, …}"
   attr :items, :list, default: []
-  attr :shortcut, :string, default: nil, doc: "label of the showCommands keybinding"
+  attr :shortcut, :string, default: nil, doc: "label of the quickOpen keybinding"
+  attr :icon_theme, :any, default: nil
+  attr :busy, :boolean, default: false, doc: "Quick Open is still looking for files"
 
   def command_center(%{palette: nil} = assigns) do
     ~H"""
     <button
       id="command-center"
-      title={"Show All Commands#{@shortcut && " (#{@shortcut})"}"}
+      title={"Search files by name, > for commands#{@shortcut && " (#{@shortcut})"}"}
       class="w-[32rem] max-w-full h-6 flex items-center justify-center gap-2 px-3 rounded-md border border-base-content/15 bg-base-100/50 hover:bg-base-100 cursor-pointer"
       phx-click="run_command"
-      phx-value-command="workbench.action.showCommands"
+      phx-value-command="workbench.action.quickOpen"
     >
       <.icon name="hero-magnifying-glass-micro" class="size-3.5 opacity-60 shrink-0" />
       <span id="window-title" class="truncate opacity-80">{@title}</span>
@@ -52,6 +61,13 @@ defmodule BeeWeb.Workbench.CommandPalette do
           phx-keydown="palette_key"
           class="w-full h-6 px-3 rounded-md text-xs bg-base-100 border border-primary outline-none select-text"
         />
+        <span
+          :if={@busy}
+          id="palette-busy"
+          class="absolute right-2 top-1 text-xs opacity-60 pointer-events-none"
+        >
+          Searching…
+        </span>
       </form>
       <ul
         id="palette-items"
@@ -62,16 +78,14 @@ defmodule BeeWeb.Workbench.CommandPalette do
           {if @palette.prompt != "", do: @palette.prompt <> " ", else: ""}(Press 'Enter' to confirm or 'Escape' to cancel)
         </li>
         <li :if={@items == [] and @palette.mode != :input} class="px-4 py-2 opacity-60">
-          {if @palette.mode == :pick, do: "No matching items", else: "No matching commands"}
+          {if @busy, do: "Searching…", else: empty(@palette)}
         </li>
         <li :for={{item, i} <- Enum.with_index(@items)}>
           <button
-            :if={item.id == nil}
-            data-pick={item.key}
             role="option"
             aria-selected={to_string(i == @palette.index)}
             class={[
-              "w-full flex gap-3 px-4 py-1 text-left cursor-pointer",
+              "w-full flex items-center gap-2 px-4 py-1 text-left cursor-pointer",
               if(i == @palette.index,
                 do: "bg-primary text-primary-content",
                 else: "hover:bg-base-content/10"
@@ -79,27 +93,21 @@ defmodule BeeWeb.Workbench.CommandPalette do
             ]}
             phx-click="palette_pick"
             phx-value-index={i}
+            {item_data(item)}
           >
-            <span class="truncate">{item.label}</span>
-            <span :if={item.description != ""} class="truncate opacity-60">{item.description}</span>
-          </button>
-          <button
-            :if={item.id != nil}
-            data-command={item.id}
-            role="option"
-            aria-selected={to_string(i == @palette.index)}
-            class={[
-              "w-full flex justify-between gap-4 px-4 py-1 text-left cursor-pointer",
-              if(i == @palette.index,
-                do: "bg-primary text-primary-content",
-                else: "hover:bg-base-content/10"
-              )
-            ]}
-            phx-click="run_command"
-            phx-value-command={item.id}
-          >
-            <span class="truncate">{item.label}</span>
-            <span :if={item.shortcut} class="opacity-70 shrink-0">{item.shortcut}</span>
+            <BeeWeb.Workbench.FileIcon.file_icon
+              :if={item.kind == :file}
+              theme={@icon_theme}
+              path={item.path}
+              class="shrink-0"
+            />
+            <span class="truncate shrink-0 max-w-[60%]">{item.label}</span>
+            <span :if={item[:description] not in [nil, ""]} class="truncate opacity-60 text-xs">
+              {item.description}
+            </span>
+            <span class="flex-1"></span>
+            <span :if={item[:section]} class="opacity-60 text-xs shrink-0">{item.section}</span>
+            <span :if={item[:shortcut]} class="opacity-70 shrink-0">{item.shortcut}</span>
           </button>
         </li>
       </ul>
@@ -107,6 +115,22 @@ defmodule BeeWeb.Workbench.CommandPalette do
     """
   end
 
-  defp placeholder(%{mode: :commands}), do: "Type the name of a command"
+  defp placeholder(%{mode: :quick_open}), do: "Search files by name (type > for commands)"
   defp placeholder(%{placeholder: placeholder}), do: placeholder
+
+  defp empty(%{mode: :pick}), do: "No matching items"
+
+  defp empty(%{query: query}) do
+    case Bee.Workbench.QuickOpen.mode(query) do
+      {:commands, _} -> "No matching commands"
+      :recent -> "No recently opened files"
+      {:files, _} -> "No matching files"
+    end
+  end
+
+  # What tests and scripts find an item by.
+  defp item_data(%{kind: :command, id: id}), do: %{"data-command" => id}
+  defp item_data(%{kind: :pick, key: key}), do: %{"data-pick" => key}
+  defp item_data(%{kind: :file, path: path}), do: %{"data-file" => path}
+  defp item_data(%{kind: :mode, prefix: prefix}), do: %{"data-mode" => prefix}
 end

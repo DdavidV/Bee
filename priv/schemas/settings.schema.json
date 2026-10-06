@@ -37,6 +37,13 @@
       "default": "dark",
       "description": "Color theme of the workbench, editor and terminal."
     },
+    "workbench.quickOpen.recentFiles": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100,
+      "default": 10,
+      "description": "How many recently opened files Quick Open (Ctrl+P, the title bar's search box) lists before you type."
+    },
     "workbench.iconTheme": {
       "type": ["string", "null"],
       "default": null,

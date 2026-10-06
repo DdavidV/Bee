@@ -278,13 +278,22 @@ defmodule Bee.Workbench do
   @doc """
   Opens the title bar's quick input. Modes (VS Code's quick input):
 
-    * `:commands` – the command palette
+    * `:quick_open` – files and commands, by the query: see
+      `Bee.Workbench.QuickOpen` (`>` for commands)
     * `:pick` – choose one of `items` (`%{label, description, value}`); the
       choice runs `command` with `arguments ++ [value]`
     * `:input` – type a line; Enter runs `command` with `arguments ++ [text]`
+
+  `open_quick_open/2` opens the first with `query` typed in: `""` for
+  files, `">"` for commands (the command palette, `open_palette/1`).
   """
-  def open_palette(wb),
-    do: %{wb | palette: %{mode: :commands, query: "", index: 0}, open_menu: nil}
+  def open_palette(wb), do: open_quick_open(wb, ">")
+
+  def open_quick_open(wb, query \\ "") do
+    wb = %{wb | palette: %{mode: :quick_open, query: query, index: 0}, open_menu: nil}
+    # The input keeps what was typed while it has focus: replace it.
+    {wb, [{:push, "palette:query", %{query: query}}]}
+  end
 
   def open_quick_pick(wb, %{items: items, command: command} = spec) do
     palette = %{

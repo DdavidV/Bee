@@ -88,7 +88,9 @@ defmodule Bee.WorkbenchTest do
     end
 
     test "palette selection stays within the items" do
-      wb = Workbench.open_palette(wb())
+      # The command palette is Quick Open with ">" typed in.
+      {wb, [{:push, "palette:query", %{query: ">"}}]} = Workbench.open_palette(wb())
+      assert %{mode: :quick_open, query: ">"} = wb.palette
       assert Workbench.move_palette(wb, -1, 3).palette.index == 0
 
       assert wb
@@ -96,7 +98,11 @@ defmodule Bee.WorkbenchTest do
              |> Workbench.move_palette(5, 3)
              |> then(& &1.palette.index) == 2
 
-      assert Workbench.filter_palette(wb, "x").palette == %{mode: :commands, query: "x", index: 0}
+      assert Workbench.filter_palette(wb, "x").palette == %{
+               mode: :quick_open,
+               query: "x",
+               index: 0
+             }
     end
 
     test "quick pick and input box use the palette" do
