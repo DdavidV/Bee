@@ -64,6 +64,10 @@ defmodule Bee.Workbench.Actions do
   @command "workbench.action.togglePanel"
   def toggle_panel(wb), do: Workbench.toggle_panel(wb)
 
+  # An Elixir shell inside Bee, in a panel tab (Bee.Console).
+  @command "bee.console.open"
+  def open_console(wb), do: {wb, [:new_console]}
+
   @command "workbench.action.terminal.new"
   def new_terminal(wb), do: {wb, [:new_terminal]}
 

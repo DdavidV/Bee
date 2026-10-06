@@ -172,6 +172,12 @@
         "runtime": "server"
       },
       {
+        "command": "bee.console.open",
+        "category": "Developer",
+        "title": "Open Bee Console",
+        "runtime": "server"
+      },
+      {
         "command": "workbench.action.terminal.kill",
         "category": "Terminal",
         "title": "Kill the Active Terminal Instance",
@@ -416,7 +422,8 @@
       ],
       "menubar/terminal": [
         {"command": "workbench.action.terminal.new", "group": "1_terminal@1"},
-        {"command": "workbench.action.terminal.kill", "group": "1_terminal@2"}
+        {"command": "workbench.action.terminal.kill", "group": "1_terminal@2"},
+        {"command": "bee.console.open", "group": "2_console@1"}
       ]
     }
   }

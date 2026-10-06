@@ -11,6 +11,7 @@ defmodule Bee.Workbench do
     * `{:open_file, path}` – open a `Bee.Editor.Buffer`, then `editor_opened/3`
     * `{:close_buffer, path}` – detach from the file's `Bee.Editor.Buffer`
     * `:new_terminal` – start a `Bee.Terminal`, then `terminal_started/3`
+    * `:new_console` – start a `Bee.Console` (a terminal tab too), then `terminal_started/3`
     * `{:stop_terminal, id}` – stop it (`{:forget_terminal, id}` when it already exited)
     * `:panel_hidden` – the terminals' xterm views were unmounted
     * `{:exec_client, command}` – run a client-side command in the browser

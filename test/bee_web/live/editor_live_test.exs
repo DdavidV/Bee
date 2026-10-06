@@ -208,6 +208,29 @@ defmodule BeeWeb.EditorLiveTest do
     end
   end
 
+  describe "Bee Console" do
+    test "opens as a panel tab and evaluates in this window", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      [_, id] = Regex.run(~r/id="term-(\d+)"/, run(view, "bee.console.open"))
+      id = String.to_integer(id)
+      assert has_element?(view, "#term-tab-#{id}", "Bee Console")
+
+      # Like a terminal: the scrollback (the banner) on term_ready, then output.
+      render_hook(view, "term_ready", %{"id" => id, "cols" => 80, "rows" => 24})
+      render_hook(view, "term_input", %{"id" => id, "data" => "root()\r"})
+      await_term_output(view, id, inspect(Bee.Workspace.root()))
+
+      # run/1 runs a command in this window: the palette opens.
+      render_hook(view, "term_input", %{
+        "id" => id,
+        "data" => ~s|run("workbench.action.showCommands")\r|
+      })
+
+      assert_push_event(view, "palette:query", %{query: ">"}, 2_000)
+      assert has_element?(view, "#palette")
+    end
+  end
+
   describe "terminal" do
     test "toggling the panel opens it with a new shell", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")

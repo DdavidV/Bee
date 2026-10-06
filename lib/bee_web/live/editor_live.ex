@@ -539,6 +539,27 @@ defmodule BeeWeb.EditorLive do
 
   def handle_info(:plugins_changed, socket), do: {:noreply, load_plugins(socket)}
 
+  # The Bee Console's window() (Bee.Console.Helpers).
+  def handle_info({:bee_console, :window, from, ref}, socket) do
+    a = socket.assigns
+
+    send(
+      from,
+      {ref,
+       %{
+         root: a.root,
+         active: a.active,
+         tabs: Enum.map(a.tabs, &Map.take(&1, [:path, :dirty, :lang])),
+         sidebar: if(a.sidebar_open, do: a.sidebar_view),
+         panel: a.panel_open && Enum.map(a.terminals, & &1.name),
+         palette: a.palette && Map.take(a.palette, [:mode, :query]),
+         pid: self()
+       }}
+    )
+
+    {:noreply, socket}
+  end
+
   # Quick Open's file finder answered.
   def handle_info(
         {:file_finder, finder, query, paths, loading?},
@@ -667,6 +688,20 @@ defmodule BeeWeb.EditorLive do
       {:error, reason} ->
         Phoenix.PubSub.unsubscribe(Bee.PubSub, Terminal.topic(id))
         put_flash(socket, :error, "Could not start terminal: #{inspect(reason)}")
+    end
+  end
+
+  defp run_effect(:new_console, socket) do
+    id = System.unique_integer([:positive])
+    Phoenix.PubSub.subscribe(Bee.PubSub, Terminal.topic(id))
+
+    case Bee.Console.start(id: id, owner: self(), root: socket.assigns.root) do
+      {:ok, _pid} ->
+        change(socket, &Workbench.terminal_started(&1, id, "Bee Console"))
+
+      {:error, reason} ->
+        Phoenix.PubSub.unsubscribe(Bee.PubSub, Terminal.topic(id))
+        put_flash(socket, :error, "Could not start the Bee Console: #{inspect(reason)}")
     end
   end
 
@@ -962,6 +997,8 @@ defmodule BeeWeb.EditorLive do
   end
 
   defp plugin_request(socket, {:execute_command, id}), do: run_command(socket, id)
+
+  defp plugin_request(socket, {:execute_command, id, args}), do: run_command(socket, id, args)
 
   defp plugin_request(socket, {:set_view_input, view, value}) do
     socket
