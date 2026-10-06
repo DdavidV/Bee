@@ -5,6 +5,8 @@ defmodule Bee.Application do
 
   @impl true
   def start(_type, _args) do
+    Bee.Mode.prepare()
+
     children = [
       BeeWeb.Telemetry,
       {DNSCluster, query: Application.get_env(:bee, :dns_cluster_query) || :ignore},
@@ -19,8 +21,13 @@ defmodule Bee.Application do
       Bee.UI,
       {Task.Supervisor, name: Bee.Search.TaskSup},
       Bee.Plugins.Supervisor,
-      BeeWeb.Endpoint
+      BeeWeb.Endpoint,
+      # Server mode: the address to open, once the endpoint listens.
+      {Task, &Bee.Mode.announce/0}
     ]
+
+    # Desktop mode: the shell talks to Bee over stdin/stdout.
+    children = if Bee.Mode.desktop?(), do: children ++ [Desktop.Bridge], else: children
 
     opts = [strategy: :one_for_one, name: Bee.Supervisor]
     Supervisor.start_link(children, opts)

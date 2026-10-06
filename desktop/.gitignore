@@ -1,0 +1,4 @@
+/target/
+/gen/schemas/
+# Rendered from priv/static/images/bee.svg by build.rs.
+/icons/

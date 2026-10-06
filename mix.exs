@@ -24,7 +24,7 @@ defmodule Bee.MixProject do
 
   def cli do
     [
-      preferred_envs: [precommit: :test]
+      preferred_envs: [precommit: :test, "bee.release": :prod, "bee.release.desktop": :prod]
     ]
   end
 
@@ -74,12 +74,18 @@ defmodule Bee.MixProject do
       setup: ["deps.get", "assets.setup", "assets.build"],
       "assets.setup": ["tailwind.install --if-missing", "esbuild.install --if-missing"],
       "assets.build": ["compile", "tailwind bee", "esbuild bee"],
+      # Compiling first: app.css imports the colocated CSS that compiling writes.
       "assets.deploy": [
+        "compile",
         "tailwind bee --minify",
         "esbuild bee --minify",
         "phx.digest"
       ],
-      precommit: ["compile --warnings-as-errors", "deps.unlock --unused", "format", "test"]
+      precommit: ["compile --warnings-as-errors", "deps.unlock --unused", "format", "test"],
+      # A release in _build/prod/rel/bee; priv/static is left as it was.
+      "bee.release": ["assets.deploy", "release --overwrite", "phx.digest.clean --all"],
+      # The release, plus the desktop app in desktop/target/release.
+      "bee.release.desktop": ["bee.release", "cmd --cd desktop cargo build --release"]
     ]
   end
 end

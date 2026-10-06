@@ -38,10 +38,15 @@ import {ExplorerInput} from "./hooks/explorer_input"
 import {PaneSash, Sash} from "./hooks/sash"
 import {VsixInstall} from "./hooks/vsix_install"
 import {loadLayout} from "./layout/storage"
+import {BridgeTransport} from "./bridge_transport"
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
+// In the desktop app the shell provides window.__bridge: no WebSocket, LiveView's
+// frames go over the shell to Bee's stdin/stdout.
+const transport = window.__bridge ? {transport: BridgeTransport} : {longPollFallbackMs: 2500}
+
 const liveSocket = new LiveSocket("/live", Socket, {
-  longPollFallbackMs: 2500,
+  ...transport,
   // A function: evaluated on every (re)connect, so the saved layout is current.
   params: () => ({_csrf_token: csrfToken, layout: loadLayout()}),
   hooks: {...colocatedHooks, ActivityBar, CodeEditor, ContextMenu, ContextMenus, ExplorerInput, Keybindings, Palette, PaneSash, Plugins, Sash, SearchInput, Terminal, ViewInput, VsixInstall},

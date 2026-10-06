@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Bee">
+  <polygon points="248,128 188,231.92 68,231.92 8,128 68,24.08 188,24.08" fill="#fac41e"/>
+  <g fill="#28221e">
+    <polygon points="57.65,42 198.35,42 217.98,76 38.02,76"/>
+    <polygon points="18.39,110 237.61,110 248,128 238.76,144 17.24,144 8,128"/>
+    <polygon points="36.87,178 219.13,178 199.5,212 56.5,212"/>
+  </g>
+</svg>

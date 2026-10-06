@@ -1,0 +1,20 @@
+[package]
+name = "bee-desktop"
+version = "0.1.0"
+description = "Bee's desktop shell: a window that talks to Bee over its stdin/stdout"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+# Renders Bee's logo (priv/static/images/bee.svg) to the app's icon.
+resvg = "0.45"
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+
+[features]
+# The GUI self-test (src/selftest.rs, tests/selftest.js); not in normal builds.
+selftest = []

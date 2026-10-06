@@ -17,7 +17,9 @@ defmodule BeeWeb.Router do
   scope "/", BeeWeb do
     pipe_through :browser
 
-    live "/", EditorLive
+    live_session :default, on_mount: BeeWeb.Plugs.RequireToken do
+      live "/", EditorLive
+    end
   end
 
   scope "/plugins", BeeWeb do

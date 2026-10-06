@@ -1,21 +1,20 @@
 import Config
 
-config :bee,
-  generators: [timestamp_type: :utc_datetime]
-
 config :bee, BeeWeb.Endpoint,
   url: [host: "localhost"],
   adapter: Bandit.PhoenixAdapter,
-  render_errors: [
-    formats: [html: BeeWeb.ErrorHTML, json: BeeWeb.ErrorJSON],
-    layout: false
-  ],
+  render_errors: [formats: [html: BeeWeb.ErrorHTML, json: BeeWeb.ErrorJSON], layout: false],
   pubsub_server: Bee.PubSub,
+  check_origin: ["//localhost", "//127.0.0.1", "//[::1]"],
   live_view: [signing_salt: "jCmPSOGj"]
 
-config :phoenix_live_view,
-  # the attribute set on all root tags. Used for Phoenix.LiveView.ColocatedCSS.
-  root_tag_attribute: "phx-r"
+config :phoenix,
+  json_library: Jason,
+  filter_parameters: ["password", "token"]
+
+config :phoenix_live_view, root_tag_attribute: "phx-r"
+
+config :logger, :default_formatter, format: "$time [$level] $message\n"
 
 config :esbuild,
   version: "0.25.4",
@@ -29,20 +28,9 @@ config :esbuild,
 config :tailwind,
   version: "4.3.3",
   bee: [
-    args: ~w(
-      --input=assets/css/app.css
-      --output=priv/static/assets/css/app.css
-    ),
+    args: ~w(--input=assets/css/app.css --output=priv/static/assets/css/app.css),
     cd: Path.expand("..", __DIR__),
     env: %{"NODE_PATH" => [Path.expand("../deps", __DIR__), Mix.Project.build_path()]}
   ]
 
-config :logger, :default_formatter,
-  format: "$time $metadata[$level] $message\n",
-  metadata: [:request_id]
-
-config :phoenix, :json_library, Jason
-
-# Import environment specific config. This must remain at the bottom
-# of this file so it overrides the configuration defined above.
 import_config "#{config_env()}.exs"

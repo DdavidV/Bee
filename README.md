@@ -1,18 +1,109 @@
 # Bee
 
-To start your Phoenix server:
+A code editor built on Phoenix LiveView. Use it in your browser, or as a
+desktop app.
 
-* Run `mix setup` to install and setup dependencies
-* Start Phoenix endpoint with `mix phx.server` or inside IEx with `iex -S mix phx.server`
+## Requirements
 
-Now you can visit [`localhost:4000`](http://localhost:4000) from your browser.
+- Elixir 1.17+ and Erlang/OTP 26+
+- Git
+- Linux or macOS (Windows support is planned)
 
-Ready to run in production? Please [check our deployment guides](https://phoenix.hexdocs.pm/deployment.html).
+For the desktop app, also:
 
-## Learn more
+- [Rust](https://rustup.rs)
+- Your system's webview and build tools: see
+  [Tauri's prerequisites](https://tauri.app/start/prerequisites/)
+  (on Ubuntu, including WSL2, that's the `apt install` line there)
 
-* Official website: https://www.phoenixframework.org/
-* Guides: https://phoenix.hexdocs.pm/overview.html
-* Docs: https://phoenix.hexdocs.pm
-* Forum: https://elixirforum.com/c/phoenix-forum
-* Source: https://github.com/phoenixframework/phoenix
+## Getting started
+
+```sh
+mix setup
+mix phx.server
+```
+
+Open the address Bee prints (`http://127.0.0.1:4000/?token=…`). After the
+first visit, `http://127.0.0.1:4000` is enough. Bee opens the current folder,
+or `BEE_ROOT`.
+
+## Desktop app
+
+```sh
+cd desktop
+cargo run -- /path/to/folder
+```
+
+This starts Bee and opens it in a window. Bee and the window talk over
+stdin/stdout, so no port is opened. Closing the window stops Bee.
+
+## Web release
+
+Release:
+
+```sh
+mix bee.release
+```
+
+Start:
+
+```sh
+BEE_ROOT=/path/to/folder _build/prod/rel/bee/bin/bee start
+```
+
+It prints the address to open, on a free port.
+
+## Desktop release
+
+Release:
+
+```sh
+mix bee.release.desktop
+```
+
+Start:
+
+```sh
+desktop/target/release/bee-desktop /path/to/folder
+```
+
+The app starts the release built by `mix bee.release.desktop`
+(`_build/prod/rel/bee`) in desktop mode: no port, only the window talks to
+it.
+
+## Tests
+
+```sh
+mix precommit
+```
+
+The desktop app has a self-test that drives its window. It opens, edits and
+saves `lib/a.ex`, checks the git plugin, and runs a terminal command, so
+point it at a git repository with that file:
+
+```sh
+cd desktop
+cargo run --features selftest -- /path/to/repo
+```
+
+## Reference
+
+**Environment variables**
+
+| Variable | Meaning |
+|---|---|
+| `BEE_ROOT` | The folder to open (default: the current directory) |
+| `BEE_CONFIG_DIR` | Where settings, keybindings, plugins, the token and the secret live (default `~/.config/bee`) |
+| `BEE_PORT` / `PORT` | The browser mode's port (default 4000; a release picks a free one) |
+| `BEE_TOKEN` | A fixed access token instead of the generated one |
+| `BEE_ALLOWED_HOSTS` | Extra host names Bee answers to, comma separated (e.g. for a tunnel) |
+| `BEE_MODE` | `server` (default) or `desktop`; the desktop app sets it |
+| `BEE_RELEASE` | Another release for the desktop app to start (`…/bin/bee`) |
+
+**Access.** In the browser Bee only listens on `127.0.0.1` and needs its
+token. The token is kept in `~/.config/bee/token`; delete it to sign out
+every browser. The cookie secret (`secret_key_base`) is in the same folder;
+`SECRET_KEY_BASE` overrides it.
+
+**Releases** don't run Erlang distribution. Stop one with Ctrl+C or SIGTERM,
+or set `RELEASE_DISTRIBUTION=sname` to use `bin/bee remote`.

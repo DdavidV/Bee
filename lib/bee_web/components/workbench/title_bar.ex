@@ -35,7 +35,7 @@ defmodule BeeWeb.Workbench.TitleBar do
         phx-window-keydown={@open_menu && "close_menu"}
         phx-key="Escape"
       >
-        <span class="px-2 text-base" aria-hidden="true">🐝</span>
+        <span class="px-2"><BeeWeb.Logo.logo class="size-4" /></span>
         <.menu :for={menu <- @menus} menu={menu} open={@open_menu == menu.id} />
       </nav>
 
