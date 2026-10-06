@@ -1,34 +1,39 @@
 defmodule Bee.Plugins.Host do
   @moduledoc """
-  Runs the server part of one plugin: one process per active plugin, under
-  `Bee.Plugins.HostSup`, registered as `{:plugin, name}` in `Bee.Registry`.
+  Runs the server part of one plugin for one workspace, like VS Code's
+  extension host per window: one process per plugin and open workspace it
+  is active in, under `Bee.Plugins.HostSup`, registered as
+  `{:plugin, name, root}` in `Bee.Registry`. Its contexts' `root` is that
+  workspace, and it only gets events of that workspace: buffers and file
+  changes under its root (and in the config folder), its settings.
 
   Activation happens in `handle_continue/2`, so starting a host never blocks
-  the caller: it compiles and loads the plugin's code (`Bee.Plugins.Loader`),
-  checks that its manifest's server commands and its `@command` handlers
-  match, then calls `activate/1`. Commands sent meanwhile wait in the mailbox.
-  On failure the host stops with `{:shutdown, {:activation_failed, problems}}`.
+  the caller: it gets the plugin's code (`Bee.Plugins.Modules`, loaded once
+  for all its hosts), checks that its manifest's server commands and its
+  `@command` handlers match, then calls `activate/1`. Commands sent
+  meanwhile wait in the mailbox. On failure the host stops with
+  `{:shutdown, {:activation_failed, problems}}`.
 
   Callbacks run one at a time, each in a task with a timeout: a slow or
   crashing command is reported to the user and leaves the plugin running
   with its previous state. Only a crash of the host itself (e.g. a bad
   return value) restarts the plugin – `Bee.Plugins.Manager` decides.
 
-  The manager is told `{:plugin_loaded, name, modules}` (it unloads them
-  when the host is gone) and `{:plugin_activated, name}`.
+  The manager is told `{:plugin_activated, name, root}`.
   """
   use GenServer, restart: :temporary
   require Logger
 
-  alias Bee.Plugins.{Context, Loader}
+  alias Bee.Plugins.{Context, Modules}
 
   # How long a callback may run (app env :plugin_timeout, milliseconds).
   defp timeout, do: Application.get_env(:bee, :plugin_timeout, 10_000)
 
-  def start_link(plugin), do: GenServer.start_link(__MODULE__, plugin, name: via(plugin.name))
+  def start_link({plugin, root}),
+    do: GenServer.start_link(__MODULE__, {plugin, root}, name: via(plugin.name, root))
 
-  def whereis(name) do
-    case Registry.lookup(Bee.Registry, {:plugin, name}) do
+  def whereis(name, root) do
+    case Registry.lookup(Bee.Registry, {:plugin, name, root}) do
       [{pid, _}] -> pid
       [] -> nil
     end
@@ -41,24 +46,25 @@ defmodule Bee.Plugins.Host do
   def request(pid, method, params, %Context{} = ctx, ref),
     do: GenServer.cast(pid, {:request, method, params, ctx, ref})
 
-  defp via(name), do: {:via, Registry, {Bee.Registry, {:plugin, name}}}
+  defp via(name, root), do: {:via, Registry, {Bee.Registry, {:plugin, name, root}}}
 
   ## Server
 
   @impl true
-  def init(plugin) do
+  def init({plugin, root}) do
     # So terminate/2 (deactivate) runs when the supervisor stops us.
     Process.flag(:trap_exit, true)
-    Logger.metadata(plugin: plugin.name)
+    Logger.metadata(plugin: plugin.name, workspace: root)
+    # Bee.API's workspace, for this process (tasks get it in run/2).
+    Process.put(:bee_workspace, root)
 
-    {:ok, %{plugin: plugin, module: nil, handlers: %{}, state: nil, active?: false},
+    {:ok, %{plugin: plugin, root: root, module: nil, handlers: %{}, state: nil, active?: false},
      {:continue, :activate}}
   end
 
   @impl true
   def handle_continue(:activate, %{plugin: plugin} = s) do
-    with {:ok, module, modules} <- load(plugin),
-         :ok <- notify({:plugin_loaded, plugin.name, modules}),
+    with {:ok, module} <- load(plugin),
          handlers = Bee.Plugin.commands(module),
          :ok <- check_handlers(plugin, handlers),
          s = %{s | module: module, handlers: handlers},
@@ -69,7 +75,7 @@ defmodule Bee.Plugins.Host do
         Bee.Workspace.subscribe()
       end
 
-      notify({:plugin_activated, plugin.name})
+      notify({:plugin_activated, plugin.name, s.root})
       {:noreply, %{s | state: state, active?: true}}
     else
       {:error, problems} -> {:stop, {:shutdown, {:activation_failed, problems}}, s}
@@ -78,7 +84,7 @@ defmodule Bee.Plugins.Host do
 
   @impl true
   def handle_cast({:command, id, ctx}, s) do
-    ctx = %{ctx | plugin: s.plugin.name, dir: s.plugin.dir, host: self()}
+    ctx = %{ctx | plugin: s.plugin.name, dir: s.plugin.dir, host: self(), root: s.root}
 
     case s.handlers do
       %{^id => fun} ->
@@ -91,7 +97,7 @@ defmodule Bee.Plugins.Host do
   end
 
   def handle_cast({:request, method, params, ctx, ref}, s) do
-    ctx = %{ctx | plugin: s.plugin.name, dir: s.plugin.dir, host: self()}
+    ctx = %{ctx | plugin: s.plugin.name, dir: s.plugin.dir, host: self(), root: s.root}
 
     {reply, s} =
       if function_exported?(s.module, :handle_request, 4) do
@@ -117,7 +123,7 @@ defmodule Bee.Plugins.Host do
   def handle_info({:EXIT, _pid, reason}, s), do: {:stop, reason, s}
 
   def handle_info(msg, s) do
-    case event(msg) do
+    case event(msg, s.root) do
       nil -> {:noreply, maybe_handle_info(msg, s)}
       :ignore -> {:noreply, s}
       event -> {:noreply, callback(s, :handle_event, [event, s.state])}
@@ -154,12 +160,14 @@ defmodule Bee.Plugins.Host do
     module = Module.concat([plugin.manifest["server"]["module"]])
 
     case Code.ensure_loaded(module) do
-      {:module, module} -> {:ok, module, []}
+      {:module, module} -> {:ok, module}
       {:error, reason} -> {:error, [problem(%{plugin: plugin}, "#{inspect(module)}: #{reason}")]}
     end
   end
 
-  defp load(plugin), do: Loader.load(plugin.dir, plugin.manifest["server"])
+  defp load(plugin) do
+    with {:ok, module, _modules} <- Modules.ensure(plugin), do: {:ok, module}
+  end
 
   defp check_handlers(plugin, handlers) do
     declared =
@@ -182,20 +190,42 @@ defmodule Bee.Plugins.Host do
       plugin: s.plugin.name,
       dir: s.plugin.dir,
       host: self(),
-      root: Bee.Workspace.root()
+      root: s.root
     }
 
   ## Events
 
-  defp event({:buffer_opened, path, _text}), do: {:buffer_opened, path}
-  defp event({:buffer_changed, path, version, _text}), do: {:buffer_changed, path, version}
-  defp event({:buffer_saved, path, _text}), do: {:buffer_saved, path}
-  defp event({:buffer_closed, path}), do: {:buffer_closed, path}
-  defp event({:buffer_reloaded, path, _text}), do: {:buffer_changed, path, nil}
-  defp event({:buffer_edited, _path, _version, _edits, _text}), do: :ignore
-  defp event({:settings_changed, settings, _errors}), do: {:settings_changed, settings}
-  defp event({:fs_changed, path}), do: {:fs_changed, path}
-  defp event(_), do: nil
+  # Only the workspace's: its buffers and files (and the config folder's),
+  # its settings.
+  defp event({:buffer_opened, path, _text}, root), do: mine(path, root, {:buffer_opened, path})
+
+  defp event({:buffer_changed, path, version, _text}, root),
+    do: mine(path, root, {:buffer_changed, path, version})
+
+  defp event({:buffer_saved, path, _text}, root), do: mine(path, root, {:buffer_saved, path})
+  defp event({:buffer_closed, path}, root), do: mine(path, root, {:buffer_closed, path})
+
+  defp event({:buffer_reloaded, path, _text}, root),
+    do: mine(path, root, {:buffer_changed, path, nil})
+
+  defp event({:buffer_edited, _path, _version, _edits, _text}, _root), do: :ignore
+
+  defp event({:settings_changed, scope}, root) when scope in [:user, {:workspace, root}],
+    do: {:settings_changed, Bee.Settings.all(root)}
+
+  defp event({:settings_changed, _other}, _root), do: :ignore
+
+  defp event({:fs_changed, path}, root) do
+    if inside?(path, Bee.Settings.user_dir()),
+      do: {:fs_changed, path},
+      else: mine(path, root, {:fs_changed, path})
+  end
+
+  defp event(_, _root), do: nil
+
+  defp mine(path, root, event), do: if(inside?(path, root), do: event, else: :ignore)
+
+  defp inside?(path, dir), do: path == dir or String.starts_with?(path, dir <> "/")
 
   defp maybe_handle_info(msg, s) do
     if function_exported?(s.module, :handle_info, 2),
@@ -234,7 +264,13 @@ defmodule Bee.Plugins.Host do
 
   # In a task, so a crash or a hang doesn't take the plugin down.
   defp run(fun) do
-    task = Task.Supervisor.async_nolink(Bee.Plugins.TaskSup, fun)
+    root = Process.get(:bee_workspace)
+
+    task =
+      Task.Supervisor.async_nolink(Bee.Plugins.TaskSup, fn ->
+        Process.put(:bee_workspace, root)
+        fun.()
+      end)
 
     case Task.yield(task, timeout()) || Task.shutdown(task, :brutal_kill) do
       {:ok, result} ->

@@ -20,7 +20,11 @@ fn render_icon() {
     let tree = usvg::Tree::from_data(&svg, &usvg::Options::default()).expect("a valid SVG");
     let mut pixmap = tiny_skia::Pixmap::new(SIZE, SIZE).unwrap();
     let scale = SIZE as f32 / tree.size().width().max(tree.size().height());
-    resvg::render(&tree, tiny_skia::Transform::from_scale(scale, scale), &mut pixmap.as_mut());
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
 
     let png = pixmap.encode_png().expect("a PNG");
     if fs::read(ICON).ok().as_deref() != Some(png.as_slice()) {

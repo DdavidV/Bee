@@ -65,7 +65,7 @@ defmodule Bee.Workbench.Actions do
 
   @command "workbench.action.openWorkspaceSettingsFile"
   def open_workspace_settings_file(wb),
-    do: Workbench.open_editor(wb, Bee.Settings.ensure_workspace_file!())
+    do: Workbench.open_editor(wb, Bee.Settings.ensure_workspace_file!(wb.root))
 
   @command "workbench.action.openGlobalKeybindingsFile"
   def open_global_keybindings_file(wb),
@@ -101,6 +101,32 @@ defmodule Bee.Workbench.Actions do
     do: {wb, [{:update_setting, "workbench.iconTheme", if(id == "", do: nil, else: id)}]}
 
   def set_icon_theme(wb, _args), do: wb
+
+  ## Folders (workspaces)
+
+  # Like VS Code's, without a native dialog: the folder's path is typed.
+  @command "workbench.action.files.openFolder"
+  def open_folder(wb), do: ask_folder(wb, "same", "Folder to open in this window")
+
+  @command "workbench.action.files.openFolderInNewWindow"
+  def open_folder_in_new_window(wb), do: ask_folder(wb, "new", "Folder to open in a new window")
+
+  # The input box's answer: [where, path].
+  @command "bee.openFolder"
+  def open_folder_path(wb, [where, path]) when where in ["same", "new"] and is_binary(path),
+    do: {wb, [{:open_folder, path, if(where == "new", do: :new_window, else: :this_window)}]}
+
+  def open_folder_path(wb, _args), do: wb
+
+  defp ask_folder(wb, where, prompt) do
+    Workbench.open_input_box(wb, %{
+      command: "bee.openFolder",
+      arguments: [where],
+      value: Path.dirname(wb.root) <> "/",
+      prompt: prompt,
+      placeholder: "/path/to/folder, ~/folder, or relative to this one"
+    })
+  end
 
   ## Explorer (its right-click menu, explorer/context)
   #

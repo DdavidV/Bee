@@ -88,11 +88,13 @@ defmodule Bee.Languages do
     * `:first_line` – the file's first line (for `firstLine` rules)
     * `:associations` – glob → id map, default: the `files.associations` setting
     * `:root` – patterns containing `/` match the path relative to it
-      (default: the workspace root)
+      (default: the open workspace the file is in)
   """
   def detect(path, opts \\ []) do
-    associations = Keyword.get_lazy(opts, :associations, &associations/0)
-    root = Keyword.get_lazy(opts, :root, &Bee.Workspace.root/0)
+    root =
+      Keyword.get_lazy(opts, :root, fn -> Bee.Workspace.for_path(path) || Bee.Workspace.root() end)
+
+    associations = Keyword.get_lazy(opts, :associations, fn -> associations(root) end)
     first_line = opts[:first_line]
 
     basename = Path.basename(path)
@@ -113,8 +115,8 @@ defmodule Bee.Languages do
     text |> String.split("\n", parts: 2) |> hd() |> String.slice(0, 200)
   end
 
-  defp associations do
-    case Bee.Settings.get("files.associations") do
+  defp associations(root) do
+    case Bee.Settings.get("files.associations", root) do
       %{} = map -> map
       _ -> %{}
     end

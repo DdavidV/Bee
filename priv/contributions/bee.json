@@ -10,6 +10,24 @@
         "runtime": "server"
       },
       {
+        "command": "workbench.action.files.openFolder",
+        "category": "File",
+        "title": "Open Folder…",
+        "runtime": "server"
+      },
+      {
+        "command": "workbench.action.files.openFolderInNewWindow",
+        "category": "File",
+        "title": "Open Folder in New Window…",
+        "runtime": "server"
+      },
+      {
+        "command": "bee.openFolder",
+        "category": "File",
+        "title": "Open Folder (path)",
+        "runtime": "server"
+      },
+      {
         "command": "workbench.action.files.save",
         "category": "File",
         "title": "Save",
@@ -272,6 +290,7 @@
       {"key": "f1", "command": "workbench.action.showCommands"},
       {"key": "ctrl+shift+p", "mac": "cmd+shift+p", "command": "workbench.action.showCommands"},
       {"key": "ctrl+s", "mac": "cmd+s", "command": "workbench.action.files.save"},
+      {"key": "ctrl+k ctrl+o", "mac": "cmd+k cmd+o", "command": "workbench.action.files.openFolder"},
       {"key": "ctrl+z", "mac": "cmd+z", "command": "undo", "when": "editorTextFocus"},
       {"key": "ctrl+shift+z", "mac": "cmd+shift+z", "command": "redo", "when": "editorTextFocus"},
       {"key": "ctrl+b", "mac": "cmd+b", "command": "workbench.action.toggleSidebarVisibility"},
@@ -310,6 +329,8 @@
 
     "menus": {
       "menubar/file": [
+        {"command": "workbench.action.files.openFolder", "group": "0_open@1"},
+        {"command": "workbench.action.files.openFolderInNewWindow", "group": "0_open@2"},
         {"command": "workbench.action.files.save", "group": "1_save@1"},
         {"command": "workbench.action.closeActiveEditor", "group": "1_save@2"},
         {"command": "workbench.action.openSettingsJson", "group": "2_preferences@1"},
@@ -354,6 +375,7 @@
         {"command": "deleteFile", "when": "false"},
         {"command": "deleteFile.confirmed", "when": "false"},
         {"command": "bee.plugins.enable", "when": "false"},
+        {"command": "bee.openFolder", "when": "false"},
         {"command": "bee.plugins.uninstall", "when": "false"},
         {"command": "bee.plugins.uninstallConfirmed", "when": "false"},
         {"command": "workbench.action.setIconTheme", "when": "false"},

@@ -9,15 +9,18 @@ defmodule Bee.SettingsTest do
 
   setup do
     File.mkdir_p!(Path.dirname(Settings.user_path()))
-    File.mkdir_p!(Path.dirname(Settings.workspace_path()))
+    File.mkdir_p!(Path.dirname(Settings.workspace_path(root())))
     Settings.subscribe()
 
     on_exit(fn ->
       File.rm(Settings.user_path())
-      File.rm_rf!(Path.dirname(Settings.workspace_path()))
+      File.rm_rf!(Path.dirname(Settings.workspace_path(root())))
       Settings.reload()
     end)
   end
+
+  # The test workspace: its .bee/settings.json is the workspace layer.
+  defp root, do: Bee.Workspace.root()
 
   defp write(path, text) do
     File.write!(path, text)
@@ -32,11 +35,13 @@ defmodule Bee.SettingsTest do
 
   test "workspace overrides user overrides defaults, and reload broadcasts" do
     write(Settings.user_path(), ~s({"editor.fontSize": 18, "editor.tabSize": 4}))
-    write(Settings.workspace_path(), ~s({"editor.fontSize": 20}))
+    write(Settings.workspace_path(root()), ~s({"editor.fontSize": 20}))
 
-    assert Settings.get("editor.fontSize") == 20
-    assert Settings.get("editor.tabSize") == 4
-    assert_receive {:settings_changed, %{"editor.fontSize" => 20}, []}
+    assert Settings.get("editor.fontSize", root()) == 20
+    assert Settings.get("editor.tabSize", root()) == 4
+    # Without a workspace: the defaults and the user file.
+    assert Settings.get("editor.fontSize") == 18
+    assert_receive {:settings_changed, :user}
   end
 
   test "comments and trailing commas are allowed" do
@@ -54,15 +59,15 @@ defmodule Bee.SettingsTest do
     write(Settings.user_path(), ~s({"editor.fontSize": 18}))
 
     write(
-      Settings.workspace_path(),
+      Settings.workspace_path(root()),
       ~s({"editor.fontSize": "huge", "editor.tabSize": 0, "workbench.colorTheme": "pink"})
     )
 
-    assert Settings.get("editor.fontSize") == 18
-    assert Settings.get("editor.tabSize") == 2
-    assert Settings.get("workbench.colorTheme") == "dark"
+    assert Settings.get("editor.fontSize", root()) == 18
+    assert Settings.get("editor.tabSize", root()) == 2
+    assert Settings.get("workbench.colorTheme", root()) == "dark"
 
-    messages = Enum.map(Settings.errors(), & &1.message)
+    messages = Enum.map(Settings.errors(root()), & &1.message)
     assert ~s("editor.fontSize": Type mismatch. Expected Integer but got String.) in messages
     assert ~s("editor.tabSize": Expected the value to be >= 1) in messages
 
@@ -137,13 +142,13 @@ defmodule Bee.SettingsTest do
     write(Settings.user_path(), ~s({"editor.fontSize": 18}))
 
     write(
-      Settings.workspace_path(),
+      Settings.workspace_path(root()),
       ~s({"editor.fontSize": 20, "plugins.workspace.enabled": true})
     )
 
-    assert Settings.get("editor.fontSize") == 20
+    assert Settings.get("editor.fontSize", root()) == 20
     assert Settings.get_user("editor.fontSize") == 18
-    assert Settings.get("plugins.workspace.enabled") == true
+    assert Settings.get("plugins.workspace.enabled", root()) == true
     assert Settings.get_user("plugins.workspace.enabled") == false
   end
 
@@ -178,16 +183,21 @@ defmodule Bee.SettingsTest do
       write(Settings.user_path(), ~s({"test.level": 0}))
       assert Settings.get("test.level") == 0
       assert Settings.errors() == []
+      # That write's own broadcast.
+      assert_receive {:settings_changed, :user}
 
       :ok = contribute(:test_settings, @configuration)
       # Settings reloads on its own when contributions change.
-      assert_receive {:settings_changed, _, [%{message: ~s("test.level": ) <> message}]}
+      assert_receive {:settings_changed, :user}
+      assert [%{message: ~s("test.level": ) <> message}] = Settings.errors()
       assert message =~ ">= 1"
       assert Settings.get("test.level") == 3
       assert Settings.schema()["test.level"]["description"] == "A level."
 
       Bee.Contributions.unregister(:test_settings)
-      assert_receive {:settings_changed, %{"test.level" => 0}, []}
+      assert_receive {:settings_changed, :user}
+      assert Settings.get("test.level") == 0
+      assert Settings.errors() == []
     end
 
     test "names are unique, and the schema must be valid" do

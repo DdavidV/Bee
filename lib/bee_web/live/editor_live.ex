@@ -32,7 +32,11 @@ defmodule BeeWeb.EditorLive do
   alias Bee.Workbench.Search
 
   @impl true
-  def mount(_params, _session, socket) do
+  def mount(params, _session, socket) do
+    # The window's folder: ?folder=…, else the one Bee was started for.
+    {root, problem} = folder(params["folder"])
+    if connected?(socket), do: Workspace.open(root)
+
     if connected?(socket) do
       Workspace.subscribe()
       Buffer.subscribe()
@@ -40,21 +44,22 @@ defmodule BeeWeb.EditorLive do
       Keybindings.subscribe()
       CommandRegistry.subscribe()
       Plugins.subscribe()
-      Bee.API.subscribe_window()
-      Bee.UI.subscribe()
+      Bee.API.subscribe_window(root)
+      Bee.UI.subscribe(root)
     end
 
     {:ok,
      socket
-     |> assign(page_title: Path.basename(Workspace.root()), term_seq: %{}, selection: nil)
+     |> assign(page_title: Path.basename(root), term_seq: %{}, selection: nil)
+     |> assign(root: root)
      |> assign(connected: connected?(socket))
      |> assign(view_inputs: %{}, collapsed: MapSet.new(), collapsed_views: MapSet.new())
      |> assign(view_sizes: %{})
      |> load_views()
-     |> assign(status_items: Bee.UI.status_items(), ui_context: Bee.UI.context())
+     |> assign(status_items: Bee.UI.status_items(root), ui_context: Bee.UI.context(root))
      |> load_decorations()
-     |> put_workbench(restore_layout(Workbench.new(Workspace.root()), socket))
-     |> load_settings(Settings.all(), Settings.errors())
+     |> put_workbench(restore_layout(Workbench.new(root), socket))
+     |> load_settings(Settings.all(root), Settings.errors(root))
      |> assign(keybindings: Keybindings.all(), keybinding_errors: Keybindings.errors())
      |> load_commands()
      |> load_plugins()
@@ -64,7 +69,19 @@ defmodule BeeWeb.EditorLive do
        max_file_size: 200_000_000,
        auto_upload: true,
        progress: &vsix_progress/3
-     )}
+     )
+     |> then(&if(problem, do: put_flash(&1, :error, problem), else: &1))}
+  end
+
+  # `{root, problem}`: the folder asked for, or Bee's own with why not.
+  defp folder(nil), do: {Workspace.root(), nil}
+
+  defp folder(path) do
+    root = Path.expand(path)
+
+    if File.dir?(root),
+      do: {root, nil},
+      else: {Workspace.root(), "Can't open #{root}: not a folder"}
   end
 
   ## Commands
@@ -135,7 +152,7 @@ defmodule BeeWeb.EditorLive do
 
   # A match: open its file and select it.
   def handle_event("search_open", %{"path" => rel, "from" => from, "to" => to}, socket) do
-    case Workspace.resolve(rel) do
+    case Workspace.resolve(socket.assigns.root, rel) do
       {:ok, path} ->
         socket = change(socket, &Workbench.open_editor(&1, path))
 
@@ -333,7 +350,9 @@ defmodule BeeWeb.EditorLive do
     with true <- Workbench.open?(workbench(socket), path),
          {:ok, _buffer} <- Buffer.save(path, text) do
       # Apply right away, also when file watching is unavailable.
-      if path in Settings.paths(), do: Settings.reload()
+      if path in [Settings.user_path(), Settings.workspace_path(socket.assigns.root)],
+        do: Settings.reload()
+
       if path == Keybindings.user_path(), do: Keybindings.reload()
 
       {:noreply,
@@ -421,7 +440,7 @@ defmodule BeeWeb.EditorLive do
 
   @impl true
   def handle_info({:open_file, rel}, socket) do
-    case Workspace.resolve(rel) do
+    case Workspace.resolve(socket.assigns.root, rel) do
       {:ok, abs} -> {:noreply, change(socket, &Workbench.open_editor(&1, abs))}
       {:error, _} -> {:noreply, put_flash(socket, :error, "Path outside workspace")}
     end
@@ -441,8 +460,11 @@ defmodule BeeWeb.EditorLive do
     {:noreply, socket}
   end
 
-  def handle_info({:settings_changed, settings, errors}, socket) do
+  # Ours changed: the user's settings, or this window's workspace's.
+  def handle_info({:settings_changed, scope}, socket)
+      when scope == :user or scope == {:workspace, socket.assigns.root} do
     old = socket.assigns.settings
+    {settings, errors} = {Settings.all(socket.assigns.root), Settings.errors(socket.assigns.root)}
 
     if settings["files.exclude"] != old["files.exclude"],
       do: send_update(BeeWeb.Workbench.FileTree, id: "explorer", refresh: true)
@@ -464,13 +486,15 @@ defmodule BeeWeb.EditorLive do
     do: {:noreply, change(socket, &Search.done(&1, ref, stats))}
 
   def handle_info({:ui_changed, {:view, id}}, socket),
-    do: {:noreply, update(socket, :view_contents, &Map.put(&1, id, Bee.UI.view(id)))}
+    do:
+      {:noreply,
+       update(socket, :view_contents, &Map.put(&1, id, Bee.UI.view(socket.assigns.root, id)))}
 
   def handle_info({:ui_changed, :status_items}, socket),
-    do: {:noreply, assign(socket, status_items: Bee.UI.status_items())}
+    do: {:noreply, assign(socket, status_items: Bee.UI.status_items(socket.assigns.root))}
 
   def handle_info({:ui_changed, :context}, socket),
-    do: {:noreply, assign(socket, ui_context: Bee.UI.context())}
+    do: {:noreply, assign(socket, ui_context: Bee.UI.context(socket.assigns.root))}
 
   def handle_info({:ui_changed, :decorations}, socket), do: {:noreply, load_decorations(socket)}
 
@@ -595,10 +619,10 @@ defmodule BeeWeb.EditorLive do
 
   defp run_effect(:new_terminal, socket) do
     id = System.unique_integer([:positive])
-    shell = Terminal.default_shell()
+    shell = Terminal.default_shell(socket.assigns.root)
     Phoenix.PubSub.subscribe(Bee.PubSub, Terminal.topic(id))
 
-    case Terminal.start(id: id, owner: self(), shell: shell) do
+    case Terminal.start(id: id, owner: self(), shell: shell, cwd: socket.assigns.root) do
       {:ok, _pid} ->
         change(socket, &Workbench.terminal_started(&1, id, Path.basename(shell)))
 
@@ -646,6 +670,32 @@ defmodule BeeWeb.EditorLive do
     end
   end
 
+  # Another folder: this window shows it (a new LiveView, `?folder=`), or a
+  # new browser window does. Not while this one has unsaved changes – its
+  # editors would be dropped.
+  defp run_effect({:open_folder, path, where}, socket) do
+    root = Path.expand(path, socket.assigns.root)
+    dirty = for %{dirty: true, path: p} <- socket.assigns.tabs, do: Path.basename(p)
+    url = ~p"/?#{[folder: root]}"
+
+    cond do
+      not File.dir?(root) ->
+        put_flash(socket, :error, "#{root} is not a folder")
+
+      where == :new_window ->
+        push_event(socket, "bee:open_window", %{url: url})
+
+      root == socket.assigns.root ->
+        socket
+
+      dirty != [] ->
+        put_flash(socket, :error, "Save or close #{Enum.join(dirty, ", ")} first")
+
+      true ->
+        push_navigate(socket, to: url)
+    end
+  end
+
   defp run_effect({:uninstall_plugin, name}, socket) do
     case Plugins.uninstall(name) do
       :ok -> socket |> load_plugins() |> put_flash(:info, "Uninstalled #{name}")
@@ -663,7 +713,7 @@ defmodule BeeWeb.EditorLive do
   defp run_effect({:flash, kind, message}, socket), do: put_flash(socket, kind, message)
 
   defp run_effect({:start_search, opts}, socket) do
-    case Bee.Search.start(opts, self()) do
+    case Bee.Search.start(Map.put(opts, :root, socket.assigns.root), self()) do
       {:ok, handle} -> change(socket, &Search.started(&1, handle))
       {:error, message} -> change(socket, &Search.failed(&1, message))
     end
@@ -675,7 +725,7 @@ defmodule BeeWeb.EditorLive do
   end
 
   defp run_effect({:replace, paths, opts, replacement, only}, socket) do
-    case Bee.Search.replace(paths, opts, replacement, only) do
+    case Bee.Search.replace(paths, Map.put(opts, :root, socket.assigns.root), replacement, only) do
       {:ok, count} ->
         socket
         |> put_flash(
@@ -919,7 +969,7 @@ defmodule BeeWeb.EditorLive do
     assign(socket,
       containers: Bee.Views.containers(),
       views: views,
-      view_contents: Map.new(views, &{&1.id, Bee.UI.view(&1.id)})
+      view_contents: Map.new(views, &{&1.id, Bee.UI.view(socket.assigns.root, &1.id)})
     )
   end
 
@@ -927,7 +977,7 @@ defmodule BeeWeb.EditorLive do
   defp views_shown(socket) do
     for view <- socket.assigns.views,
         view.container == socket.assigns.sidebar_view,
-        do: Plugins.view_shown(view.id)
+        do: Plugins.view_shown(view.id, socket.assigns.root)
 
     :ok
   end
@@ -1000,9 +1050,9 @@ defmodule BeeWeb.EditorLive do
 
   defp load_plugins(socket) do
     assign(socket,
-      plugins: Plugins.list(),
-      plugin_errors: Plugins.errors(),
-      browser_plugins: Plugins.browser_modules()
+      plugins: Plugins.list(socket.assigns.root),
+      plugin_errors: Plugins.errors(socket.assigns.root),
+      browser_plugins: Plugins.browser_modules(socket.assigns.root)
     )
   end
 
@@ -1304,7 +1354,8 @@ defmodule BeeWeb.EditorLive do
   ## File decorations
 
   defp load_decorations(socket) do
-    decorations = Bee.UI.Decorations.for_workspace(Bee.UI.decorations(), Workspace.root())
+    root = socket.assigns.root
+    decorations = Bee.UI.Decorations.for_workspace(Bee.UI.decorations(root), root)
     assign(socket, file_decorations: decorations)
   end
 

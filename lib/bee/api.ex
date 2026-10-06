@@ -2,10 +2,15 @@ defmodule Bee.API do
   @moduledoc """
   What plugin server code may use (from Erlang: `'Elixir.Bee.API':text(Path)`).
 
+  A plugin runs once per open workspace (folder), each copy in a process of
+  its own: its context's `root` is that workspace.
+
   Functions taking a context (`Bee.Plugins.Context`) act on the window that
   ran the command; with a context from `activate/1` or an event (no window),
-  on every open window. They return at once: windows are separate processes
-  and handle the request when they get to it.
+  on every window of the workspace. What a plugin puts on screen (views,
+  status bar items, decorations, context keys) is its workspace's. They
+  return at once: windows are separate processes and handle the request
+  when they get to it.
 
   Text positions are UTF-8 byte offsets, as in Elixir binaries.
   """
@@ -13,10 +18,11 @@ defmodule Bee.API do
   alias Bee.Editor.Buffer
   alias Bee.Plugins.Context
 
-  @windows_topic "windows"
-
   @doc false
-  def subscribe_window, do: Phoenix.PubSub.subscribe(Bee.PubSub, @windows_topic)
+  # A window of workspace `root`.
+  def subscribe_window(root), do: Phoenix.PubSub.subscribe(Bee.PubSub, windows_topic(root))
+
+  defp windows_topic(root), do: "windows:" <> root
 
   ## Window
 
@@ -40,21 +46,21 @@ defmodule Bee.API do
         true -> nil
       end
 
-    window(ctx, {:open_file, Path.expand(to_string(path), Bee.Workspace.root()), reveal})
+    window(ctx, {:open_file, Path.expand(to_string(path), ctx.root), reveal})
   end
 
   ## Views and status bar (see Bee.UI for the data)
 
   @doc """
   Sets the content of one of the plugin's views (declared in its manifest
-  under `contributes.views`). Every window shows it. Raises for bad content
-  or a view of someone else.
+  under `contributes.views`). Every window of the workspace shows it.
+  Raises for bad content or a view of someone else.
   """
-  def set_view(%Context{plugin: plugin}, view_id, content) do
+  def set_view(%Context{plugin: plugin, root: root}, view_id, content) do
     view_id = to_string(view_id)
 
     case Bee.Views.plugin(view_id) do
-      ^plugin -> Bee.UI.put_view(plugin, view_id, content)
+      ^plugin -> Bee.UI.put_view(root, plugin, view_id, content)
       _ -> raise ArgumentError, "#{plugin} has no view #{inspect(view_id)}"
     end
   end
@@ -67,11 +73,11 @@ defmodule Bee.API do
   Adds or updates a status bar item of the plugin, in every window: `%{text,
   icon, tooltip, command, arguments, alignment: :left | :right, priority}`.
   """
-  def set_status_item(%Context{plugin: plugin}, id, item),
-    do: Bee.UI.put_status_item(plugin, to_string(id), item)
+  def set_status_item(%Context{plugin: plugin, root: root}, id, item),
+    do: Bee.UI.put_status_item(root, plugin, to_string(id), item)
 
-  def remove_status_item(%Context{plugin: plugin}, id),
-    do: Bee.UI.delete_status_item(plugin, to_string(id))
+  def remove_status_item(%Context{plugin: plugin, root: root}, id),
+    do: Bee.UI.delete_status_item(root, plugin, to_string(id))
 
   @doc """
   Colours and badges for files in the Explorer and editor tabs, like a VS
@@ -81,16 +87,16 @@ defmodule Bee.API do
   `"untracked"`, `"deleted"`, `"conflict"`, `"ignored"`. Folders take the
   colour of what they contain.
   """
-  def set_file_decorations(%Context{plugin: plugin}, decorations),
-    do: Bee.UI.put_decorations(plugin, decorations)
+  def set_file_decorations(%Context{plugin: plugin, root: root}, decorations),
+    do: Bee.UI.put_decorations(root, plugin, decorations)
 
   @doc """
   Sets a context key for `when` clauses (enablement, menus, keybindings,
-  views) in every window, like VS Code's `setContext`. `nil` removes it.
-  Name keys after the plugin, e.g. `"git.repository"`.
+  views) in every window of the workspace, like VS Code's `setContext`.
+  `nil` removes it. Name keys after the plugin, e.g. `"git.repository"`.
   """
-  def set_context(%Context{plugin: plugin}, key, value),
-    do: Bee.UI.put_context(plugin, to_string(key), value)
+  def set_context(%Context{plugin: plugin, root: root}, key, value),
+    do: Bee.UI.put_context(root, plugin, to_string(key), value)
 
   ## Asking the user
 
@@ -193,18 +199,25 @@ defmodule Bee.API do
 
   ## Settings, workspace
 
-  @doc "The value of a setting (Bee's or a plugin's)."
-  def setting(key), do: Bee.Settings.get(to_string(key))
+  @doc """
+  The value of a setting (Bee's or a plugin's), as the plugin's workspace
+  sees it: its `.bee/settings.json` over the user's settings.
+  """
+  def setting(key), do: Bee.Settings.get(to_string(key), workspace_root())
 
-  def workspace_root, do: Bee.Workspace.root()
+  @doc """
+  The folder of the plugin's workspace (also `ctx.root`): plugin code runs
+  with it set (`Bee.Plugins.Host`); `Bee.Workspace.root/0` elsewhere.
+  """
+  def workspace_root, do: Process.get(:bee_workspace) || Bee.Workspace.root()
 
   @doc "Every file of the workspace, relative to its root, without `files.exclude`d ones."
-  def workspace_files, do: Bee.Workspace.files()
+  def workspace_files, do: Bee.Workspace.files(workspace_root())
 
   ## Internals
 
-  defp window(%Context{window: nil}, request),
-    do: Phoenix.PubSub.broadcast(Bee.PubSub, @windows_topic, {:bee_api, request})
+  defp window(%Context{window: nil, root: root}, request),
+    do: Phoenix.PubSub.broadcast(Bee.PubSub, windows_topic(root), {:bee_api, request})
 
   defp window(%Context{window: pid}, request) do
     send(pid, {:bee_api, request})

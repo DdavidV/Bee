@@ -33,7 +33,7 @@ defmodule BeeWeb.Workbench.FileTree do
     {:ok,
      assign(socket,
        expanded: MapSet.new([""]),
-       children: %{"" => Bee.Workspace.list_dir("")},
+       children: %{},
        decorations: %{},
        icon_theme: nil,
        clipboard: nil,
@@ -43,10 +43,11 @@ defmodule BeeWeb.Workbench.FileTree do
 
   @impl true
   def update(%{fs_changed: abs}, socket) do
-    dir = abs |> Path.dirname() |> then(&FS.relative(Bee.Workspace.root(), &1))
+    dir = abs |> Path.dirname() |> then(&FS.relative(socket.assigns.root, &1))
 
+    # Other workspaces' files aren't ours (their paths stay absolute).
     if Map.has_key?(socket.assigns.children, dir) do
-      {:ok, update(socket, :children, &Map.put(&1, dir, Bee.Workspace.list_dir(dir)))}
+      {:ok, update(socket, :children, &Map.put(&1, dir, list(socket, dir)))}
     else
       {:ok, socket}
     end
@@ -82,11 +83,20 @@ defmodule BeeWeb.Workbench.FileTree do
     {:ok, socket |> assign(edit: edit) |> reveal(edit.dir)}
   end
 
-  def update(assigns, socket), do: {:ok, assign(socket, assigns)}
+  def update(assigns, socket) do
+    socket = assign(socket, assigns)
+
+    # The window's folder is known now: its top level.
+    if Map.has_key?(socket.assigns.children, ""),
+      do: {:ok, socket},
+      else: {:ok, update(socket, :children, &Map.put(&1, "", list(socket, "")))}
+  end
+
+  defp list(socket, dir), do: Bee.Workspace.list_dir(socket.assigns.root, dir)
 
   defp refresh(socket) do
     update(socket, :children, fn children ->
-      Map.new(children, fn {dir, _} -> {dir, Bee.Workspace.list_dir(dir)} end)
+      Map.new(children, fn {dir, _} -> {dir, list(socket, dir)} end)
     end)
   end
 
@@ -97,7 +107,7 @@ defmodule BeeWeb.Workbench.FileTree do
     Enum.reduce(dirs, socket, fn dir, socket ->
       socket
       |> update(:expanded, &MapSet.put(&1, dir))
-      |> update(:children, &Map.put(&1, dir, Bee.Workspace.list_dir(dir)))
+      |> update(:children, &Map.put(&1, dir, list(socket, dir)))
     end)
   end
 
@@ -116,7 +126,7 @@ defmodule BeeWeb.Workbench.FileTree do
       else
         socket
         |> update(:expanded, &MapSet.put(&1, dir))
-        |> update(:children, &Map.put(&1, dir, Bee.Workspace.list_dir(dir)))
+        |> update(:children, &Map.put(&1, dir, list(socket, dir)))
       end
 
     {:noreply, socket}

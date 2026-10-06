@@ -19,8 +19,10 @@ defmodule Bee.Search do
   Open files are searched with their unsaved text. Files over 2 MB and
   binary (non UTF-8) files are skipped.
 
-  Options (`opts`): `:query`, `:regex`, `:case_sensitive`, `:whole_word`,
-  `:include`, `:exclude` (comma-separated globs), `:max_results`.
+  Options (`opts`): `:root` (the workspace searched; default
+  `Bee.Workspace.root/0`), `:query`, `:regex`, `:case_sensitive`,
+  `:whole_word`, `:include`, `:exclude` (comma-separated globs),
+  `:max_results`.
   """
 
   alias Bee.Editor.Buffer
@@ -76,8 +78,8 @@ defmodule Bee.Search do
 
   defp run(regex, opts, ref, reply_to) do
     started = System.monotonic_time(:millisecond)
-    max = Map.get(opts, :max_results) || Bee.Settings.get("search.maxResults") || 20_000
-    root = Bee.Workspace.root()
+    root = Map.get(opts, :root) || Bee.Workspace.root()
+    max = Map.get(opts, :max_results) || Bee.Settings.get("search.maxResults", root) || 20_000
 
     acc = %{batch: [], flushed_at: started, files: 0, matches: 0, limit_hit: false}
 
@@ -143,9 +145,9 @@ defmodule Bee.Search do
   # The files a search looks at, workspace-relative.
   def files(root, opts) do
     include = globs(opts[:include])
-    exclude = globs(opts[:exclude]) ++ setting_globs("search.exclude")
+    exclude = globs(opts[:exclude]) ++ setting_globs("search.exclude", root)
 
-    FS.walk(root, "", Bee.Settings.excluded_globs())
+    FS.walk(root, "", Bee.Settings.excluded_globs(root))
     |> Enum.filter(fn path ->
       (include == [] or Enum.any?(include, &Glob.match?(&1, path))) and
         not Enum.any?(exclude, &Glob.match?(&1, path))
@@ -169,8 +171,8 @@ defmodule Bee.Search do
   defp glob_variants("**/" <> _ = pattern), do: [pattern, pattern <> "/**"]
   defp glob_variants(pattern), do: ["**/" <> pattern, "**/" <> pattern <> "/**"]
 
-  defp setting_globs(key) do
-    case Bee.Settings.get(key) do
+  defp setting_globs(key, root) do
+    case Bee.Settings.get(key, root) do
       %{} = map -> for {pattern, true} <- map, do: Glob.compile(pattern)
       _ -> []
     end
@@ -271,7 +273,7 @@ defmodule Bee.Search do
   """
   def replace(paths, opts, replacement, only \\ nil) do
     with {:ok, regex} <- compile(opts) do
-      root = Bee.Workspace.root()
+      root = Map.get(opts, :root) || Bee.Workspace.root()
 
       count =
         paths

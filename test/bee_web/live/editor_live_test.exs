@@ -498,11 +498,14 @@ defmodule BeeWeb.EditorLiveTest do
 
     test "workspace settings override user settings", %{conn: conn} do
       put_user_settings(%{"editor.tabSize" => 4})
-      on_exit(fn -> File.rm_rf!(Path.dirname(Bee.Settings.workspace_path())) end)
+
+      on_exit(fn ->
+        File.rm_rf!(Path.dirname(Bee.Settings.workspace_path(Bee.Workspace.root())))
+      end)
 
       {:ok, view, _html} = live(conn, ~p"/")
       run(view, "workbench.action.openWorkspaceSettingsFile")
-      path = Bee.Settings.workspace_path()
+      path = Bee.Settings.workspace_path(Bee.Workspace.root())
       assert_push_event(view, "cm:open", %{path: ^path})
 
       render_hook(view, "save", %{"path" => path, "text" => ~s({"editor.tabSize": 8})})
@@ -784,7 +787,7 @@ defmodule BeeWeb.EditorLiveTest do
       on_exit(fn -> Bee.UI.forget("deco-test") end)
       {:ok, view, _html} = live(conn, ~p"/")
 
-      Bee.UI.put_decorations("deco-test", %{
+      Bee.UI.put_decorations(root, "deco-test", %{
         Path.join(root, "lib/bee/app.ex") => %{badge: "M", color: "modified", tooltip: "Modified"},
         Path.join(root, "README.md") => %{badge: "U", color: "untracked"}
       })
@@ -1052,17 +1055,16 @@ defmodule BeeWeb.EditorLiveTest do
       assert Bee.Settings.get("plugins.disabled") == []
     end
 
-    test "enabling a plugin disabled by the workspace edits the workspace settings" do
+    test "plugins are enabled by the user: a workspace's plugins.disabled is ignored" do
       install(["word-count"])
-      path = Bee.Settings.workspace_path()
+      path = Bee.Settings.workspace_path(Bee.Workspace.root())
       File.mkdir_p!(Path.dirname(path))
-      File.write!(path, ~s({\n  // mine\n  "plugins.disabled": ["word-count"]\n}\n))
+      File.write!(path, ~s({"plugins.disabled": ["word-count"]}))
+      on_exit(fn -> File.rm_rf!(Path.dirname(path)) end)
       Bee.Settings.reload()
-      on_exit(fn -> Bee.Settings.reload() end)
+      Bee.Plugins.reload()
 
-      assert :ok = Bee.Plugins.set_enabled("word-count", true)
-      assert File.read!(path) == ~s({\n  // mine\n  "plugins.disabled": []\n}\n)
-      assert Bee.Settings.get("plugins.disabled") == []
+      refute Bee.Plugins.get("word-count", Bee.Workspace.root()).status == :disabled
     end
 
     test "the file icon theme draws the Explorer's and tabs' icons", %{conn: conn} do
@@ -1172,7 +1174,7 @@ defmodule BeeWeb.EditorLiveTest do
       view |> form("#palette-form") |> render_submit()
 
       eventually(fn -> render(view) =~ "1 word in README.md" end)
-      assert Bee.Plugins.get("word-count").status == :active
+      assert Bee.Plugins.get("word-count", Bee.Workspace.root()).status == :active
     end
 
     test "a server plugin edits the open file; the edit is pushed to the editor", %{conn: conn} do
@@ -1283,7 +1285,7 @@ defmodule BeeWeb.EditorLiveTest do
       File.write!(Path.join(Bee.Workspace.root(), "notes.txt"), "TODO: first\nFIXME: second\n")
       install(["todos"])
       {:ok, view, _html} = live(conn, ~p"/")
-      eventually(fn -> Bee.Plugins.get("todos").status == :active end)
+      eventually(fn -> Bee.Plugins.get("todos", Bee.Workspace.root()).status == :active end)
 
       run(view, "todos.goTo")
       eventually(fn -> has_element?(view, "#palette [data-pick]") end)
@@ -1318,7 +1320,7 @@ defmodule BeeWeb.EditorLiveTest do
       File.write!(Path.join(Bee.Workspace.root(), "notes.txt"), "TODO: a\nTODO: b\n")
       install(["todos"])
       {:ok, view, _html} = live(conn, ~p"/")
-      eventually(fn -> Bee.Plugins.get("todos").status == :active end)
+      eventually(fn -> Bee.Plugins.get("todos", Bee.Workspace.root()).status == :active end)
 
       path = Path.join(Bee.Workspace.root(), "notes.txt")
 
@@ -1381,6 +1383,73 @@ defmodule BeeWeb.EditorLiveTest do
       |> live(~p"/")
 
     assert ids.(view |> element("#activity-bar") |> render()) == Enum.reverse(default)
+  end
+
+  describe "workspaces" do
+    setup do
+      other = Path.join(System.tmp_dir!(), "bee_other_#{System.unique_integer([:positive])}")
+      File.mkdir_p!(Path.join(other, ".bee"))
+      File.write!(Path.join(other, "other.txt"), "other")
+      File.write!(Path.join(other, ".bee/settings.json"), ~s({"editor.tabSize": 7}))
+      on_exit(fn -> File.rm_rf!(other) end)
+      %{other: other}
+    end
+
+    defp open_folder(view, command, path) do
+      run(view, command)
+      view |> form("#palette-form", %{query: path}) |> render_change()
+      view |> form("#palette-form") |> render_submit()
+    end
+
+    test "?folder= opens that folder, with its own files and settings", %{
+      conn: conn,
+      other: other
+    } do
+      {:ok, view, html} = live(conn, ~p"/?#{[folder: other]}")
+
+      assert has_element?(view, "#explorer button[phx-value-path='other.txt']")
+      refute has_element?(view, "#explorer button[phx-value-path='mix.exs']")
+      assert html =~ Path.basename(other)
+      assert json_data(view, "#editor", "data-settings")["tabSize"] == 7
+      assert other in Bee.Workspace.list()
+
+      # The default folder's window is unaffected.
+      {:ok, default, _html} = live(conn, ~p"/")
+      assert has_element?(default, "#explorer button[phx-value-path='mix.exs']")
+      assert json_data(default, "#editor", "data-settings")["tabSize"] == 2
+    end
+
+    test "a folder that doesn't exist: the default one, and why", %{conn: conn} do
+      {:ok, view, html} = live(conn, ~p"/?#{[folder: "/no/such/folder"]}")
+      assert html =~ "not a folder"
+      assert has_element?(view, "#explorer button[phx-value-path='mix.exs']")
+    end
+
+    test "Open Folder switches this window; or opens a new one", %{conn: conn, other: other} do
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      assert {:error, {:live_redirect, %{to: to}}} =
+               open_folder(view, "workbench.action.files.openFolder", other)
+
+      assert to == ~p"/?#{[folder: other]}"
+
+      {:ok, view, _html} = live(conn, ~p"/")
+      open_folder(view, "workbench.action.files.openFolderInNewWindow", other)
+      assert_push_event(view, "bee:open_window", %{url: ^to})
+
+      open_folder(view, "workbench.action.files.openFolder", "/no/such/folder")
+      assert render(view) =~ "/no/such/folder is not a folder"
+    end
+
+    test "not while editors have unsaved changes", %{conn: conn, other: other} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      open_file(view, "README.md")
+      readme = Path.join(Bee.Workspace.root(), "README.md")
+      render_hook(view, "doc_changed", %{"path" => readme, "text" => "# changed"})
+
+      html = open_folder(view, "workbench.action.files.openFolder", other)
+      assert html =~ "Save or close README.md first"
+    end
   end
 
   describe "explorer context menu" do
@@ -1603,7 +1672,7 @@ defmodule BeeWeb.EditorLiveTest do
           }
         })
 
-      ctx = %Bee.Plugins.Context{plugin: "pane-test"}
+      ctx = %Bee.Plugins.Context{plugin: "pane-test", root: Bee.Workspace.root()}
       :ok = Bee.API.set_view(ctx, "panes.a", %{message: "first"})
       :ok = Bee.API.set_view(ctx, "panes.b", %{message: "second"})
       :ok

@@ -1,7 +1,7 @@
 // window.__bridge for Bee's BridgeTransport (assets/js/bridge_transport.js):
 // LiveView's socket frames go to the shell with Tauri commands, and come
-// back over a Tauri Channel (which keeps their order). Injected before the
-// page's own scripts run.
+// back over a Tauri Channel (which keeps their order). Also opens windows
+// and keeps the native title. Injected before the page's own scripts run.
 (() => {
   const core = () => window.__TAURI__.core
   const toB64 = buffer => {
@@ -45,5 +45,19 @@
       transports.delete(sid)
       invoke("bridge_close", {sid})
     },
+
+    // Another window, for a page of Bee ("/?folder=…"): the shell opens it,
+    // or focuses the window already showing that folder.
+    openWindow(url) {
+      core().invoke("bridge_open_window", {url}).catch(e => console.error("bee bridge:", e))
+    },
   }
+
+  // The native window's title follows the page's (it changes with the folder).
+  addEventListener("DOMContentLoaded", () => {
+    const title = document.querySelector("title")
+    const report = () => core().invoke("bridge_title", {title: document.title}).catch(() => {})
+    report()
+    if (title) new MutationObserver(report).observe(title, {childList: true, characterData: true, subtree: true})
+  })
 })()

@@ -65,17 +65,18 @@ defmodule Bee.UITest do
           }
         })
 
-      UI.subscribe()
-      %{ctx: %Bee.Plugins.Context{plugin: "ui-test"}}
+      root = Bee.Workspace.root()
+      UI.subscribe(root)
+      %{ctx: %Bee.Plugins.Context{plugin: "ui-test", root: root}, root: root}
     end
 
-    test "a plugin sets its own views only, and forget clears them", %{ctx: ctx} do
+    test "a plugin sets its own views only, and forget clears them", %{ctx: ctx, root: root} do
       assert Bee.Views.plugin("uitest.v") == "ui-test"
       assert %{id: "uitest", icon: "star"} = Bee.Views.container("uitest")
 
       :ok = Bee.API.set_view(ctx, "uitest.v", %{message: "hello"})
       assert_receive {:ui_changed, {:view, "uitest.v"}}
-      assert %{message: "hello"} = UI.view("uitest.v")
+      assert %{message: "hello"} = UI.view(root, "uitest.v")
 
       assert_raise ArgumentError, ~r/no view/, fn ->
         Bee.API.set_view(ctx, "workbench.explorer.fileView", %{})
@@ -84,11 +85,28 @@ defmodule Bee.UITest do
       :ok = Bee.API.set_status_item(ctx, "s", %{text: "hi", alignment: :right})
 
       assert [%{id: "s", owner: "ui-test", alignment: :right}] =
-               Enum.filter(UI.status_items(), &(&1.owner == "ui-test"))
+               Enum.filter(UI.status_items(root), &(&1.owner == "ui-test"))
 
       UI.forget("ui-test")
-      assert UI.view("uitest.v") == nil
-      assert Enum.filter(UI.status_items(), &(&1.owner == "ui-test")) == []
+      assert UI.view(root, "uitest.v") == nil
+      assert Enum.filter(UI.status_items(root), &(&1.owner == "ui-test")) == []
+    end
+
+    test "each workspace has its own; closing one forgets its", %{ctx: ctx, root: root} do
+      other = "/elsewhere"
+      :ok = Bee.API.set_view(ctx, "uitest.v", %{message: "here"})
+      :ok = Bee.API.set_view(%{ctx | root: other}, "uitest.v", %{message: "there"})
+      :ok = Bee.API.set_context(%{ctx | root: other}, "uitest.on", true)
+
+      assert %{message: "here"} = UI.view(root, "uitest.v")
+      assert %{message: "there"} = UI.view(other, "uitest.v")
+      assert UI.context(root)["uitest.on"] == nil
+      assert UI.context(other)["uitest.on"] == true
+
+      UI.forget_workspace(other)
+      assert UI.view(other, "uitest.v") == nil
+      assert UI.context(other) == %{}
+      assert %{message: "here"} = UI.view(root, "uitest.v")
     end
 
     test "container and view ids are unique" do

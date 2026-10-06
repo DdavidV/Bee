@@ -10,7 +10,7 @@
   const sleep = ms => new Promise(r => setTimeout(r, ms))
   const waitFor = async (check, ms = 20000) => {
     for (const end = Date.now() + ms; Date.now() < end; await sleep(100)) {
-      const value = check()
+      const value = await check()
       if (value) return value
     }
     return null
@@ -75,6 +75,27 @@
     } else {
       await check(false, "terminal: the panel didn't open")
     }
+
+    // Windows: Open Folder in New Window (Bee's command) opens a window for
+    // lib/; asking again focuses that one instead of opening another.
+    const root = document.querySelector("meta[name=bee-workspace]")?.content
+    const openFolder = path => window.liveSocket.execJS(document.querySelector("[data-phx-main]"),
+      JSON.stringify([["push", {event: "run_command", value: {command: "bee.openFolder", args: JSON.stringify(["new", path])}}]]))
+    const lib = `${root}/lib`
+    openFolder(lib)
+    const windows = await waitFor(async () => {
+      const folders = await invoke("selftest_windows")
+      return folders.includes(lib) && folders
+    }, 15000)
+    await check(windows && windows.length === 2, `Open Folder in New Window: a window for lib/ (${JSON.stringify(windows)})`)
+    openFolder(lib)
+    await sleep(1500)
+    const again = await invoke("selftest_windows")
+    await check(again.length === 2, `opening lib/ again focuses its window (${again.length} windows)`)
+    await invoke("selftest_close_window", {folder: lib})
+    const left = await waitFor(async () => (await invoke("selftest_windows")).length === 1, 5000)
+    await check(left, "closed lib/'s window")
+    await sleep(500)
 
     await invoke("selftest_done", {ok})
   }

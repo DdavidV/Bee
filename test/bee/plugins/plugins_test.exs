@@ -21,6 +21,8 @@ defmodule Bee.PluginsTest do
     root = Bee.Workspace.root()
     File.rm_rf!(root)
     File.mkdir_p!(root)
+    # Plugins run for open workspaces; the test is its window.
+    {:ok, ^root} = Bee.Workspace.open(root)
 
     Plugins.subscribe()
     Plugins.reload()
@@ -29,7 +31,7 @@ defmodule Bee.PluginsTest do
       File.rm_rf!(dir)
       File.rm_rf!(root)
       File.rm(Bee.Settings.user_path())
-      File.rm_rf!(Path.dirname(Bee.Settings.workspace_path()))
+      File.rm_rf!(Path.dirname(Bee.Settings.workspace_path(Bee.Workspace.root())))
       Bee.Settings.reload()
       Plugins.reload()
     end)
@@ -63,7 +65,7 @@ defmodule Bee.PluginsTest do
     deadline = System.monotonic_time(:millisecond) + timeout
 
     Stream.repeatedly(fn ->
-      case Plugins.get(name) do
+      case Plugins.get(name, Bee.Workspace.root()) do
         %{status: ^status} = plugin ->
           plugin
 
@@ -85,7 +87,7 @@ defmodule Bee.PluginsTest do
 
   # Kills a plugin's host and waits until the manager has seen it go.
   defp kill_host(name) do
-    pid = Host.whereis(name)
+    pid = Host.whereis(name, Bee.Workspace.root())
     ref = Process.monitor(pid)
     Process.exit(pid, :kill)
     assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
@@ -113,7 +115,7 @@ defmodule Bee.PluginsTest do
     for example <- ~w(word-count upcase insert-date dotenv), do: install(example)
     Plugins.reload()
 
-    assert Enum.map(Plugins.list(), &{&1.name, &1.status}) == [
+    assert Enum.map(Plugins.list(Bee.Workspace.root()), &{&1.name, &1.status}) == [
              {"dotenv", :inactive},
              {"insert-date", :inactive},
              {"upcase", :inactive},
@@ -131,13 +133,13 @@ defmodule Bee.PluginsTest do
 
     # browser parts
     assert [%{name: "dotenv", url: "/plugins/dotenv/browser.js?v=" <> _}, %{name: "insert-date"}] =
-             Plugins.browser_modules()
+             Plugins.browser_modules(Bee.Workspace.root())
 
     assert {:ok, _, :module} = Plugins.asset_path("dotenv", "browser.js")
     assert :error = Plugins.asset_path("dotenv", "plugin.json")
     assert :error = Plugins.asset_path("word-count", "lib/word_count.ex")
 
-    assert Host.whereis("word-count") == nil
+    assert Host.whereis("word-count", Bee.Workspace.root()) == nil
   end
 
   test "removing a plugin removes its contributions and unloads its code" do
@@ -150,7 +152,7 @@ defmodule Bee.PluginsTest do
     File.rm_rf!(Path.join(Plugins.user_dir(), "word-count"))
     Plugins.reload()
 
-    assert Plugins.get("word-count") == nil
+    assert Plugins.get("word-count", Bee.Workspace.root()) == nil
     assert CommandRegistry.command("wordCount.count") == nil
     refute :code.is_loaded(WordCount)
   end
@@ -159,10 +161,12 @@ defmodule Bee.PluginsTest do
     write_plugin("broken", %{"contributes" => %{"commands" => [%{"command" => "x"}]}})
     Plugins.reload()
 
-    assert %{status: :invalid, errors: [%{message: message, path: path}]} = Plugins.get("broken")
+    assert %{status: :invalid, errors: [%{message: message, path: path}]} =
+             Plugins.get("broken", Bee.Workspace.root())
+
     assert message =~ ~s(broken: invalid manifest: missing "title", "runtime")
     assert path =~ "broken/plugin.json"
-    assert [%{message: ^message}] = Plugins.errors()
+    assert [%{message: ^message}] = Plugins.errors(Bee.Workspace.root())
   end
 
   test "a plugin can't take another source's command id" do
@@ -172,7 +176,10 @@ defmodule Bee.PluginsTest do
     })
 
     Plugins.reload()
-    assert %{status: :invalid, errors: [%{message: message}]} = Plugins.get("thief")
+
+    assert %{status: :invalid, errors: [%{message: message}]} =
+             Plugins.get("thief", Bee.Workspace.root())
+
     assert message =~ "already defined"
     assert CommandRegistry.command("workbench.action.togglePanel").source == {:builtin, "bee"}
   end
@@ -188,10 +195,10 @@ defmodule Bee.PluginsTest do
     assert_receive {:bee_api, {:show_message, :info, "4 words in a.txt (counted 1×)"}}, 3_000
     assert %{status: :active} = await_status("word-count", :active)
 
-    pid = Host.whereis("word-count")
+    pid = Host.whereis("word-count", Bee.Workspace.root())
     :ok = Plugins.execute("word-count", "wordCount.count", ctx(active_editor: path))
     assert_receive {:bee_api, {:show_message, :info, "4 words in a.txt (counted 2×)"}}
-    assert Host.whereis("word-count") == pid
+    assert Host.whereis("word-count", Bee.Workspace.root()) == pid
   end
 
   test "plugin settings are validated and read by the plugin" do
@@ -280,7 +287,7 @@ defmodule Bee.PluginsTest do
 
     :ok = Plugins.execute("flaky", "flaky.ok", ctx())
     assert_receive {:bee_api, {:set_status, "fine"}}
-    assert %{status: :active} = Plugins.get("flaky")
+    assert %{status: :active} = Plugins.get("flaky", Bee.Workspace.root())
   end
 
   test "a crashed host restarts, until it crashes too often" do
@@ -292,7 +299,7 @@ defmodule Bee.PluginsTest do
     for _ <- 1..3 do
       pid = kill_host("word-count")
       await_status("word-count", :active)
-      assert Host.whereis("word-count") not in [nil, pid]
+      assert Host.whereis("word-count", Bee.Workspace.root()) not in [nil, pid]
     end
 
     kill_host("word-count")
@@ -410,11 +417,11 @@ defmodule Bee.PluginsTest do
 
     Plugins.reload()
     await_status("eager", :active)
-    assert Plugins.get("md").status == :inactive
+    assert Plugins.get("md", Bee.Workspace.root()).status == :inactive
 
     open_buffer(write_file("x.txt", "hi"))
     Process.sleep(50)
-    assert Plugins.get("md").status == :inactive
+    assert Plugins.get("md", Bee.Workspace.root()).status == :inactive
 
     open_buffer(write_file("README.md", "# hi"))
     await_status("md", :active)
@@ -452,7 +459,7 @@ defmodule Bee.PluginsTest do
       }
     )
 
-    Bee.API.subscribe_window()
+    Bee.API.subscribe_window(Bee.Workspace.root())
     Plugins.reload()
     await_status("watcher", :active)
     assert_receive {:bee_api, {:set_status, "tick"}}, 3_000
@@ -469,7 +476,7 @@ defmodule Bee.PluginsTest do
     Bee.Settings.reload()
     Plugins.reload()
 
-    assert %{status: :disabled} = Plugins.get("word-count")
+    assert %{status: :disabled} = Plugins.get("word-count", Bee.Workspace.root())
     assert CommandRegistry.command("wordCount.count") == nil
     assert {:error, _} = Plugins.execute("word-count", "wordCount.count", ctx())
 
@@ -485,23 +492,174 @@ defmodule Bee.PluginsTest do
       "local",
       %{"contributes" => %{"languages" => [%{"id" => "local-lang", "extensions" => [".loc"]}]}},
       %{},
-      Plugins.workspace_dir()
+      Plugins.workspace_dir(Bee.Workspace.root())
     )
 
     Plugins.reload()
-    assert Plugins.get("local") == nil
+    assert Plugins.get("local", Bee.Workspace.root()) == nil
 
     # a workspace can't allow itself
-    File.mkdir_p!(Path.dirname(Bee.Settings.workspace_path()))
-    File.write!(Bee.Settings.workspace_path(), ~s({"plugins.workspace.enabled": true}))
+    File.mkdir_p!(Path.dirname(Bee.Settings.workspace_path(Bee.Workspace.root())))
+
+    File.write!(
+      Bee.Settings.workspace_path(Bee.Workspace.root()),
+      ~s({"plugins.workspace.enabled": true})
+    )
+
     Bee.Settings.reload()
     Plugins.reload()
-    assert Plugins.get("local") == nil
+    assert Plugins.get("local", Bee.Workspace.root()) == nil
 
     File.write!(Bee.Settings.user_path(), ~s({"plugins.workspace.enabled": true}))
     Bee.Settings.reload()
     Plugins.reload()
-    assert %{scope: :workspace, status: :inactive} = Plugins.get("local")
+    assert %{scope: :workspace, status: :inactive} = Plugins.get("local", Bee.Workspace.root())
     assert Bee.Languages.detect("/x/a.loc") == "local-lang"
+  end
+
+  describe "workspaces" do
+    setup do
+      old = Application.get_env(:bee, :workspace_idle_ms)
+      Application.put_env(:bee, :workspace_idle_ms, 30)
+
+      other =
+        Path.join(System.tmp_dir!(), "bee_plugins_other_#{System.unique_integer([:positive])}")
+
+      File.mkdir_p!(Path.join(other, ".bee"))
+      File.write!(Bee.Settings.workspace_path(other), ~s({"editor.tabSize": 7}))
+
+      Bee.API.subscribe_window(Bee.Workspace.root())
+      Bee.API.subscribe_window(other)
+
+      on_exit(fn ->
+        if old,
+          do: Application.put_env(:bee, :workspace_idle_ms, old),
+          else: Application.delete_env(:bee, :workspace_idle_ms)
+
+        File.rm_rf!(other)
+      end)
+
+      %{other: other}
+    end
+
+    defp eventually(fun, tries \\ 100) do
+      cond do
+        fun.() -> :ok
+        tries == 0 -> flunk("condition not met")
+        true -> Process.sleep(20) && eventually(fun, tries - 1)
+      end
+    end
+
+    test "a plugin runs once per workspace, each copy in its own", %{root: root, other: other} do
+      write_plugin(
+        "where",
+        %{
+          "server" => %{"module" => "WherePlugin"},
+          "activationEvents" => ["*"],
+          "contributes" => %{"commands" => [server_command("where.am")]}
+        },
+        %{
+          "lib/where.ex" => """
+          defmodule WherePlugin do
+            use Bee.Plugin
+
+            @impl true
+            def activate(ctx) do
+              Bee.API.set_status_item(ctx, "where", %{text: Path.basename(ctx.root)})
+              {:ok, ctx}
+            end
+
+            @command "where.am"
+            def am(ctx, _ctx),
+              do:
+                Bee.API.show_message(
+                  ctx,
+                  "\#{Path.basename(Bee.API.workspace_root())} \#{Bee.API.setting("editor.tabSize")}"
+                )
+
+            @impl true
+            def handle_event({:buffer_saved, path}, ctx),
+              do: Bee.API.show_message(ctx, "\#{Path.basename(ctx.root)} saw \#{Path.basename(path)}")
+
+            def handle_event(_event, _ctx), do: :ok
+          end
+          """
+        }
+      )
+
+      Plugins.reload()
+      await_status("where", :active)
+      {:ok, ^other} = Bee.Workspace.open(other)
+      eventually(fn -> match?(%{status: :active}, Plugins.get("where", other)) end)
+
+      here = Path.basename(root)
+      there = Path.basename(other)
+      assert Host.whereis("where", root) != Host.whereis("where", other)
+      assert [%{text: ^here}] = Bee.UI.status_items(root)
+      assert [%{text: ^there}] = Bee.UI.status_items(other)
+
+      # Commands run in the window's workspace, with its settings.
+      :ok = Plugins.execute("where", "where.am", ctx(root: other))
+      assert_receive {:bee_api, {:show_message, :info, message}}, 3_000
+      assert message == "#{there} 7"
+      :ok = Plugins.execute("where", "where.am", ctx())
+      assert_receive {:bee_api, {:show_message, :info, message}}, 3_000
+      assert message == "#{here} 2"
+
+      # Events are the workspace's own.
+      path = write_file("c.txt", "")
+      open_buffer(path)
+      {:ok, _} = Buffer.save(path, "saved")
+      assert_receive {:bee_api, {:show_message, :info, message}}, 3_000
+      assert message == "#{here} saw c.txt"
+      refute_receive {:bee_api, {:show_message, :info, _}}, 100
+
+      # Closing a workspace stops its copy and clears what it showed.
+      pid = Host.whereis("where", root)
+      Bee.Workspace.close(other)
+      eventually(fn -> Host.whereis("where", other) == nil end)
+      assert Bee.UI.status_items(other) == []
+      assert Host.whereis("where", root) == pid
+      assert %{status: :active} = Plugins.get("where", root)
+    end
+
+    test "a workspace plugin runs in its workspace only", %{other: other} do
+      File.write!(Bee.Settings.user_path(), ~s({"plugins.workspace.enabled": true}))
+      Bee.Settings.reload()
+
+      write_plugin(
+        "local",
+        %{
+          "server" => %{"module" => "LocalPlugin"},
+          "contributes" => %{"commands" => [server_command("local.hi")]}
+        },
+        %{
+          "lib/local.ex" => """
+          defmodule LocalPlugin do
+            use Bee.Plugin
+
+            @command "local.hi"
+            def hi(ctx, _state), do: Bee.API.show_message(ctx, "hi from \#{Path.basename(ctx.root)}")
+          end
+          """
+        },
+        Plugins.workspace_dir(other)
+      )
+
+      {:ok, ^other} = Bee.Workspace.open(other)
+      eventually(fn -> Plugins.get("local", other) != nil end)
+      assert %{scope: :workspace, workspace: ^other} = Plugins.get("local", other)
+      assert Plugins.get("local", Bee.Workspace.root()) == nil
+
+      :ok = Plugins.execute("local", "local.hi", ctx(root: other))
+      expected = "hi from #{Path.basename(other)}"
+      assert_receive {:bee_api, {:show_message, :info, ^expected}}, 3_000
+      assert {:error, message} = Plugins.execute("local", "local.hi", ctx())
+      assert message =~ "not loaded in"
+
+      Bee.Workspace.close(other)
+      eventually(fn -> Plugins.get("local") == nil end)
+      refute :code.is_loaded(LocalPlugin)
+    end
   end
 end

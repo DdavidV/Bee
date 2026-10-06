@@ -1,10 +1,13 @@
 defmodule Bee.Plugins.Context do
   @moduledoc """
-  What a plugin's server code gets: the plugin, its process and – for
-  commands – the window that ran it and that window's active editor.
+  What a plugin's server code gets: the plugin, its process, its workspace
+  and – for commands – the window that ran it and that window's active
+  editor.
 
+    * `root` – the folder of the workspace this copy of the plugin runs for
+      (a plugin runs once per open workspace)
     * `window` – the LiveView that ran the command; `nil` in `activate/1` and
-      events, where `Bee.API` messages go to every window
+      events, where `Bee.API` messages go to every window of the workspace
     * `active_editor` – absolute path, or nil
     * `language` – language id of the active editor
     * `selections` – `[{from, to}]` in the active editor, UTF-8 byte offsets

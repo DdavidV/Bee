@@ -44,6 +44,9 @@ defmodule Bee.Commands.RegistryTest do
       ids = Enum.map(file.items, &if(&1 == :separator, do: :separator, else: &1.command))
 
       assert ids == [
+               "workbench.action.files.openFolder",
+               "workbench.action.files.openFolderInNewWindow",
+               :separator,
                "workbench.action.files.save",
                "workbench.action.closeActiveEditor",
                :separator,
@@ -85,9 +88,10 @@ defmodule Bee.Commands.RegistryTest do
              )
 
       # slotted into the built-in "1_save" group, after Close Editor
+      # (after Open Folder…, Open Folder in New Window…, a separator, Save)
       file = Enum.find(CommandRegistry.menus(), &(&1.id == "file"))
-      assert Enum.at(file.items, 2).command == "plugin.hello"
-      assert Enum.at(file.items, 3) == :separator
+      assert Enum.at(file.items, 5).command == "plugin.hello"
+      assert Enum.at(file.items, 6) == :separator
 
       Contributions.unregister(:test_plugin)
       assert_receive {:contributions_changed, [:commands]}

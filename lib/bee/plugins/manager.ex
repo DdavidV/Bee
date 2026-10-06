@@ -3,17 +3,28 @@ defmodule Bee.Plugins.Manager do
   Finds, registers, activates and supervises plugins. See `Bee.Plugins` for
   the public API and the plugin layout.
 
-  Lifecycle of a plugin (`status`):
+  Plugins are found once for all workspaces (built-in, the user's, and the
+  workspace plugins of every open workspace), and their contributions are
+  registered once. Their server parts run per open workspace: a
+  `Bee.Plugins.Host` per plugin and workspace it is active in, like VS
+  Code's extension host per window. The manager follows the workspaces
+  (`workspace_opened/2`, then a monitor): when one closes, its hosts stop.
+
+  A plugin's `status`:
 
     * `:invalid` – its manifest or contributions were rejected
     * `:disabled` – listed in `plugins.disabled`
-    * `:inactive` – contributions registered; its server part (if any) not running
-    * `:activating` / `:active` – its `Bee.Plugins.Host` is starting / running
+    * `:inactive` – contributions registered
+
+  and in each workspace (`hosts`, by root) its server part's:
+
+    * `:activating` / `:active` – its host there is starting / running
     * `:failed` – activation failed, or it crashed too often
 
-  Server parts start lazily: at boot for the `*` / `onStartupFinished`
-  activation events, when a file of the language of an `onLanguage:<id>`
-  event is opened, and when one of the plugin's commands runs.
+  Server parts start lazily, per workspace: when it opens for the `*` /
+  `onStartupFinished` activation events, when a file of the language of an
+  `onLanguage:<id>` event is opened in it, and when one of the plugin's
+  commands runs in one of its windows.
 
   A host that crashes is restarted, up to three times a minute. When a
   plugin's folder changes on disk it is reloaded (debounced).
@@ -35,61 +46,70 @@ defmodule Bee.Plugins.Manager do
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
+  @doc "Workspace `root` was opened; its process is `pid` (it closes when that exits)."
+  def workspace_opened(root, pid), do: GenServer.cast(__MODULE__, {:workspace_opened, root, pid})
+
   ## Server
 
   @impl true
   def init(_opts) do
     :ets.new(@table, [:named_table, :protected, read_concurrency: true])
-    # After a restart of the plugin supervisor: code of the previous hosts.
-    Bee.Plugins.Loader.unload(Bee.Plugins.Loader.loaded())
     File.mkdir_p(Bee.Plugins.user_dir())
     Phoenix.PubSub.subscribe(Bee.PubSub, "fs")
     Bee.Settings.subscribe()
     Bee.Editor.Buffer.subscribe()
 
-    {:ok, %{plugins: %{}, hosts: %{}, timers: %{}, config: config()}, {:continue, :load}}
+    s = %{plugins: %{}, hosts: %{}, roots: %{}, timers: %{}, config: config()}
+
+    # After a restart of the plugin supervisor: the workspaces already open.
+    s =
+      Enum.reduce(Bee.Workspace.list(), s, fn root, s ->
+        case Bee.Workspace.whereis(root) do
+          nil -> s
+          pid -> put_in(s.roots[root], Process.monitor(pid))
+        end
+      end)
+
+    {:ok, s, {:continue, :load}}
   end
 
   @impl true
-  def handle_continue(:load, s), do: {:noreply, rescan(s)}
+  def handle_continue(:load, s),
+    do: {:noreply, Enum.reduce(Map.keys(s.roots), rescan(s), &start_eager(&2, &1))}
 
   @impl true
   def handle_call({:execute, name, id, ctx}, _from, s) do
-    case s.plugins[name] do
-      %{status: status} = plugin when status in [:inactive, :activating, :active] ->
-        {s, pid} = ensure_active(s, plugin)
+    case usable(s, name, ctx.root) do
+      {:ok, plugin} ->
+        {s, pid} = ensure_active(s, plugin, ctx.root)
         Host.run_command(pid, id, ctx)
         {:reply, :ok, s}
 
-      %{status: :failed} ->
-        {:reply, {:error, "plugin #{name} failed to activate (see problems)"}, s}
-
-      _ ->
-        {:reply, {:error, "plugin #{name} is not loaded"}, s}
+      error ->
+        {:reply, error, s}
     end
   end
 
-  # Something of the plugin is needed (one of its views was shown).
-  def handle_call({:activate, name}, _from, s) do
-    case s.plugins[name] do
-      %{status: :inactive, server?: true} = plugin ->
-        {:reply, :ok, elem(ensure_active(s, plugin), 0)}
-
-      _ ->
-        {:reply, :ok, s}
+  # Something of the plugin is needed in workspace `root` (one of its views was shown).
+  def handle_call({:activate, name, root}, _from, s) do
+    case usable(s, name, root) do
+      {:ok, %{server?: true} = plugin} -> {:reply, :ok, elem(ensure_active(s, plugin, root), 0)}
+      _ -> {:reply, :ok, s}
     end
   end
 
   def handle_call({:request, name, method, params, ctx, ref}, _from, s) do
-    case s.plugins[name] do
-      %{status: status, server?: true} = plugin
-      when status in [:inactive, :activating, :active] ->
-        {s, pid} = ensure_active(s, plugin)
+    case usable(s, name, ctx.root) do
+      {:ok, %{server?: true} = plugin} ->
+        {s, pid} = ensure_active(s, plugin, ctx.root)
         Host.request(pid, method, params, ctx, ref)
         {:reply, :ok, s}
 
-      _ ->
-        {:reply, {:error, "plugin #{name} has no running server part"}, s}
+      {:ok, _no_server} ->
+        {:reply, {:error, "plugin #{name} has no server part"}, s}
+
+      error ->
+        {:reply, error, s}
     end
   end
 
@@ -101,17 +121,32 @@ defmodule Bee.Plugins.Manager do
   def handle_call({:reload, name}, _from, s), do: {:reply, :ok, s |> remove(name) |> rescan()}
 
   @impl true
-  def handle_cast({:plugin_loaded, name, modules}, s),
-    do: {:noreply, update_plugin(s, name, &%{&1 | modules: modules})}
+  def handle_cast({:plugin_activated, name, root}, s),
+    do: {:noreply, update_host(s, name, root, &%{&1 | status: :active})}
 
-  def handle_cast({:plugin_activated, name}, s),
-    do: {:noreply, update_plugin(s, name, &%{&1 | status: :active})}
+  def handle_cast({:workspace_opened, root, pid}, s) do
+    if Map.has_key?(s.roots, root) do
+      {:noreply, s}
+    else
+      s = put_in(s.roots[root], Process.monitor(pid))
+      # Its workspace plugins, then what starts with it.
+      {:noreply, s |> rescan() |> start_eager(root)}
+    end
+  end
 
   @impl true
-  def handle_info({:DOWN, ref, :process, _pid, reason}, s) do
+  def handle_info({:DOWN, ref, :process, pid, reason}, s) do
     case Map.pop(s.hosts, ref) do
-      {nil, _} -> {:noreply, s}
-      {name, hosts} -> {:noreply, host_down(%{s | hosts: hosts}, name, reason)}
+      {{name, root}, hosts} ->
+        # Its code is unloaded (if it was the last) before anyone hears of it.
+        Bee.Plugins.Modules.release(pid)
+        {:noreply, host_down(%{s | hosts: hosts}, name, root, reason)}
+
+      {nil, _} ->
+        case Enum.find(s.roots, fn {_root, r} -> r == ref end) do
+          {root, _} -> {:noreply, workspace_closed(s, root)}
+          nil -> {:noreply, s}
+        end
     end
   end
 
@@ -125,23 +160,26 @@ defmodule Bee.Plugins.Manager do
     {:noreply, s |> remove(name) |> rescan()}
   end
 
-  def handle_info({:settings_changed, _settings, _errors}, s) do
+  def handle_info({:settings_changed, _scope}, s) do
     case config() do
       same when same == s.config -> {:noreply, s}
       config -> {:noreply, rescan(%{s | config: config})}
     end
   end
 
+  # onLanguage activation, in the workspaces the file is in.
   def handle_info({:buffer_opened, path, text}, s) do
     lang = Bee.Languages.detect(path, first_line: Bee.Languages.first_line(text))
     event = "onLanguage:" <> lang
 
     {:noreply,
-     Enum.reduce(Map.values(s.plugins), s, fn plugin, s ->
-       if plugin.status == :inactive and plugin.server? and event in plugin.activation_events,
-         do: elem(ensure_active(s, plugin), 0),
-         else: s
-     end)}
+     for root <- Map.keys(s.roots),
+         inside?(path, root),
+         plugin <- Map.values(s.plugins),
+         event in plugin.activation_events,
+         reduce: s do
+       s -> start_in(s, plugin.name, root)
+     end}
   end
 
   def handle_info(_msg, s), do: {:noreply, s}
@@ -149,12 +187,14 @@ defmodule Bee.Plugins.Manager do
   ## Discovery
 
   defp config,
-    do: {Bee.Settings.get("plugins.disabled"), Bee.Settings.get_user("plugins.workspace.enabled")}
+    do:
+      {Bee.Settings.get_user("plugins.disabled"),
+       Bee.Settings.get_user("plugins.workspace.enabled")}
 
   # Adds plugins found on disk that aren't loaded yet, drops vanished or
   # disabled ones. Loaded plugins are kept as they are (see reload).
   defp rescan(s) do
-    found = discover()
+    found = discover(s)
     found_names = MapSet.new(found, & &1.name)
 
     s =
@@ -180,26 +220,32 @@ defmodule Bee.Plugins.Manager do
     publish(s)
   end
 
-  defp discover do
+  defp discover(s) do
     {disabled, workspace?} = config()
 
     builtin =
       if Application.get_env(:bee, :builtin_plugins, true),
-        do: [{:builtin, Bee.Plugins.builtin_dir()}],
+        do: [{:builtin, nil, Bee.Plugins.builtin_dir()}],
         else: []
 
-    dirs =
-      builtin ++
-        [{:user, Bee.Plugins.user_dir()}] ++
-        if(workspace?, do: [{:workspace, Bee.Plugins.workspace_dir()}], else: [])
+    workspaces =
+      if workspace?,
+        do:
+          for(
+            root <- Enum.sort(Map.keys(s.roots)),
+            do: {:workspace, root, Bee.Plugins.workspace_dir(root)}
+          ),
+        else: []
+
+    dirs = builtin ++ [{:user, nil, Bee.Plugins.user_dir()}] ++ workspaces
 
     {plugins, _seen} =
-      for {scope, root} <- dirs,
+      for {scope, workspace, base} <- dirs,
           dir <-
-            root |> Path.join("*/plugin.json") |> Path.wildcard() |> Enum.map(&Path.dirname/1),
+            base |> Path.join("*/plugin.json") |> Path.wildcard() |> Enum.map(&Path.dirname/1),
           reduce: {[], %{}} do
         {acc, seen} ->
-          plugin = read_plugin(scope, dir, disabled)
+          plugin = read_plugin(scope, workspace, dir, disabled)
 
           case Map.fetch(seen, plugin.name) do
             {:ok, other} ->
@@ -217,7 +263,7 @@ defmodule Bee.Plugins.Manager do
     plugins
   end
 
-  defp read_plugin(scope, dir, disabled) do
+  defp read_plugin(scope, workspace, dir, disabled) do
     path = Path.join(dir, "plugin.json")
 
     base = %{
@@ -226,6 +272,8 @@ defmodule Bee.Plugins.Manager do
       description: nil,
       version: nil,
       scope: scope,
+      # A workspace plugin's workspace: it only runs there.
+      workspace: workspace,
       dir: dir,
       # File events of a symlinked plugin (e.g. a checkout) carry the target path.
       watch_dirs: Enum.uniq([dir, resolve_link(dir)]),
@@ -236,8 +284,10 @@ defmodule Bee.Plugins.Manager do
       server?: false,
       browser: nil,
       activation_events: [],
-      modules: [],
-      crashes: []
+      # Its server part in each workspace: %{root => %{status, errors, crashes}}.
+      hosts: %{},
+      # This load of it, for Bee.Plugins.Modules.
+      load_id: System.unique_integer([:positive])
     }
 
     with {:ok, text} <- File.read(path),
@@ -295,10 +345,9 @@ defmodule Bee.Plugins.Manager do
 
     s = put_in(s.plugins[plugin.name], plugin)
 
-    if plugin.status == :inactive and plugin.server? and
-         Enum.any?(plugin.activation_events, &(&1 in ["*", "onStartupFinished"])),
-       do: elem(ensure_active(s, plugin), 0),
-       else: s
+    if eager?(plugin),
+      do: Enum.reduce(Map.keys(s.roots), s, &start_in(&2, plugin.name, &1)),
+      else: s
   end
 
   defp add(s, plugin), do: put_in(s.plugins[plugin.name], plugin)
@@ -309,7 +358,8 @@ defmodule Bee.Plugins.Manager do
         s
 
       plugin ->
-        s = stop_host(s, plugin)
+        s = stop_hosts(s, name, Map.keys(plugin.hosts))
+        Bee.Plugins.Modules.drop(name)
         Contributions.unregister({:plugin, name})
         Bee.UI.forget(name)
         %{s | plugins: Map.delete(s.plugins, name)}
@@ -329,82 +379,141 @@ defmodule Bee.Plugins.Manager do
 
   defp browser(_plugin), do: nil
 
+  ## Workspaces
+
+  # Plugins that start with a workspace.
+  defp eager?(plugin),
+    do: Enum.any?(plugin.activation_events, &(&1 in ["*", "onStartupFinished"]))
+
+  defp start_eager(s, root) do
+    for {name, plugin} <- s.plugins, eager?(plugin), reduce: s do
+      s -> start_in(s, name, root)
+    end
+  end
+
+  defp workspace_closed(s, root) do
+    s =
+      for {name, plugin} <- s.plugins, Map.has_key?(plugin.hosts, root), reduce: s do
+        s -> stop_hosts(s, name, [root])
+      end
+
+    Bee.UI.forget_workspace(root)
+    # Without its workspace plugins.
+    rescan(%{s | roots: Map.delete(s.roots, root)})
+  end
+
   ## Hosts
 
-  defp ensure_active(s, %{name: name} = plugin) do
-    case Host.whereis(name) do
+  # Plugin `name`, if it can run in workspace `root`: `{:ok, plugin}` or `{:error, message}`.
+  defp usable(s, name, root) do
+    plugin = s.plugins[name]
+
+    cond do
+      plugin == nil or plugin.status != :inactive ->
+        {:error, "plugin #{name} is not loaded"}
+
+      not Map.has_key?(s.roots, root) or plugin.workspace not in [nil, root] ->
+        {:error, "plugin #{name} is not loaded in #{root}"}
+
+      match?(%{status: :failed}, plugin.hosts[root]) ->
+        {:error, "plugin #{name} failed to activate (see problems)"}
+
+      true ->
+        {:ok, plugin}
+    end
+  end
+
+  # Starts plugin `name`'s server part in workspace `root`, if it has one and may.
+  defp start_in(s, name, root) do
+    case usable(s, name, root) do
+      {:ok, %{server?: true} = plugin} -> elem(ensure_active(s, plugin, root), 0)
+      _ -> s
+    end
+  end
+
+  defp ensure_active(s, %{name: name} = plugin, root) do
+    case Host.whereis(name, root) do
       nil ->
-        {:ok, pid} = DynamicSupervisor.start_child(Bee.Plugins.HostSup, {Host, plugin})
+        {:ok, pid} =
+          DynamicSupervisor.start_child(Bee.Plugins.HostSup, {Host, {plugin, root}})
+
         ref = Process.monitor(pid)
-        s = %{s | hosts: Map.put(s.hosts, ref, name)}
-        {s |> update_plugin(name, &%{&1 | status: :activating}), pid}
+        s = %{s | hosts: Map.put(s.hosts, ref, {name, root})}
+        crashes = get_in(plugin.hosts, [root, :crashes]) || []
+
+        s =
+          update_plugin(
+            s,
+            name,
+            &put_in(&1.hosts[root], %{status: :activating, errors: [], crashes: crashes})
+          )
+
+        {s, pid}
 
       pid ->
         {s, pid}
     end
   end
 
-  defp stop_host(s, plugin) do
+  defp stop_hosts(s, name, roots) do
     s =
-      case Enum.find(s.hosts, fn {_ref, name} -> name == plugin.name end) do
-        {ref, _} ->
-          Process.demonitor(ref, [:flush])
+      Enum.reduce(s.hosts, s, fn
+        {ref, {^name, root}}, s ->
+          if root in roots do
+            Process.demonitor(ref, [:flush])
 
-          if pid = Host.whereis(plugin.name),
-            do: DynamicSupervisor.terminate_child(Bee.Plugins.HostSup, pid)
+            if pid = Host.whereis(name, root),
+              do: DynamicSupervisor.terminate_child(Bee.Plugins.HostSup, pid)
 
-          %{s | hosts: Map.delete(s.hosts, ref)}
+            %{s | hosts: Map.delete(s.hosts, ref)}
+          else
+            s
+          end
 
-        nil ->
+        _other, s ->
           s
-      end
+      end)
 
-    Bee.Plugins.Loader.unload(plugin.modules)
-    s
+    update_plugin(s, name, &%{&1 | hosts: Map.drop(&1.hosts, roots)})
   end
 
-  defp host_down(s, name, reason) do
-    host_down(s, name, reason, s.plugins[name])
+  defp host_down(s, name, root, reason) do
+    case s.plugins[name] do
+      nil -> s
+      plugin -> host_down(s, plugin, root, reason, plugin.hosts[root] || %{crashes: []})
+    end
   end
 
-  defp host_down(s, _name, _reason, nil), do: s
-
-  defp host_down(s, name, reason, plugin) do
-    Bee.Plugins.Loader.unload(plugin.modules)
-    plugin = %{plugin | modules: []}
+  defp host_down(s, plugin, root, reason, host) do
+    name = plugin.name
 
     case reason do
       {:shutdown, {:activation_failed, problems}} ->
         Logger.warning("Bee: plugin #{name} failed to activate: #{inspect(problems)}")
 
-        publish(
-          put_in(s.plugins[name], %{
-            plugin
-            | status: :failed,
-              errors: Enum.map(problems, &problem(plugin, &1))
-          })
-        )
+        update_host(s, name, root, fn _ ->
+          %{status: :failed, errors: Enum.map(problems, &problem(plugin, &1)), crashes: []}
+        end)
 
       _crash ->
         now = System.monotonic_time(:millisecond)
-        crashes = [now | Enum.filter(plugin.crashes, &(now - &1 < @crash_window_ms))]
-        Logger.error("Bee: plugin #{name} crashed: #{Exception.format_exit(reason)}")
+        crashes = [now | Enum.filter(host.crashes, &(now - &1 < @crash_window_ms))]
+        Logger.error("Bee: plugin #{name} crashed in #{root}: #{Exception.format_exit(reason)}")
 
         if length(crashes) > @max_crashes do
           message =
             "crashed #{length(crashes)} times in a minute, last: #{Exception.format_exit(reason)}"
 
-          publish(
-            put_in(s.plugins[name], %{
-              plugin
-              | status: :failed,
-                crashes: crashes,
-                errors: [problem(plugin, message)]
-            })
-          )
+          update_host(s, name, root, fn _ ->
+            %{status: :failed, errors: [problem(plugin, message)], crashes: crashes}
+          end)
         else
-          s = put_in(s.plugins[name], %{plugin | status: :inactive, crashes: crashes})
-          s |> ensure_active(s.plugins[name]) |> elem(0) |> publish()
+          s =
+            update_host(s, name, root, fn _ ->
+              %{status: :inactive, errors: [], crashes: crashes}
+            end)
+
+          if Map.has_key?(s.roots, root), do: start_in(s, name, root), else: s
         end
     end
   end
@@ -414,6 +523,15 @@ defmodule Bee.Plugins.Manager do
       nil -> s
       plugin -> publish(put_in(s.plugins[name], fun.(plugin)))
     end
+  end
+
+  defp update_host(s, name, root, fun) do
+    update_plugin(s, name, fn plugin ->
+      case plugin.hosts[root] do
+        nil -> plugin
+        host -> put_in(plugin.hosts[root], fun.(host))
+      end
+    end)
   end
 
   ## File changes
@@ -428,13 +546,17 @@ defmodule Bee.Plugins.Manager do
         debounce(s, {:reload, name})
 
       nil ->
-        roots = [Bee.Plugins.user_dir(), Bee.Plugins.workspace_dir()]
+        dirs = [
+          Bee.Plugins.user_dir() | Enum.map(Map.keys(s.roots), &Bee.Plugins.workspace_dir/1)
+        ]
 
-        if Enum.any?(roots, &String.starts_with?(path, &1 <> "/")),
+        if Enum.any?(dirs, &String.starts_with?(path, &1 <> "/")),
           do: debounce(s, :rescan),
           else: s
     end
   end
+
+  defp inside?(path, dir), do: path == dir or String.starts_with?(path, dir <> "/")
 
   defp debounce(s, key) do
     if timer = s.timers[key], do: Process.cancel_timer(timer)
@@ -449,7 +571,7 @@ defmodule Bee.Plugins.Manager do
   ## Publishing
 
   defp publish(s) do
-    rows = for {name, plugin} <- s.plugins, do: {name, Map.drop(plugin, [:crashes])}
+    rows = Map.to_list(s.plugins)
     :ets.delete_all_objects(@table)
     :ets.insert(@table, rows)
     Phoenix.PubSub.broadcast(Bee.PubSub, @topic, :plugins_changed)

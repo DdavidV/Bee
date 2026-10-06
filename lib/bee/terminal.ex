@@ -20,7 +20,8 @@ defmodule Bee.Terminal do
 
   def topic(id), do: "term:#{id}"
 
-  def default_shell, do: Bee.Settings.get("terminal.integrated.shell")
+  @doc "The shell new terminals run (`terminal.integrated.shell` of workspace `root`)."
+  def default_shell(root \\ nil), do: Bee.Settings.get("terminal.integrated.shell", root)
 
   def input(id, data), do: GenServer.cast(via(id), {:input, data})
   def resize(id, cols, rows), do: GenServer.cast(via(id), {:resize, cols, rows})

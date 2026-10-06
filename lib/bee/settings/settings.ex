@@ -1,26 +1,30 @@
 defmodule Bee.Settings do
   @moduledoc """
   VS Code style settings: defaults from the schema, overridden by the user
-  file (`<config_dir>/settings.json`), overridden by the workspace file
+  file (`<config_dir>/settings.json`), overridden by a workspace's file
   (`<root>/.bee/settings.json`). Both files are JSONC.
 
   Each value is validated against its JSON Schema: Bee's own settings are in
   `priv/schemas/settings.schema.json` (see `Bee.JSON.Schema`), plugins
   contribute theirs (`Bee.Settings.Configuration`). An invalid value falls
-  back to the next layer down and is reported in `errors/0`. Unknown keys
+  back to the next layer down and is reported in `errors/1`. Unknown keys
   are kept (a plugin defining them may not be loaded).
 
-  The merged map lives in `:persistent_term`, so reads never go through the
-  GenServer. Every reload broadcasts `{:settings_changed, settings, errors}`
-  on the `"settings"` topic.
+  Several workspaces can be open at once (`Bee.Workspace`): each one adds
+  its own layer on top of the user's, kept while it is open (`track/1`).
+  Reads take the workspace's root, or `nil` for the defaults and the user
+  file only. They don't go through the GenServer (`:persistent_term`).
+
+  Every reload broadcasts `{:settings_changed, scope}` on the `"settings"`
+  topic: `:user` (every workspace changed with it) or `{:workspace, root}`.
   """
   use GenServer
   require Logger
 
   @topic "settings"
-  @key {__MODULE__, :state}
 
   @type error :: %{path: String.t(), message: String.t()}
+  @type scope :: :user | {:workspace, String.t()}
 
   @schema "settings"
 
@@ -56,48 +60,63 @@ defmodule Bee.Settings do
 
   def subscribe, do: Phoenix.PubSub.subscribe(Bee.PubSub, @topic)
 
-  def all, do: elem(state(), 0)
+  ## Reading
 
-  @spec errors() :: [error]
-  def errors, do: elem(state(), 1)
+  @doc "Every setting of workspace `root` (`nil`: the defaults and the user file)."
+  def all(root \\ nil), do: elem(layer_state(root), 0)
 
-  def get(key), do: Map.get(all(), key, defaults()[key])
+  @doc "The problems of the files behind `all/1`."
+  @spec errors(String.t() | nil) :: [error]
+  def errors(root \\ nil), do: elem(layer_state(root), 1)
+
+  def get(key, root \\ nil), do: Map.get(all(root), key, defaults()[key])
 
   @doc """
-  A setting from the defaults and the user file only. For settings a
-  workspace must not be able to change, like `plugins.workspace.enabled`.
+  A setting from the defaults and the user file only, whatever workspace:
+  for settings a workspace must not be able to change, like
+  `plugins.workspace.enabled`.
   """
-  def get_user(key), do: Map.get(elem(state(), 2), key, defaults()[key])
+  def get_user(key), do: get(key, nil)
 
-  defp state do
-    case :persistent_term.get(@key, nil) do
-      nil -> {defaults(), [], defaults()}
+  @doc "Globs from workspace `root`'s `files.exclude` that are switched on, compiled."
+  def excluded_globs(root \\ nil) do
+    for {pattern, true} <- get("files.exclude", root), do: Bee.Workspace.Glob.compile(pattern)
+  end
+
+  defp user_state, do: :persistent_term.get({__MODULE__, :user}, {defaults(), []})
+
+  defp layer_state(nil), do: user_state()
+
+  defp layer_state(root) do
+    case :persistent_term.get({__MODULE__, :workspace, root}, nil) do
+      nil -> compute(root, user_state())
       state -> state
     end
   end
 
-  @doc "Globs from `files.exclude` that are switched on, compiled."
-  def excluded_globs do
-    for {pattern, true} <- get("files.exclude"), do: Bee.Workspace.Glob.compile(pattern)
-  end
+  ## Workspaces
 
+  @doc "Keeps workspace `root`'s layer loaded (and reloaded when its file changes)."
+  def track(root), do: GenServer.call(__MODULE__, {:track, root})
+
+  def untrack(root), do: GenServer.call(__MODULE__, {:untrack, root})
+
+  @doc "Reads every file again."
   def reload, do: GenServer.call(__MODULE__, :reload)
 
   def user_dir, do: Application.get_env(:bee, :config_dir) || Path.expand("~/.config/bee")
   def user_path, do: Path.join(user_dir(), "settings.json")
-  def workspace_path, do: Path.join([Bee.Workspace.root(), ".bee", "settings.json"])
-
-  def paths, do: [user_path(), workspace_path()]
+  def workspace_path(root), do: Path.join([root, ".bee", "settings.json"])
 
   @doc "Creates the user settings file if missing, documenting every setting."
   def ensure_user_file! do
     ensure_file!(user_path(), template("User settings. These override Bee's defaults."))
   end
 
-  @doc "Creates the workspace settings file if missing."
-  def ensure_workspace_file! do
+  @doc "Creates workspace `root`'s settings file if missing."
+  def ensure_workspace_file!(root) do
     ensure_file!(
-      workspace_path(),
+      workspace_path(root),
       template("Workspace settings. These override your user settings for this folder.")
     )
   end
@@ -125,8 +144,8 @@ defmodule Bee.Settings do
   ## Writing
 
   @doc """
-  The settings a file (`:user` or `:workspace`) sets itself, `%{}` when it
-  is missing or unreadable.
+  The settings a file (`:user` or `{:workspace, root}`) sets itself, `%{}`
+  when it is missing or unreadable.
   """
   def layer(scope) do
     case read(path(scope)) do
@@ -136,14 +155,18 @@ defmodule Bee.Settings do
   end
 
   @doc """
-  Changes `key` in the `:user` or `:workspace` settings file to
+  Changes `key` in the `:user` or `{:workspace, root}` settings file to
   `fun.(value)`, where `value` is what the file sets it to (`nil` when it
   doesn't). Comments and formatting are kept (`Bee.JSON.JSONC.put/3`); the
   file is created if needed and the settings reloaded. Returns `:ok` or
   `{:error, message}` (an invalid value, an unreadable file).
   """
-  def update(scope, key, fun) when scope in [:user, :workspace] do
-    path = if scope == :user, do: ensure_user_file!(), else: ensure_workspace_file!()
+  def update(scope, key, fun) do
+    path =
+      case scope do
+        :user -> ensure_user_file!()
+        {:workspace, root} -> ensure_workspace_file!(root)
+      end
 
     with {:ok, text} <- File.read(path),
          {:ok, current} <- read(path),
@@ -159,7 +182,7 @@ defmodule Bee.Settings do
   end
 
   defp path(:user), do: user_path()
-  defp path(:workspace), do: workspace_path()
+  defp path({:workspace, root}), do: workspace_path(root)
 
   ## Validation
 
@@ -189,53 +212,77 @@ defmodule Bee.Settings do
     File.mkdir_p(user_dir())
     Phoenix.PubSub.subscribe(Bee.PubSub, "fs")
     Bee.Contributions.subscribe()
-    load(false)
-    {:ok, nil}
+    load_user()
+    {:ok, %{roots: MapSet.new()}}
   end
 
   @impl true
-  def handle_call(:reload, _from, state) do
-    load(true)
-    {:reply, :ok, state}
+  def handle_call({:track, root}, _from, s) do
+    load_workspace(root, user_state())
+    {:reply, :ok, %{s | roots: MapSet.put(s.roots, root)}}
+  end
+
+  def handle_call({:untrack, root}, _from, s) do
+    :persistent_term.erase({__MODULE__, :workspace, root})
+    {:reply, :ok, %{s | roots: MapSet.delete(s.roots, root)}}
+  end
+
+  def handle_call(:reload, _from, s) do
+    reload_all(s)
+    {:reply, :ok, s}
   end
 
   @impl true
-  def handle_info({:fs_changed, path}, state) do
-    if path in paths(), do: load(true)
-    {:noreply, state}
+  def handle_info({:fs_changed, path}, s) do
+    cond do
+      path == user_path() ->
+        reload_all(s)
+
+      root = Enum.find(s.roots, &(workspace_path(&1) == path)) ->
+        load_workspace(root, user_state())
+        broadcast({:workspace, root})
+
+      true ->
+        :ok
+    end
+
+    {:noreply, s}
   end
 
   # Plugin settings appeared or went away: re-validate, new defaults.
-  def handle_info({:contributions_changed, keys}, state) do
-    if :configuration in keys, do: load(true)
-    {:noreply, state}
+  def handle_info({:contributions_changed, keys}, s) do
+    if :configuration in keys, do: reload_all(s)
+    {:noreply, s}
   end
 
-  defp load(broadcast?) do
-    {layers, errors} =
-      Enum.map_reduce(paths(), [], fn path, errors ->
-        case read(path) do
-          {:ok, overrides} -> {overrides, errors}
-          {:error, message} -> {%{}, errors ++ [%{path: path, message: message}]}
-        end
-      end)
+  defp reload_all(s) do
+    user = load_user()
+    Enum.each(s.roots, &load_workspace(&1, user))
+    broadcast(:user)
+  end
 
-    {[user, settings], errors} =
-      paths()
-      |> Enum.zip(layers)
-      |> Enum.map_reduce({defaults(), errors}, fn {path, overrides}, {settings, errors} ->
-        {settings, errors} = apply_overrides(settings, errors, path, overrides)
-        {settings, {settings, errors}}
-      end)
-      |> then(fn {merged, {_, errors}} -> {merged, errors} end)
+  defp load_user do
+    {settings, errors} = apply_file({defaults(), []}, user_path())
+    state = {settings, errors}
+    :persistent_term.put({__MODULE__, :user}, state)
+    log(errors)
+    state
+  end
 
-    :persistent_term.put(@key, {settings, errors, user})
+  defp load_workspace(root, user) do
+    {_settings, errors} = state = compute(root, user)
+    :persistent_term.put({__MODULE__, :workspace, root}, state)
+    log(errors -- elem(user, 1))
+  end
 
-    for %{path: path, message: message} <- errors,
-        do: Logger.warning("Bee: #{path}: #{message}")
+  # The user's settings with workspace `root`'s file on top.
+  defp compute(root, user), do: apply_file(user, workspace_path(root))
 
-    if broadcast?,
-      do: Phoenix.PubSub.broadcast(Bee.PubSub, @topic, {:settings_changed, settings, errors})
+  defp apply_file({settings, errors}, path) do
+    case read(path) do
+      {:ok, overrides} -> apply_overrides(settings, errors, path, overrides)
+      {:error, message} -> {settings, errors ++ [%{path: path, message: message}]}
+    end
   end
 
   defp apply_overrides(settings, errors, path, overrides) do
@@ -254,6 +301,14 @@ defmodule Bee.Settings do
       end
     end)
   end
+
+  defp log(errors) do
+    for %{path: path, message: message} <- errors,
+        do: Logger.warning("Bee: #{path}: #{message}")
+  end
+
+  defp broadcast(scope),
+    do: Phoenix.PubSub.broadcast(Bee.PubSub, @topic, {:settings_changed, scope})
 
   defp read(path) do
     with {:ok, text} <- File.read(path),

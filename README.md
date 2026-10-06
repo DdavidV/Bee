@@ -34,8 +34,12 @@ cd desktop
 cargo run -- /path/to/folder
 ```
 
-This starts Bee and opens it in a window. Bee and the window talk over
-stdin/stdout, so no port is opened. Closing the window stops Bee.
+This starts Bee and opens the folder in a window. Bee and its windows talk
+over stdin/stdout, so no port is opened.
+
+Each folder gets its own window: File → Open Folder in New Window…, or
+start the app again with another folder, which hands it to the running app
+instead of starting a second Bee. Closing the last window stops Bee.
 
 ## Web release
 

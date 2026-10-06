@@ -137,7 +137,9 @@ defmodule BeeGitTest do
       File.mkdir_p!(root)
       Application.put_env(:bee, :builtin_plugins, true)
       Plugins.subscribe()
-      Bee.UI.subscribe()
+      Bee.UI.subscribe(root)
+      # Plugins run for open workspaces; this test is its window.
+      {:ok, ^root} = Bee.Workspace.open(root)
 
       on_exit(fn ->
         Application.put_env(:bee, :builtin_plugins, false)
@@ -169,7 +171,7 @@ defmodule BeeGitTest do
 
     # The changes view once it matches `fun`.
     defp await_view(fun, tries \\ 100) do
-      view = Bee.UI.view("git.changes")
+      view = Bee.UI.view(Bee.Workspace.root(), "git.changes")
 
       cond do
         view && fun.(view) -> view
@@ -186,12 +188,12 @@ defmodule BeeGitTest do
       Plugins.reload()
       view = await_view(&(&1.buttons != []))
       assert [%{label: "Initialize Repository", command: "git.init"}] = view.buttons
-      assert Bee.UI.context()["git.repository"] == false
+      assert Bee.UI.context(root)["git.repository"] == false
 
       run("git.init")
       await_view(&(&1.input != nil))
       assert File.dir?(Path.join(root, ".git"))
-      assert Bee.UI.context()["git.repository"] == true
+      assert Bee.UI.context(root)["git.repository"] == true
     end
 
     test "changes, staging and committing", %{root: root} do
@@ -204,7 +206,7 @@ defmodule BeeGitTest do
       assert labels(group(view, "changes")) == [{"a.txt", "M"}, {"b.txt", "U"}]
       assert view.badge == 2
       assert view.input.placeholder =~ "commit on 'main'"
-      assert Enum.any?(Bee.UI.status_items(), &(&1.owner == "git" and &1.text == "main*"))
+      assert Enum.any?(Bee.UI.status_items(root), &(&1.owner == "git" and &1.text == "main*"))
 
       run("git.stage", [Path.join(root, "b.txt")])
       view = await_view(&group(&1, "staged"))
@@ -221,7 +223,7 @@ defmodule BeeGitTest do
       assert view.message == "No changes."
       assert sh!(root, ["log", "--format=%s"]) == "Second commit\nFirst commit\n"
 
-      commits = Bee.UI.view("git.commits")
+      commits = Bee.UI.view(Bee.Workspace.root(), "git.commits")
       assert [%{label: "Second commit"}, %{label: "First commit"}] = commits.items
       assert [%{label: "a.txt"}, %{label: "b.txt"}] = hd(commits.items).children
     end
@@ -237,7 +239,7 @@ defmodule BeeGitTest do
       Plugins.reload()
       await_view(&(&1.items != []))
 
-      decorations = Bee.UI.Decorations.for_workspace(Bee.UI.decorations(), root)
+      decorations = Bee.UI.Decorations.for_workspace(Bee.UI.decorations(root), root)
       assert %{badge: "M", color: "modified"} = decorations["a.txt"]
       assert %{badge: "U", color: "untracked"} = decorations["lib/deep/new.ex"]
       assert %{badge: nil, color: "untracked"} = decorations["lib"]
@@ -246,7 +248,7 @@ defmodule BeeGitTest do
       # after committing, nothing is decorated but ignored files
       run("git.commit", ["all"])
       await_view(&(&1.items == []))
-      decorations = Bee.UI.Decorations.for_workspace(Bee.UI.decorations(), root)
+      decorations = Bee.UI.Decorations.for_workspace(Bee.UI.decorations(root), root)
       assert Map.keys(decorations) == ["_build"]
     end
 

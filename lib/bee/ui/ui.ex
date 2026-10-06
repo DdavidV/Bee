@@ -1,10 +1,13 @@
 defmodule Bee.UI do
   @moduledoc """
-  What plugins put on screen, as data: the content of their views and their
-  status bar items. Plugins set them through `Bee.API`; every window renders
-  them. Kept in ETS (reads don't go through the process); changes broadcast
-  `{:ui_changed, {:view, id}}` or `{:ui_changed, :status_items}` on the
-  `"ui"` topic.
+  What plugins put on screen, as data: the content of their views, their
+  status bar items, file decorations and context keys. Plugins set them
+  through `Bee.API`. Each workspace has its own (a plugin runs once per
+  workspace, see `Bee.Plugins`), rendered by the windows showing it.
+
+  Kept in ETS (reads don't go through the process); changes broadcast
+  `{:ui_changed, {:view, id} | :status_items | :decorations | :context}` on
+  the workspace's topic (`subscribe/1`).
 
   ## View content
 
@@ -48,82 +51,95 @@ defmodule Bee.UI do
   use GenServer
 
   @table __MODULE__
-  @topic "ui"
   @max_items 5_000
   @colors ~w(modified added deleted untracked conflict ignored)
 
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
-  def subscribe, do: Phoenix.PubSub.subscribe(Bee.PubSub, @topic)
+  @doc "Changes for the windows of workspace `root`."
+  def subscribe(root), do: Phoenix.PubSub.subscribe(Bee.PubSub, topic(root))
+
+  defp topic(root), do: "ui:" <> root
 
   ## Views
 
-  @doc "Content of view `id`, normalized, or nil."
-  def view(id) do
-    case :ets.lookup(@table, {:view, id}) do
+  @doc "Content of view `id` in workspace `root`, normalized, or nil."
+  def view(root, id) do
+    case :ets.lookup(@table, {:view, root, id}) do
       [{_, _owner, content}] -> content
       [] -> nil
     end
   end
 
-  @doc "Sets view `id`'s content (see the moduledoc); `owner` is the plugin. Raises on bad content."
-  def put_view(owner, id, content),
-    do: GenServer.call(__MODULE__, {:put, {:view, id}, owner, normalize_view!(content)})
+  @doc """
+  Sets view `id`'s content (see the moduledoc) in workspace `root`; `owner`
+  is the plugin. Raises on bad content.
+  """
+  def put_view(root, owner, id, content) when is_binary(root),
+    do: GenServer.call(__MODULE__, {:put, {:view, root, id}, owner, normalize_view!(content)})
 
   ## Status bar items
 
-  @doc "Status bar items, `[%{id, owner, text, icon, tooltip, command, alignment, priority}]`, in display order."
-  def status_items do
-    for({{:status, _, _}, _owner, item} <- :ets.tab2list(@table), do: item)
+  @doc """
+  Status bar items of workspace `root`, `[%{id, owner, text, icon, tooltip,
+  command, alignment, priority}]`, in display order.
+  """
+  def status_items(root) do
+    :ets.match(@table, {{:status, root, :_, :_}, :_, :"$1"})
+    |> Enum.map(&hd/1)
     |> Enum.sort_by(&{-&1.priority, &1.owner, &1.id})
   end
 
-  def put_status_item(owner, id, item),
+  def put_status_item(root, owner, id, item) when is_binary(root),
     do:
       GenServer.call(
         __MODULE__,
-        {:put, {:status, owner, id}, owner, normalize_status_item!(owner, id, item)}
+        {:put, {:status, root, owner, id}, owner, normalize_status_item!(owner, id, item)}
       )
 
-  def delete_status_item(owner, id),
-    do: GenServer.call(__MODULE__, {:delete, {:status, owner, id}})
+  def delete_status_item(root, owner, id) when is_binary(root),
+    do: GenServer.call(__MODULE__, {:delete, {:status, root, owner, id}})
 
   ## File decorations
 
-  @doc "All plugins' file decorations, `%{abs_path => decoration}` (see `Bee.UI.Decorations`)."
-  def decorations do
-    for {{:decorations, _owner}, _owner2, decorations} <- :ets.tab2list(@table),
-        reduce: %{},
-        do: (acc -> Map.merge(acc, decorations))
+  @doc "All plugins' file decorations in workspace `root`, `%{abs_path => decoration}` (see `Bee.UI.Decorations`)."
+  def decorations(root) do
+    :ets.match(@table, {{:decorations, root, :_}, :_, :"$1"})
+    |> Enum.reduce(%{}, fn [decorations], acc -> Map.merge(acc, decorations) end)
   end
 
-  @doc "Replaces `owner`'s file decorations. Raises on bad data."
-  def put_decorations(owner, decorations) do
+  @doc "Replaces `owner`'s file decorations in workspace `root`. Raises on bad data."
+  def put_decorations(root, owner, decorations) when is_binary(root) do
     decorations = Bee.UI.Decorations.normalize!(decorations)
-    GenServer.call(__MODULE__, {:put, {:decorations, owner}, owner, decorations})
+    GenServer.call(__MODULE__, {:put, {:decorations, root, owner}, owner, decorations})
   end
 
   ## Context keys
 
   @doc """
-  Context keys set by plugins (VS Code's `setContext`), merged into every
-  window's `when` context: `%{key => value}`.
+  Context keys set by plugins (VS Code's `setContext`) in workspace `root`,
+  merged into its windows' `when` context: `%{key => value}`.
   """
-  def context do
-    for {{:context, _owner, key}, _owner2, value} <- :ets.tab2list(@table),
-        into: %{},
-        do: {key, value}
+  def context(root) do
+    :ets.match(@table, {{:context, root, :_, :"$1"}, :_, :"$2"})
+    |> Map.new(fn [key, value] -> {key, value} end)
   end
 
-  @doc "Sets context key `key` (JSON-like value) for `owner`; `nil` removes it."
-  def put_context(owner, key, nil),
-    do: GenServer.call(__MODULE__, {:delete, {:context, owner, key}})
+  @doc "Sets context key `key` (JSON-like value) for `owner` in workspace `root`; `nil` removes it."
+  def put_context(root, owner, key, nil) when is_binary(root),
+    do: GenServer.call(__MODULE__, {:delete, {:context, root, owner, key}})
 
-  def put_context(owner, key, value),
-    do: GenServer.call(__MODULE__, {:put, {:context, owner, key}, owner, value})
+  def put_context(root, owner, key, value) when is_binary(root),
+    do: GenServer.call(__MODULE__, {:put, {:context, root, owner, key}, owner, value})
 
-  @doc "Removes everything `owner` put on screen (it was unloaded)."
-  def forget(owner), do: GenServer.call(__MODULE__, {:forget, owner})
+  ## Forgetting
+
+  @doc "Removes everything `owner` put on screen, in every workspace (it was unloaded)."
+  def forget(owner), do: GenServer.call(__MODULE__, {:forget, fn _root, o -> o == owner end})
+
+  @doc "Removes everything plugins put on screen in workspace `root` (it was closed)."
+  def forget_workspace(root),
+    do: GenServer.call(__MODULE__, {:forget, fn r, _owner -> r == root end})
 
   ## Normalization
 
@@ -270,8 +286,8 @@ defmodule Bee.UI do
     {:reply, :ok, state}
   end
 
-  def handle_call({:forget, owner}, _from, state) do
-    for {key, ^owner, _} <- :ets.tab2list(@table) do
+  def handle_call({:forget, match?}, _from, state) do
+    for {key, owner, _} <- :ets.tab2list(@table), match?.(elem(key, 1), owner) do
       :ets.delete(@table, key)
       broadcast(key)
     end
@@ -279,15 +295,12 @@ defmodule Bee.UI do
     {:reply, :ok, state}
   end
 
-  defp broadcast({:view, id}),
-    do: Phoenix.PubSub.broadcast(Bee.PubSub, @topic, {:ui_changed, {:view, id}})
+  # Every key has the workspace's root second.
+  defp broadcast(key),
+    do: Phoenix.PubSub.broadcast(Bee.PubSub, topic(elem(key, 1)), {:ui_changed, change(key)})
 
-  defp broadcast({:status, _, _}),
-    do: Phoenix.PubSub.broadcast(Bee.PubSub, @topic, {:ui_changed, :status_items})
-
-  defp broadcast({:decorations, _}),
-    do: Phoenix.PubSub.broadcast(Bee.PubSub, @topic, {:ui_changed, :decorations})
-
-  defp broadcast({:context, _, _}),
-    do: Phoenix.PubSub.broadcast(Bee.PubSub, @topic, {:ui_changed, :context})
+  defp change({:view, _root, id}), do: {:view, id}
+  defp change({:status, _root, _owner, _id}), do: :status_items
+  defp change({:decorations, _root, _owner}), do: :decorations
+  defp change({:context, _root, _owner, _key}), do: :context
 end

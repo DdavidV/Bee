@@ -36,11 +36,14 @@ defmodule Bee.Plugin do
   `{:ok, new_state}`. They run one at a time, each with a timeout; an
   exception is reported to the user and leaves the state unchanged.
 
-  `handle_event/2` receives (when exported):
+  The module runs once per open workspace, each copy with a state of its
+  own (`ctx.root` is its workspace). `handle_event/2` receives (when
+  exported) that workspace's events:
 
     * `{:buffer_opened, path}`, `{:buffer_changed, path, version}`,
-      `{:buffer_saved, path}`, `{:buffer_closed, path}`
-    * `{:settings_changed, settings}`
+      `{:buffer_saved, path}`, `{:buffer_closed, path}` – files inside it
+    * `{:settings_changed, settings}` – its settings (`.bee/settings.json`
+      over the user's)
     * `{:fs_changed, path}` – a file in the workspace or config dir changed
 
   Messages sent to the plugin's process (`ctx.host`), e.g. by timers, go to
