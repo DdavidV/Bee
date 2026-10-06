@@ -58,6 +58,23 @@ window.addEventListener("phx:page-loading-start", _info => topbar.show(300))
 window.addEventListener("phx:page-loading-stop", _info => topbar.hide())
 
 // "Open Folder in New Window": the server names the URL (?folder=…).
+// Runs a Bee command in this window, as the palette does.
+const runCommand = (command, args) =>
+  liveSocket.execJS(document.querySelector("[data-phx-main]"),
+    JSON.stringify([["push", {event: "run_command", value: {command, args: JSON.stringify(args)}}]]))
+
+// Open Folder in the desktop app: its native dialog; the pick goes back to
+// Bee as bee.openFolder [where, path].
+window.addEventListener("phx:bee:pick_folder", async e => {
+  const {where, title, start} = e.detail
+  const path = await window.__bridge?.pickFolder(title, start)
+  if (path) runCommand("bee.openFolder", [where, path])
+})
+
+// The desktop app's `bee FILE` for a file in this window's folder (the shell
+// dispatches it).
+window.addEventListener("bee:open_file", e => runCommand("bee.openFile", [e.detail.path]))
+
 // A folder in a new window: a browser tab, or a window of the desktop app.
 window.addEventListener("phx:bee:open_window", e =>
   window.__bridge ? window.__bridge.openWindow(e.detail.url) : window.open(e.detail.url, "_blank"))

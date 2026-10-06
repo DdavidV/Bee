@@ -51,6 +51,14 @@
     openWindow(url) {
       core().invoke("bridge_open_window", {url}).catch(e => console.error("bee bridge:", e))
     },
+
+    // The native folder dialog: the folder picked, or null.
+    pickFolder(title, start) {
+      return core().invoke("bridge_pick_folder", {title, start}).catch(e => {
+        console.error("bee bridge:", e)
+        return null
+      })
+    },
   }
 
   // The native window's title follows the page's (it changes with the folder).

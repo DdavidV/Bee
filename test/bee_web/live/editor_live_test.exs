@@ -1419,10 +1419,49 @@ defmodule BeeWeb.EditorLiveTest do
       assert json_data(default, "#editor", "data-settings")["tabSize"] == 2
     end
 
+    test "?file[]= opens files in the window; bee.openFile one more", %{conn: conn, other: other} do
+      File.write!(Path.join(other, "two.txt"), "two")
+      files = [Path.join(other, "other.txt"), "two.txt"]
+      {:ok, view, _html} = live(conn, ~p"/?#{[folder: other, file: files]}")
+
+      assert has_element?(view, "#tabs", "other.txt")
+      assert has_element?(view, "#tabs", "two.txt")
+
+      render_hook(view, "run_command", %{
+        "command" => "bee.openFile",
+        "args" => Jason.encode!([Path.join(other, "missing.txt")])
+      })
+
+      assert render(view) =~ "no such file"
+    end
+
     test "a folder that doesn't exist: the default one, and why", %{conn: conn} do
       {:ok, view, html} = live(conn, ~p"/?#{[folder: "/no/such/folder"]}")
       assert html =~ "not a folder"
       assert has_element?(view, "#explorer button[phx-value-path='mix.exs']")
+    end
+
+    test "in the desktop app, Open Folder asks with the native dialog", %{
+      conn: conn,
+      other: other
+    } do
+      {:ok, view, _html} = live(conn, ~p"/")
+      Application.put_env(:bee, :mode, :desktop)
+      on_exit(fn -> Application.delete_env(:bee, :mode) end)
+
+      run(view, "workbench.action.files.openFolderInNewWindow")
+      root = Bee.Workspace.root()
+      assert_push_event(view, "bee:pick_folder", %{where: "new", start: ^root})
+      refute has_element?(view, "#palette-form")
+
+      # The dialog's pick comes back as bee.openFolder.
+      render_hook(view, "run_command", %{
+        "command" => "bee.openFolder",
+        "args" => Jason.encode!(["new", other])
+      })
+
+      assert_push_event(view, "bee:open_window", %{url: url})
+      assert url =~ URI.encode_www_form(other)
     end
 
     test "Open Folder switches this window; or opens a new one", %{conn: conn, other: other} do

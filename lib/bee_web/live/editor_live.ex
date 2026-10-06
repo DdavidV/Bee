@@ -70,7 +70,20 @@ defmodule BeeWeb.EditorLive do
        auto_upload: true,
        progress: &vsix_progress/3
      )
-     |> then(&if(problem, do: put_flash(&1, :error, problem), else: &1))}
+     |> then(&if(problem, do: put_flash(&1, :error, problem), else: &1))
+     |> open_file_param(params["file"])}
+  end
+
+  # ?file=… or ?file[]=…: files to open (the desktop app's `bee FILE…`),
+  # once connected.
+  defp open_file_param(socket, files) do
+    if connected?(socket) do
+      for path <- List.wrap(files), is_binary(path), path != "", reduce: socket do
+        socket -> run_command(socket, "bee.openFile", [Path.expand(path, socket.assigns.root)])
+      end
+    else
+      socket
+    end
   end
 
   # `{root, problem}`: the folder asked for, or Bee's own with why not.
@@ -695,6 +708,16 @@ defmodule BeeWeb.EditorLive do
         push_navigate(socket, to: url)
     end
   end
+
+  # The desktop app's native dialog (assets/js/app.js); the pick comes
+  # back as bee.openFolder [where, path].
+  defp run_effect({:pick_folder, where, title}, socket),
+    do:
+      push_event(socket, "bee:pick_folder", %{
+        where: where,
+        title: title,
+        start: socket.assigns.root
+      })
 
   defp run_effect({:uninstall_plugin, name}, socket) do
     case Plugins.uninstall(name) do

@@ -4,7 +4,8 @@
 //!
 //! One Bee serves every window, one window per folder (`?folder=…`), like
 //! VS Code. A window opens for the folder given at launch; Bee asks for more
-//! (Open Folder in New Window, `bridge_open_window`); and launching the app
+//! (Open Folder in New Window, `bridge_open_window`, after the native
+//! folder dialog, `bridge_pick_folder`); and launching the app
 //! again hands its folder to the running one (single instance), which
 //! focuses the window showing it or opens one. The app quits with its last
 //! window.
@@ -21,7 +22,8 @@
 //! a release build of this app starts the checkout's release
 //! (`mix bee.release.desktop`), a development build (`cargo run`) the
 //! checkout itself, through mix. The folder to open is the first argument
-//! (default: the current directory).
+//! (default: the current directory), or files (`bee README.md`), opened in
+//! a window for their folder (`open_paths`).
 //! With `--features selftest` the first window drives itself (src/selftest.rs).
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
@@ -39,7 +41,8 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use serde_json::{json, Value};
 use tauri::ipc::Channel;
 use tauri::{
-    http, AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent,
+    http, AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
+    WindowEvent,
 };
 
 const BRIDGE_JS: &str = include_str!("bridge.js");
@@ -225,7 +228,29 @@ fn bridge_close(bee: tauri::State<'_, Arc<Bee>>, sid: String) {
 fn bridge_open_window(app: AppHandle, url: String) -> Result<(), String> {
     let url = page_url(&url).ok_or_else(|| format!("not a page of Bee: {url}"))?;
     let folder = url_folder(&url).ok_or_else(|| format!("no folder in {url}"))?;
-    open_window(&app, &folder).map_err(|e| e.to_string())
+    open_paths(&app, &[folder]);
+    Ok(())
+}
+
+/// Open Folder: the native folder dialog, over the window that asked. The
+/// folder picked, or None.
+#[tauri::command]
+async fn bridge_pick_folder(
+    window: tauri::WebviewWindow,
+    title: String,
+    start: String,
+) -> Option<String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    window
+        .dialog()
+        .file()
+        .set_title(title)
+        .set_directory(start)
+        .set_parent(&window)
+        .blocking_pick_folder()
+        .and_then(|path| path.into_path().ok())
+        .map(|path| path.to_string_lossy().into_owned())
 }
 
 /// The page's title changed (another folder): so does the window's.
@@ -248,26 +273,93 @@ fn url_folder(url: &Url) -> Option<PathBuf> {
         .map(|(_, v)| PathBuf::from(v.as_ref()))
 }
 
-/// Focuses the window showing `folder`, or opens one for it.
-fn open_window(app: &AppHandle, folder: &Path) -> tauri::Result<()> {
-    let existing = app.webview_windows().into_values().find(|w| {
-        w.url()
-            .ok()
-            .and_then(|u| url_folder(&u))
-            .is_some_and(|f| f == folder)
-    });
+fn window_folder(window: &WebviewWindow) -> Option<PathBuf> {
+    window.url().ok().and_then(|url| url_folder(&url))
+}
 
-    if let Some(window) = existing {
-        let _ = window.unminimize();
-        return window.set_focus();
+/// The innermost of `folders` that holds `path`.
+fn innermost<'a, T>(
+    path: &Path,
+    folders: impl Iterator<Item = (PathBuf, T)> + 'a,
+) -> Option<(PathBuf, T)> {
+    folders
+        .filter(|(folder, _)| path.starts_with(folder))
+        .max_by_key(|(folder, _)| folder.components().count())
+}
+
+/// Opens what a launch names, like VS Code's `code PATH…`: a folder in its
+/// window (focused) or a new one; a file in the window whose folder holds
+/// it, else in a new window for the file's folder. Files for the same new
+/// window go in its URL (`?file[]=`): a window still loading would miss them.
+fn open_paths(app: &AppHandle, paths: &[PathBuf]) {
+    let mut new: Vec<(PathBuf, Vec<PathBuf>)> = Vec::new();
+
+    for path in paths {
+        let windows = app
+            .webview_windows()
+            .into_values()
+            .filter_map(|w| window_folder(&w).map(|f| (f, w)));
+
+        let result = if path.is_dir() {
+            match windows.into_iter().find(|(folder, _)| folder == path) {
+                Some((_, window)) => focus(&window),
+                None => {
+                    if !new.iter().any(|(folder, _)| folder == path) {
+                        new.push((path.clone(), Vec::new()));
+                    }
+                    Ok(())
+                }
+            }
+        } else if let Some((_, window)) = innermost(path, windows) {
+            show_file(&window, path)
+        } else {
+            let pending = new.iter_mut().enumerate().map(|(i, (f, _))| (f.clone(), i));
+            match innermost(path, pending) {
+                Some((_, i)) => new[i].1.push(path.clone()),
+                None => new.push((folder_of(path), vec![path.clone()])),
+            }
+            Ok(())
+        };
+
+        if let Err(e) = result {
+            eprintln!("bee: can't open {}: {e}", path.display());
+        }
     }
 
+    for (folder, files) in new {
+        if let Err(e) = open_window(app, &folder, &files) {
+            eprintln!("bee: can't open a window for {}: {e}", folder.display());
+        }
+    }
+}
+
+fn focus(window: &WebviewWindow) -> tauri::Result<()> {
+    let _ = window.unminimize();
+    window.set_focus()
+}
+
+/// Opens `file` in `window`, which shows its folder (`bee:open_file` in
+/// assets/js/app.js).
+fn show_file(window: &WebviewWindow, file: &Path) -> tauri::Result<()> {
+    let detail = json!({"path": file.to_string_lossy()});
+    window.eval(format!(
+        "window.dispatchEvent(new CustomEvent('bee:open_file', {{detail: {detail}}}))"
+    ))?;
+    focus(window)
+}
+
+/// A new window for `folder`, opening `files` once it is there.
+fn open_window(app: &AppHandle, folder: &Path, files: &[PathBuf]) -> tauri::Result<()> {
     static NEXT: AtomicUsize = AtomicUsize::new(1);
     let n = NEXT.fetch_add(1, Ordering::Relaxed);
 
     let mut url = Url::parse("bee://localhost/").unwrap();
     url.query_pairs_mut()
         .append_pair("folder", &folder.to_string_lossy());
+    for file in files {
+        url.query_pairs_mut()
+            .append_pair("file[]", &file.to_string_lossy());
+    }
 
     let name = folder
         .file_name()
@@ -291,16 +383,33 @@ fn open_window(app: &AppHandle, folder: &Path) -> tauri::Result<()> {
     Ok(())
 }
 
-/// The folder of a launch: its first argument that isn't a flag, relative
-/// to `cwd`; `cwd` itself without one.
-fn folder_arg(args: &[String], cwd: &Path) -> PathBuf {
-    let path = args
+/// The paths a launch names: its arguments that aren't flags, relative to
+/// `cwd`; `cwd` itself without any.
+fn launch_paths(args: &[String], cwd: &Path) -> Vec<PathBuf> {
+    let mut paths: Vec<PathBuf> = args
         .iter()
         .skip(1)
-        .find(|a| !a.starts_with('-'))
+        .filter(|a| !a.starts_with('-'))
         .map(|a| cwd.join(a))
-        .unwrap_or_else(|| cwd.to_path_buf());
-    path.canonicalize().unwrap_or(path)
+        .collect();
+
+    if paths.is_empty() {
+        paths.push(cwd.to_path_buf());
+    }
+
+    paths
+        .into_iter()
+        .map(|p| p.canonicalize().unwrap_or(p))
+        .collect()
+}
+
+/// A folder: itself; a file: its folder.
+fn folder_of(path: &Path) -> PathBuf {
+    if path.is_dir() {
+        path.to_path_buf()
+    } else {
+        path.parent().unwrap_or(path).to_path_buf()
+    }
 }
 
 /// The Bee release to start, or None to run the checkout through mix
@@ -394,16 +503,17 @@ fn read_frames(mut stdout: impl Read + Send + 'static, bee: Arc<Bee>, app: AppHa
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    let folder = folder_arg(&args, &env::current_dir().unwrap());
+    let paths = launch_paths(&args, &env::current_dir().unwrap());
+    // Bee's own folder (BEE_ROOT): the first one named.
+    let folder = folder_of(&paths[0]);
 
-    // Launched again: the running app opens the folder, this one exits.
+    // Launched again: the running app opens the paths, this one exits.
     let builder =
         tauri::Builder::default().plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
-            let folder = folder_arg(&args, Path::new(&cwd));
-            if let Err(e) = open_window(app, &folder) {
-                eprintln!("bee: can't open a window for {}: {e}", folder.display());
-            }
+            open_paths(app, &launch_paths(&args, Path::new(&cwd)));
         }));
+    // Open Folder's native dialog (bridge_pick_folder).
+    let builder = builder.plugin(tauri_plugin_dialog::init());
 
     #[cfg(not(feature = "selftest"))]
     let builder = builder.invoke_handler(tauri::generate_handler![
@@ -411,6 +521,7 @@ fn main() {
         bridge_send,
         bridge_close,
         bridge_open_window,
+        bridge_pick_folder,
         bridge_title
     ]);
 
@@ -420,6 +531,7 @@ fn main() {
         bridge_send,
         bridge_close,
         bridge_open_window,
+        bridge_pick_folder,
         bridge_title,
         selftest::selftest_report,
         selftest::selftest_done,
@@ -449,7 +561,7 @@ fn main() {
 
             app.manage(bee.clone());
             read_frames(stdout, bee, app.handle().clone());
-            open_window(app.handle(), &folder)?;
+            open_paths(app.handle(), &paths);
             Ok(())
         })
         .build(tauri::generate_context!())

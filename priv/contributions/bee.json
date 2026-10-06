@@ -28,6 +28,12 @@
         "runtime": "server"
       },
       {
+        "command": "bee.openFile",
+        "category": "File",
+        "title": "Open File (path)",
+        "runtime": "server"
+      },
+      {
         "command": "workbench.action.files.save",
         "category": "File",
         "title": "Save",
@@ -376,6 +382,7 @@
         {"command": "deleteFile.confirmed", "when": "false"},
         {"command": "bee.plugins.enable", "when": "false"},
         {"command": "bee.openFolder", "when": "false"},
+        {"command": "bee.openFile", "when": "false"},
         {"command": "bee.plugins.uninstall", "when": "false"},
         {"command": "bee.plugins.uninstallConfirmed", "when": "false"},
         {"command": "workbench.action.setIconTheme", "when": "false"},

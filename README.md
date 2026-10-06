@@ -39,7 +39,8 @@ over stdin/stdout, so no port is opened.
 
 Each folder gets its own window: File → Open Folder in New Window…, or
 start the app again with another folder, which hands it to the running app
-instead of starting a second Bee. Closing the last window stops Bee.
+instead of starting a second Bee. File → Open Folder… shows the system's
+folder dialog. Closing the last window stops Bee.
 
 ## Web release
 
@@ -74,6 +75,26 @@ desktop/target/release/bee-desktop /path/to/folder
 The app starts the release built by `mix bee.release.desktop`
 (`_build/prod/rel/bee`) in desktop mode: no port, only the window talks to
 it.
+
+### The `bee` command
+
+```sh
+scripts/install-bee-command.sh
+```
+
+Adds a `bee` shell function to `~/.bashrc` / `~/.zshrc` (and builds the
+desktop release if there is none), and installs Bee's desktop entry and
+icon in `~/.local/share`, so the taskbar shows Bee's logo and app menus
+list Bee. In a new terminal:
+
+```sh
+bee .          # this folder
+bee ~/project  # another one
+```
+
+The app starts in the background, or opens the folder in a new window of
+the running app. Its output goes to `~/.local/state/bee/desktop.log`.
+Remove the function with `scripts/install-bee-command.sh --uninstall`.
 
 ## Tests
 

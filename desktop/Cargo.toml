@@ -15,6 +15,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"
 tauri-plugin-single-instance = "2"
+tauri-plugin-dialog = "2"
 
 [features]
 # The GUI self-test (src/selftest.rs, tests/selftest.js); not in normal builds.

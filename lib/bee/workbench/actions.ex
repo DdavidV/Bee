@@ -104,21 +104,39 @@ defmodule Bee.Workbench.Actions do
 
   ## Folders (workspaces)
 
-  # Like VS Code's, without a native dialog: the folder's path is typed.
+  # Like VS Code's: the desktop app shows its native folder dialog, a
+  # browser can't, so there the folder's path is typed.
   @command "workbench.action.files.openFolder"
   def open_folder(wb), do: ask_folder(wb, "same", "Folder to open in this window")
 
   @command "workbench.action.files.openFolderInNewWindow"
   def open_folder_in_new_window(wb), do: ask_folder(wb, "new", "Folder to open in a new window")
 
-  # The input box's answer: [where, path].
+  # The answer of the input box or the dialog: [where, path].
   @command "bee.openFolder"
   def open_folder_path(wb, [where, path]) when where in ["same", "new"] and is_binary(path),
     do: {wb, [{:open_folder, path, if(where == "new", do: :new_window, else: :this_window)}]}
 
   def open_folder_path(wb, _args), do: wb
 
+  # A file to open in this window, by absolute path (the desktop app's
+  # `bee FILE`): any file, like the settings files outside the folder.
+  @command "bee.openFile"
+  def open_file_path(wb, [path]) when is_binary(path) do
+    if File.regular?(path),
+      do: Workbench.open_editor(wb, path),
+      else: {wb, [{:flash, :error, "Can't open #{path}: no such file"}]}
+  end
+
+  def open_file_path(wb, _args), do: wb
+
   defp ask_folder(wb, where, prompt) do
+    if Bee.Mode.desktop?(),
+      do: {wb, [{:pick_folder, where, prompt}]},
+      else: type_folder(wb, where, prompt)
+  end
+
+  defp type_folder(wb, where, prompt) do
     Workbench.open_input_box(wb, %{
       command: "bee.openFolder",
       arguments: [where],

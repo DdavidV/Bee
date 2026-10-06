@@ -20,6 +20,8 @@ defmodule Bee.Workbench do
     * `{:update_setting, key, value}` – write it to the user settings file
     * `{:uninstall_plugin, name}` – see `Bee.Plugins.uninstall/1`
     * `{:open_folder, path, :this_window | :new_window}` – another workspace
+    * `{:pick_folder, "same" | "new", title}` – the desktop app's folder
+      dialog, its pick running `bee.openFolder`
     * `{:flash, kind, message}`
     * `{:explorer_edit, edit}` – an input in the Explorer's tree: a new
       file's or folder's name in `dir`, or a new name for `path`
