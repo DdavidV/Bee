@@ -67,15 +67,24 @@
     >
     </div>
     <div class="flex bg-base-200 shrink-0">
-      <div id="tabs" class="flex flex-1 min-w-0 overflow-x-auto text-sm">
+      <%!-- Tabs: dragged to reorder, middle-clicked to close (the Tabs hook);
+           right-clicked for the editor/title/context menu. --%>
+      <div id="tabs" phx-hook="Tabs" class="flex flex-1 min-w-0 overflow-x-auto text-sm">
         <div
           :for={tab <- @tabs}
           id={"tab-#{:erlang.phash2(tab.path)}"}
+          data-tab
+          data-path={tab.path}
+          data-active={to_string(tab.path == @active)}
+          data-dirty={tab.dirty && "true"}
+          data-menu="editor/title/context"
+          data-menu-args={Jason.encode!([tab.path])}
+          data-menu-context={Jason.encode!(tab_menu_context(tab.path))}
           class={[
             "group flex items-center gap-1 pl-3 pr-1 py-1.5 border-r border-base-300 cursor-pointer whitespace-nowrap",
             if(tab.path == @active,
               do: "bg-base-100",
-              else: "opacity-70 hover:opacity-100 hover:bg-base-content/5"
+              else: "bg-base-200 opacity-70 hover:opacity-100 hover:bg-base-content/5"
             )
           ]}
           phx-click="activate_tab"
@@ -94,9 +103,10 @@
           <button
             class="size-5 grid place-items-center rounded cursor-pointer hover:bg-base-content/10"
             title="Close"
-            phx-click="close_tab"
-            phx-value-path={tab.path}
-            data-confirm={tab.dirty && "Discard unsaved changes to #{Path.basename(tab.path)}?"}
+            data-close
+            phx-click="run_command"
+            phx-value-command="workbench.action.closeEditor"
+            phx-value-args={Jason.encode!([tab.path])}
           >
             <span :if={tab.dirty} class="size-2 rounded-full bg-base-content group-hover:hidden" />
             <.icon

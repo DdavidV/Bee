@@ -13,7 +13,8 @@ defmodule Bee.Console do
 
   It edits the line itself (xterm sends keys): cursor keys, Home/End,
   history (↑/↓), Tab completion (`IEx.Autocomplete`), Ctrl+A/E/U/L. An
-  incomplete expression continues on the next line. Each one is evaluated
+  incomplete expression continues on the next line. Keys typed while an
+  expression runs wait for it. Each one is evaluated
   in a process of its own, with this one as its group leader (its output
   comes here): Ctrl+C kills it. Variables, aliases and imports carry over
   from one to the next.
@@ -62,7 +63,9 @@ defmodule Bee.Console do
       binding: [],
       env: initial_env(),
       # The running evaluation: {pid, monitor ref}.
-      eval: nil
+      eval: nil,
+      # Keys typed while something runs, for after it.
+      typeahead: ""
     }
 
     banner =
@@ -98,14 +101,18 @@ defmodule Bee.Console do
 
   def handle_info({:evaluated, pid, result}, %{eval: {pid, ref}} = s) do
     Process.demonitor(ref, [:flush])
-    {:noreply, %{s | eval: nil} |> show(result) |> prompt()}
+    {:noreply, %{s | eval: nil} |> show(result) |> prompt() |> typed_ahead()}
   end
 
   def handle_info({:DOWN, ref, :process, _, reason}, %{eval: {_eval, ref}} = s) do
     message =
       if reason == :killed, do: "interrupted", else: "exited: #{Exception.format_exit(reason)}"
 
-    {:noreply, %{s | eval: nil} |> write("\e[31m** (#{message})\e[0m\r\n") |> prompt()}
+    {:noreply,
+     %{s | eval: nil}
+     |> write("\e[31m** (#{message})\e[0m\r\n")
+     |> prompt()
+     |> typed_ahead()}
   end
 
   def handle_info({:DOWN, _, :process, owner, _}, %{owner: owner} = s), do: {:stop, :normal, s}
@@ -115,10 +122,11 @@ defmodule Bee.Console do
 
   defp keys(s, ""), do: s
 
-  # Ctrl+C: interrupts what runs, else drops the line.
+  # Ctrl+C: interrupts what runs (and drops what was typed ahead), else
+  # drops the line.
   defp keys(%{eval: {pid, _}} = s, <<3, rest::binary>>) do
     Process.exit(pid, :kill)
-    keys(s, rest)
+    keys(%{s | typeahead: ""}, rest)
   end
 
   defp keys(s, <<3, rest::binary>>),
@@ -128,8 +136,14 @@ defmodule Bee.Console do
       |> prompt()
       |> keys(rest)
 
-  # While something runs, other keys wait for nothing: they are dropped.
-  defp keys(%{eval: {_, _}} = s, <<_, rest::binary>>), do: keys(s, rest)
+  # While something runs, keys wait for it (up to a Ctrl+C), like a
+  # terminal's type-ahead.
+  defp keys(%{eval: {_, _}} = s, data) do
+    case :binary.split(data, <<3>>) do
+      [ahead] -> %{s | typeahead: s.typeahead <> ahead}
+      [ahead, rest] -> keys(%{s | typeahead: s.typeahead <> ahead}, <<3, rest::binary>>)
+    end
+  end
 
   defp keys(s, <<"\r\n", rest::binary>>), do: s |> enter() |> keys(rest)
   defp keys(s, <<c, rest::binary>>) when c in [?\r, ?\n], do: s |> enter() |> keys(rest)
@@ -171,6 +185,9 @@ defmodule Bee.Console do
     s = if s.right == "", do: write(s, text), else: redraw(s)
     keys(s, rest)
   end
+
+  defp typed_ahead(%{typeahead: ""} = s), do: s
+  defp typed_ahead(s), do: keys(%{s | typeahead: ""}, s.typeahead)
 
   defp take_text(<<c, _::binary>> = rest, acc) when c < 32 or c == 127, do: {acc, rest}
   defp take_text(<<c::utf8, rest::binary>>, acc), do: take_text(rest, <<acc::binary, c::utf8>>)

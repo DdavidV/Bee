@@ -131,12 +131,12 @@ defmodule BeeWeb.EditorLiveTest do
       open_file(view, "mix.exs")
 
       render_hook(view, "doc_changed", %{"path" => path, "text" => "changed"})
-      assert has_element?(view, "#tabs button[data-confirm]")
+      assert has_element?(view, "#tabs [data-dirty]")
       assert File.read!(path) == "defmodule M do\nend\n"
 
       render_hook(view, "save", %{"path" => path, "text" => "changed"})
       assert File.read!(path) == "changed"
-      refute has_element?(view, "#tabs button[data-confirm]")
+      refute has_element?(view, "#tabs [data-dirty]")
       assert has_element?(view, "#status", "Saved mix.exs")
     end
 
@@ -147,7 +147,7 @@ defmodule BeeWeb.EditorLiveTest do
       ref = Process.monitor(buffer)
 
       view
-      |> element("#tabs button[phx-click='close_tab'][phx-value-path='#{path}']")
+      |> element("#tabs [data-path='#{path}'] button[data-close]")
       |> render_click()
 
       assert_push_event(view, "cm:close", %{path: ^path})
@@ -205,6 +205,92 @@ defmodule BeeWeb.EditorLiveTest do
       run(view, "workbench.action.toggleSidebarVisibility")
       run(view, "workbench.action.toggleSidebarVisibility")
       assert has_element?(view, "#explorer button[phx-value-path='lib/bee']")
+    end
+  end
+
+  describe "editor tabs" do
+    setup %{conn: conn} do
+      root = Bee.Workspace.root()
+      {:ok, view, _html} = live(conn, ~p"/")
+      open_file(view, "mix.exs")
+      open_file(view, "README.md")
+      view |> element("#explorer button[phx-value-path='lib']") |> render_click()
+      view |> element("#explorer button[phx-value-path='lib/bee']") |> render_click()
+      open_file(view, "lib/bee/app.ex")
+
+      %{
+        view: view,
+        mix: Path.join(root, "mix.exs"),
+        readme: Path.join(root, "README.md"),
+        app: Path.join(root, "lib/bee/app.ex")
+      }
+    end
+
+    defp tab(path), do: "#tabs [data-path='#{path}']"
+
+    test "the right-click menu", %{view: view, readme: readme} do
+      right_click(view, tab(readme))
+
+      assert menu_items(view) == [
+               "workbench.action.closeEditor",
+               "workbench.action.closeOtherEditors",
+               "workbench.action.closeAllEditors",
+               "copyFilePath"
+             ]
+
+      # Copy Path runs in the page (the clipboard wants the click itself).
+      html = view |> element("#context-menu [data-command='copyFilePath']") |> render()
+      assert html =~ "bee:run"
+      assert html =~ readme
+    end
+
+    test "Close Others and Close All", %{view: view, mix: mix, readme: readme, app: app} do
+      right_click(view, tab(readme))
+      menu_click(view, "workbench.action.closeOtherEditors")
+      assert has_element?(view, tab(readme) <> "[data-active=true]")
+      refute has_element?(view, tab(mix))
+      refute has_element?(view, tab(app))
+
+      right_click(view, tab(readme))
+      menu_click(view, "workbench.action.closeAllEditors")
+      refute has_element?(view, "#tabs [data-tab]")
+    end
+
+    test "unsaved changes are only dropped once confirmed", %{
+      view: view,
+      mix: mix,
+      readme: readme
+    } do
+      render_hook(view, "doc_changed", %{"path" => mix, "text" => "changed"})
+
+      # a middle click (or the ×) closes one tab: this one asks
+      render_hook(view, "run_command", %{
+        "command" => "workbench.action.closeEditor",
+        "args" => Jason.encode!([mix])
+      })
+
+      assert has_element?(
+               view,
+               "#palette-input[placeholder='Discard unsaved changes to mix.exs?']"
+             )
+
+      view |> element("#palette [data-pick='1']") |> render_click()
+      assert has_element?(view, tab(mix)), "Cancel keeps it"
+
+      run(view, "workbench.action.closeAllEditors")
+      view |> form("#palette-form") |> render_submit()
+      refute has_element?(view, "#tabs [data-tab]")
+      refute has_element?(view, tab(readme))
+    end
+
+    test "dragging reorders them", %{view: view, mix: mix, readme: readme, app: app} do
+      render_hook(view, "reorder_tabs", %{"order" => [app, mix, readme]})
+
+      assert view
+             |> render()
+             |> LazyHTML.from_fragment()
+             |> LazyHTML.query("#tabs [data-tab]")
+             |> Enum.map(&(&1 |> LazyHTML.attribute("data-path") |> hd())) == [app, mix, readme]
     end
   end
 
@@ -1279,7 +1365,7 @@ defmodule BeeWeb.EditorLiveTest do
       assert text == "DEFMODULE M do\nend\n"
       # the editor then reports the change as usual
       render_hook(view, "doc_changed", %{"path" => path, "text" => text})
-      assert has_element?(view, "#tabs button[data-confirm]")
+      assert has_element?(view, "#tabs [data-dirty]")
     end
 
     test "browser parts are handed to the page; their messages are shown", %{conn: conn} do
@@ -1763,10 +1849,12 @@ defmodule BeeWeb.EditorLiveTest do
       right_click(view, entry("mix.exs"))
       refute "menuTest.hello" in menu_items(view)
 
+      # A client command runs in the page at once, with the file's path.
       right_click(view, entry("README.md"))
-      menu_click(view, "menuTest.hello")
       readme = Path.join(Bee.Workspace.root(), "README.md")
-      assert_push_event(view, "bee:exec", %{command: "menuTest.hello", args: [^readme]})
+      html = view |> element("#context-menu [data-command='menuTest.hello']") |> render()
+      assert html =~ "bee:run"
+      assert html =~ readme
     end
   end
 

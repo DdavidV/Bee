@@ -29,6 +29,8 @@ import {CodeEditor} from "./hooks/code_editor"
 import {Keybindings} from "./hooks/keybindings"
 import {Terminal} from "./hooks/terminal"
 import {Palette} from "./hooks/palette"
+import {Tabs} from "./hooks/tabs"
+import {exec} from "./commands/registry"
 import {Plugins} from "./hooks/plugins"
 import {ViewInput} from "./hooks/view_input"
 import {SearchInput} from "./hooks/search_input"
@@ -49,7 +51,7 @@ const liveSocket = new LiveSocket("/live", Socket, {
   ...transport,
   // A function: evaluated on every (re)connect, so the saved layout is current.
   params: () => ({_csrf_token: csrfToken, layout: loadLayout()}),
-  hooks: {...colocatedHooks, ActivityBar, CodeEditor, ContextMenu, ContextMenus, ExplorerInput, Keybindings, Palette, PaneSash, Plugins, Sash, SearchInput, Terminal, ViewInput, VsixInstall},
+  hooks: {...colocatedHooks, ActivityBar, CodeEditor, ContextMenu, ContextMenus, ExplorerInput, Keybindings, Palette, PaneSash, Tabs, Plugins, Sash, SearchInput, Terminal, ViewInput, VsixInstall},
 })
 
 // Show progress bar on live navigation and form submits
@@ -74,6 +76,10 @@ window.addEventListener("phx:bee:pick_folder", async e => {
 // The desktop app's `bee FILE` for a file in this window's folder (the shell
 // dispatches it).
 window.addEventListener("bee:open_file", e => runCommand("bee.openFile", [e.detail.path]))
+
+// Client commands from a right-click menu, run at once (still in the click:
+// copying to the clipboard needs that). BeeWeb.Workbench.ContextMenu.
+window.addEventListener("bee:run", e => exec(e.detail.command, e.detail.args || []))
 
 // A folder in a new window: a browser tab, or a window of the desktop app.
 window.addEventListener("phx:bee:open_window", e =>

@@ -170,4 +170,26 @@ defmodule Bee.WorkbenchTest do
 
     assert Workbench.sort_activity(containers, []) == containers
   end
+
+  describe "tabs" do
+    defp with_tabs(paths, dirty \\ []) do
+      tabs = for p <- paths, do: %{path: p, dirty: p in dirty, lang: "plaintext"}
+      %{wb() | tabs: tabs, active: List.last(paths)}
+    end
+
+    test "reorder_tabs: the given order, the rest after" do
+      wb = with_tabs(["/a", "/b", "/c"]) |> Workbench.reorder_tabs(["/c", "/a", "/gone"])
+      assert Workbench.tab_paths(wb) == ["/c", "/a", "/b"]
+    end
+
+    test "close_editors closes several; dirty_paths finds unsaved ones" do
+      wb = with_tabs(["/a", "/b", "/c"], ["/b"])
+      assert Workbench.dirty_paths(wb, ["/a", "/b"]) == ["/b"]
+
+      {wb, effects} = Workbench.close_editors(wb, ["/a", "/c"])
+      assert Workbench.tab_paths(wb) == ["/b"]
+      assert wb.active == "/b"
+      assert {:close_buffer, "/a"} in effects and {:close_buffer, "/c"} in effects
+    end
+  end
 end

@@ -21,9 +21,68 @@ defmodule Bee.Workbench.Actions do
 
   def quick_open_prefix(wb, _args), do: wb
 
+  ## Editors (tabs)
+  #
+  # The tab's right-click menu (editor/title/context), its × and a middle
+  # click pass the tab's path; from the palette or a key there is none: the
+  # active editor. Unsaved changes are only dropped once confirmed.
+
   @command "workbench.action.closeActiveEditor"
   def close_active_editor(%{active: nil} = wb), do: wb
-  def close_active_editor(wb), do: Workbench.close_editor(wb, wb.active)
+  def close_active_editor(wb), do: close_editors(wb, [wb.active])
+
+  @command "workbench.action.closeEditor"
+  def close_editor(wb, args), do: close_editors(wb, List.wrap(tab_path(wb, args)))
+
+  @command "workbench.action.closeOtherEditors"
+  def close_other_editors(wb, args) do
+    case tab_path(wb, args) do
+      nil ->
+        wb
+
+      keep ->
+        wb
+        |> Workbench.activate_editor(keep)
+        |> Workbench.wrap()
+        |> Workbench.chain(&close_editors(&1, Workbench.tab_paths(&1) -- [keep]))
+    end
+  end
+
+  @command "workbench.action.closeAllEditors"
+  def close_all_editors(wb), do: close_editors(wb, Workbench.tab_paths(wb))
+
+  # The confirmation's answer: [paths] ("" is Cancel).
+  @command "workbench.action.closeEditors.confirmed"
+  def close_editors_confirmed(wb, [paths]) when is_list(paths),
+    do: Workbench.close_editors(wb, paths)
+
+  def close_editors_confirmed(wb, _args), do: wb
+
+  # The tab named by the arguments, else the active one.
+  defp tab_path(wb, [path | _]) when is_binary(path),
+    do: if(Workbench.open?(wb, path), do: path)
+
+  defp tab_path(wb, _args), do: wb.active
+
+  # Closes them, asking first when some have unsaved changes.
+  defp close_editors(wb, paths) do
+    case Workbench.dirty_paths(wb, paths) do
+      [] ->
+        Workbench.close_editors(wb, paths)
+
+      dirty ->
+        names = Enum.map_join(dirty, ", ", &Path.basename/1)
+
+        Workbench.open_quick_pick(wb, %{
+          items: [
+            %{label: "Discard Changes and Close", description: names, value: paths},
+            %{label: "Cancel", description: "", value: ""}
+          ],
+          command: "workbench.action.closeEditors.confirmed",
+          placeholder: "Discard unsaved changes to #{names}?"
+        })
+    end
+  end
 
   @command "workbench.action.toggleSidebarVisibility"
   def toggle_sidebar_visibility(wb), do: Workbench.toggle_sidebar(wb)

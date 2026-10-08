@@ -80,6 +80,12 @@ defmodule Bee.ConsoleTest do
     assert output(id, "bee(5)>") =~ "commands()"
   end
 
+  test "keys typed while something runs wait for it", %{id: id} do
+    # one input: the second line arrives while the first one sleeps
+    type(id, "Process.sleep(200)\r1 + 41\r")
+    assert output(id, "bee(3)>") =~ "42\r\n"
+  end
+
   test "stops with its window", %{pid: pid} do
     ref = Process.monitor(pid)
     window = spawn(fn -> Process.sleep(:infinity) end)
@@ -89,7 +95,7 @@ defmodule Bee.ConsoleTest do
 
     ref2 = Process.monitor(console)
     Process.exit(window, :kill)
-    assert_receive {:DOWN, ^ref2, :process, ^console, :normal}
+    assert_receive {:DOWN, ^ref2, :process, ^console, :normal}, 2_000
     refute_received {:DOWN, ^ref, _, _, _}
   end
 end

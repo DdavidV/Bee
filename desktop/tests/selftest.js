@@ -59,6 +59,14 @@
       }
     }
 
+    // Copy Path from the tab's right-click menu reaches the clipboard.
+    const tab = document.querySelector("#tabs [data-path$='/lib/a.ex']")
+    tab?.dispatchEvent(new MouseEvent("contextmenu", {bubbles: true, clientX: 50, clientY: 50}))
+    const item = await waitFor(() => document.querySelector("#context-menu [data-command='copyFilePath']"))
+    item?.click()
+    const copied = await waitFor(async () => (await invoke("selftest_clipboard")).endsWith("/lib/a.ex") && "ok", 5000)
+    await check(copied, "Copy Path put the file's path on the clipboard")
+
     // Git plugin: its browser module came over bee:// (change gutter).
     await check(await waitFor(() => document.querySelector(".bee-git-changes .bee-git-change")),
       "git plugin's browser module loaded (change gutter)")

@@ -45,3 +45,10 @@ pub fn selftest_close_window(app: AppHandle, folder: String) {
         }
     }
 }
+
+/// What the clipboard holds (Copy Path's check).
+#[tauri::command]
+pub fn selftest_clipboard(app: AppHandle) -> String {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+    app.clipboard().read_text().unwrap_or_default()
+}

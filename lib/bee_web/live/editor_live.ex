@@ -348,8 +348,9 @@ defmodule BeeWeb.EditorLive do
   def handle_event("activate_tab", %{"path" => path}, socket),
     do: {:noreply, change(socket, &Workbench.activate_editor(&1, path))}
 
-  def handle_event("close_tab", %{"path" => path}, socket),
-    do: {:noreply, change(socket, &Workbench.close_editor(&1, path))}
+  # A tab was dragged to another place: the tabs' new order (paths).
+  def handle_event("reorder_tabs", %{"order" => order}, socket) when is_list(order),
+    do: {:noreply, change(socket, &Workbench.reorder_tabs(&1, order))}
 
   def handle_event("doc_changed", %{"path" => path, "text" => text}, socket) do
     if Workbench.open?(workbench(socket), path) do
@@ -1321,7 +1322,8 @@ defmodule BeeWeb.EditorLive do
           command: id,
           label: command.title,
           shortcut: Keybindings.label(id, assigns.keybindings),
-          disabled: not CommandRegistry.enabled?(command, ctx)
+          disabled: not CommandRegistry.enabled?(command, ctx),
+          runtime: command.runtime
         }
       end
     end)
@@ -1563,6 +1565,16 @@ defmodule BeeWeb.EditorLive do
     root = socket.assigns.root
     decorations = Bee.UI.Decorations.for_workspace(Bee.UI.decorations(root), root)
     assign(socket, file_decorations: decorations)
+  end
+
+  @doc false
+  # `when` keys of a tab's right-click menu (editor/title/context).
+  def tab_menu_context(path) do
+    %{
+      "resourcePath" => path,
+      "resourceFilename" => Path.basename(path),
+      "resourceExtname" => Path.extname(path)
+    }
   end
 
   # Tabs are coloured like their file in the Explorer (git status…).

@@ -74,6 +74,40 @@
         "enablement": "activeEditor"
       },
       {
+        "command": "workbench.action.closeEditor",
+        "category": "View",
+        "title": "Close",
+        "runtime": "server",
+        "enablement": "activeEditor"
+      },
+      {
+        "command": "workbench.action.closeOtherEditors",
+        "category": "View",
+        "title": "Close Others",
+        "runtime": "server",
+        "enablement": "activeEditor"
+      },
+      {
+        "command": "workbench.action.closeAllEditors",
+        "category": "View",
+        "title": "Close All",
+        "runtime": "server",
+        "enablement": "activeEditor"
+      },
+      {
+        "command": "workbench.action.closeEditors.confirmed",
+        "category": "View",
+        "title": "Close Editors (confirmed)",
+        "runtime": "server"
+      },
+      {
+        "command": "copyFilePath",
+        "category": "File",
+        "title": "Copy Path",
+        "runtime": "client",
+        "enablement": "activeEditor"
+      },
+      {
         "command": "workbench.action.toggleSidebarVisibility",
         "category": "View",
         "title": "Toggle Primary Side Bar Visibility",
@@ -382,6 +416,12 @@
         {"command": "bee.plugins.enable", "group": "inline@1", "when": "view == workbench.extensions.installed && viewItem =~ /^plugin\\.disabled\\./"},
         {"command": "bee.plugins.uninstall", "group": "inline@2", "when": "view == workbench.extensions.installed && viewItem =~ /\\.user$/"}
       ],
+      "editor/title/context": [
+        {"command": "workbench.action.closeEditor", "group": "1_close@1"},
+        {"command": "workbench.action.closeOtherEditors", "group": "1_close@2"},
+        {"command": "workbench.action.closeAllEditors", "group": "1_close@3"},
+        {"command": "copyFilePath", "group": "2_copy@1"}
+      ],
       "explorer/context": [
         {"command": "explorer.newFile", "group": "navigation@1", "when": "explorerResourceIsFolder"},
         {"command": "explorer.newFolder", "group": "navigation@2", "when": "explorerResourceIsFolder"},
@@ -401,6 +441,8 @@
         {"command": "bee.plugins.enable", "when": "false"},
         {"command": "bee.openFolder", "when": "false"},
         {"command": "bee.openFile", "when": "false"},
+        {"command": "workbench.action.closeEditor", "when": "false"},
+        {"command": "workbench.action.closeEditors.confirmed", "when": "false"},
         {"command": "workbench.action.quickOpenPrefix", "when": "false"},
         {"command": "bee.plugins.uninstall", "when": "false"},
         {"command": "bee.plugins.uninstallConfirmed", "when": "false"},

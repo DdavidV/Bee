@@ -143,6 +143,37 @@ defmodule Bee.Workbench do
     end
   end
 
+  @doc """
+  Closes the editors of `paths` (in tab order), as `close_editor/2` does
+  one: unsaved changes are dropped – callers ask first (see
+  `Bee.Workbench.Actions`).
+  """
+  def close_editors(wb, paths) do
+    Enum.reduce(paths, {wb, []}, fn path, acc -> chain(acc, &close_editor(&1, path)) end)
+  end
+
+  @doc "The open editors' paths, in tab order."
+  def tab_paths(wb), do: Enum.map(wb.tabs, & &1.path)
+
+  @doc "The paths of `paths` whose editors have unsaved changes."
+  def dirty_paths(wb, paths), do: for(%{path: p, dirty: true} <- wb.tabs, p in paths, do: p)
+
+  @doc """
+  Puts the tabs in `order` (paths, e.g. after one was dragged); open
+  editors it doesn't name keep their order, after the others.
+  """
+  def reorder_tabs(wb, order) when is_list(order) do
+    index = order |> Enum.with_index() |> Map.new()
+
+    tabs =
+      wb.tabs
+      |> Enum.with_index()
+      |> Enum.sort_by(fn {tab, i} -> {Map.get(index, tab.path, length(order)), i} end)
+      |> Enum.map(&elem(&1, 0))
+
+    %{wb | tabs: tabs}
+  end
+
   def set_dirty(wb, path, dirty), do: update_tab(wb, path, &%{&1 | dirty: dirty})
 
   def set_language(wb, path, lang), do: update_tab(wb, path, &%{&1 | lang: lang})

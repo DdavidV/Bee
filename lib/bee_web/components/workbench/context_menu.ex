@@ -3,7 +3,8 @@ defmodule BeeWeb.Workbench.ContextMenu do
   A right-click menu: the items of a contributed menu (`explorer/context`,
   …, see `BeeWeb.EditorLive.context_menu_items/1`) at the pointer, grouped
   with separators. An item runs its command with the arguments of the
-  element right-clicked. Closes on a click elsewhere or Escape; the
+  element right-clicked (client commands run in the page, still in the
+  click). Closes on a click elsewhere or Escape; the
   ContextMenu hook keeps it inside the window.
   """
   use BeeWeb, :html
@@ -34,7 +35,7 @@ defmodule BeeWeb.Workbench.ContextMenu do
           data-command={item.command}
           disabled={item.disabled}
           class="w-full flex items-center gap-2 px-3 py-1 text-left cursor-pointer hover:bg-primary hover:text-primary-content disabled:opacity-40 disabled:pointer-events-none"
-          phx-click="run_command"
+          phx-click={click(item, @menu)}
           phx-value-command={item.command}
           phx-value-args={Jason.encode!(@menu.args)}
         >
@@ -45,4 +46,13 @@ defmodule BeeWeb.Workbench.ContextMenu do
     </div>
     """
   end
+
+  # Client commands run in the page at once (`bee:run`, assets/js/app.js):
+  # still in the click, as the clipboard wants. Others go to the server.
+  defp click(%{runtime: :client, command: command}, menu) do
+    JS.dispatch("bee:run", detail: %{command: command, args: menu.args})
+    |> JS.push("close_context_menu")
+  end
+
+  defp click(_item, _menu), do: "run_command"
 end

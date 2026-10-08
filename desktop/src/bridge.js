@@ -52,6 +52,11 @@
       core().invoke("bridge_open_window", {url}).catch(e => console.error("bee bridge:", e))
     },
 
+    // Text to the system clipboard (Copy Path).
+    copyText(text) {
+      return core().invoke("bridge_copy_text", {text})
+    },
+
     // The native folder dialog: the folder picked, or null.
     pickFolder(title, start) {
       return core().invoke("bridge_pick_folder", {title, start}).catch(e => {

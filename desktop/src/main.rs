@@ -268,6 +268,14 @@ async fn bridge_pick_folder(
         .map(|path| path.to_string_lossy().into_owned())
 }
 
+/// Copy Path and the like: text to the system clipboard (the webview only
+/// lets a page write it in some cases).
+#[tauri::command]
+fn bridge_copy_text(app: AppHandle, text: String) -> Result<(), String> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+    app.clipboard().write_text(text).map_err(|e| e.to_string())
+}
+
 /// The page's title changed (another folder): so does the window's.
 #[tauri::command]
 fn bridge_title(window: tauri::WebviewWindow, title: String) {
@@ -527,8 +535,11 @@ fn main() {
         tauri::Builder::default().plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
             open_paths(app, &launch_paths(&args, Path::new(&cwd)));
         }));
-    // Open Folder's native dialog (bridge_pick_folder).
-    let builder = builder.plugin(tauri_plugin_dialog::init());
+    // Open Folder's native dialog (bridge_pick_folder); the clipboard
+    // (bridge_copy_text).
+    let builder = builder
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init());
 
     #[cfg(not(feature = "selftest"))]
     let builder = builder.invoke_handler(tauri::generate_handler![
@@ -537,6 +548,7 @@ fn main() {
         bridge_close,
         bridge_open_window,
         bridge_pick_folder,
+        bridge_copy_text,
         bridge_title
     ]);
 
@@ -547,11 +559,13 @@ fn main() {
         bridge_close,
         bridge_open_window,
         bridge_pick_folder,
+        bridge_copy_text,
         bridge_title,
         selftest::selftest_report,
         selftest::selftest_done,
         selftest::selftest_windows,
-        selftest::selftest_close_window
+        selftest::selftest_close_window,
+        selftest::selftest_clipboard
     ]);
 
     let app = builder
