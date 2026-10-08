@@ -83,6 +83,47 @@ defmodule Bee.Plugins.VsixTest do
     refute File.exists?(Path.join(Bee.Settings.user_dir(), ".installing-cool-icons"))
   end
 
+  test "installs a color theme extension as a plugin", %{tmp: tmp} do
+    package = %{
+      "name" => "night-owl",
+      "version" => "1.0.0",
+      "contributes" => %{
+        "themes" => [
+          %{"label" => "%themeLabel%", "uiTheme" => "vs-dark", "path" => "./themes/owl.json"},
+          %{
+            "label" => "Owl Light",
+            "uiTheme" => "vs",
+            "path" => "./themes/light.json",
+            "extra" => 1
+          },
+          %{"label" => "Unknown base", "uiTheme" => "sepia", "path" => "./themes/x.json"}
+        ]
+      }
+    }
+
+    files = [
+      {"extension/package.json", Jason.encode!(package)},
+      {"extension/package.nls.json", ~s({"themeLabel": "Night Owl"})},
+      {"extension/themes/owl.json", ~s({"colors": {"editor.background": "#011627"}})},
+      {"extension/themes/light.json", ~s({"colors": {}})}
+    ]
+
+    assert {:ok, "night-owl"} = Vsix.install(vsix(tmp, files))
+
+    manifest =
+      Jason.decode!(File.read!(Path.join([Plugins.user_dir(), "night-owl", "plugin.json"])))
+
+    assert manifest["contributes"] == %{
+             "themes" => [
+               %{"label" => "Night Owl", "uiTheme" => "vs-dark", "path" => "./themes/owl.json"},
+               %{"label" => "Owl Light", "uiTheme" => "vs", "path" => "./themes/light.json"}
+             ]
+           }
+
+    assert Bee.ColorThemes.get("Night Owl").colors["editor.background"] == "#011627"
+    assert %{base: :light} = Bee.ColorThemes.theme("Owl Light")
+  end
+
   test "never replaces a plugin it didn't install", %{tmp: tmp} do
     dir = Path.join(Plugins.user_dir(), "cool-icons")
     File.mkdir_p!(dir)
@@ -105,7 +146,7 @@ defmodule Bee.Plugins.VsixTest do
       )
 
     assert {:error, message} = Vsix.install(vsix(tmp, files))
-    assert message =~ "contributes no icon themes"
+    assert message =~ "contributes no color or file icon themes"
 
     assert {:error, message} = Vsix.install(vsix(tmp, [{"extension/readme.md", "hi"}]))
     assert message =~ "no extension/package.json"

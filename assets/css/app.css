@@ -104,6 +104,73 @@
 
 /* This file is for your main application CSS */
 
+/* The workbench's colors, by part (bg-sidebar, text-tab-active-fg…). A
+   color theme with colors of its own (Bee.ColorThemes) sets VS Code's
+   variables on #workbench (--vscode-sideBar-background for
+   sideBar.background); Bee's own themes don't, and these fall back to
+   their daisyUI colors. `inline`: the utilities use the value itself, so
+   it resolves where it is used, under #workbench. */
+@theme inline {
+  --color-titlebar: var(--vscode-titleBar-activeBackground, var(--color-base-300));
+  --color-titlebar-fg: var(--vscode-titleBar-activeForeground, var(--color-base-content));
+  --color-titlebar-border: var(--vscode-titleBar-border, color-mix(in oklab, var(--color-base-content) 10%, transparent));
+
+  --color-activitybar: var(--vscode-activityBar-background, var(--color-base-300));
+  --color-activitybar-fg: var(--vscode-activityBar-foreground, var(--color-base-content));
+  --color-activitybar-inactive: var(--vscode-activityBar-inactiveForeground, var(--color-base-content));
+  --color-badge: var(--vscode-activityBarBadge-background, var(--color-primary));
+  --color-badge-fg: var(--vscode-activityBarBadge-foreground, var(--color-primary-content));
+
+  --color-sidebar: var(--vscode-sideBar-background, var(--color-base-200));
+  --color-sidebar-fg: var(--vscode-sideBar-foreground, var(--color-base-content));
+  --color-sidebar-border: var(--vscode-sideBar-border, var(--color-base-300));
+  --color-sidebar-section-border: var(--vscode-sideBarSectionHeader-border, var(--color-base-300));
+
+  --color-editor: var(--vscode-editor-background, var(--color-base-100));
+  --color-editor-fg: var(--vscode-editor-foreground, var(--color-base-content));
+  --color-tabs: var(--vscode-editorGroupHeader-tabsBackground, var(--color-base-200));
+  --color-tab-active: var(--vscode-tab-activeBackground, var(--color-base-100));
+  --color-tab-active-fg: var(--vscode-tab-activeForeground, var(--color-base-content));
+  --color-tab-inactive: var(--vscode-tab-inactiveBackground, var(--color-base-200));
+  --color-tab-inactive-fg: var(--vscode-tab-inactiveForeground, color-mix(in oklab, var(--color-base-content) 70%, transparent));
+  --color-tab-border: var(--vscode-tab-border, var(--color-base-300));
+
+  --color-panel: var(--vscode-panel-background, var(--color-base-100));
+  --color-panel-border: var(--vscode-panel-border, var(--color-base-300));
+  --color-panel-title-active: var(--vscode-panelTitle-activeForeground, var(--color-base-content));
+  --color-panel-title-inactive: var(--vscode-panelTitle-inactiveForeground, color-mix(in oklab, var(--color-base-content) 50%, transparent));
+  --color-panel-title-border: var(--vscode-panelTitle-activeBorder, var(--color-primary));
+
+  --color-statusbar: var(--vscode-statusBar-background, var(--color-primary));
+  --color-statusbar-fg: var(--vscode-statusBar-foreground, var(--color-primary-content));
+
+  --color-quickinput: var(--vscode-quickInput-background, var(--color-base-200));
+  --color-quickinput-fg: var(--vscode-quickInput-foreground, var(--color-base-content));
+  --color-quickinput-focus: var(--vscode-quickInputList-focusBackground, var(--color-primary));
+  --color-quickinput-focus-fg: var(--vscode-quickInputList-focusForeground, var(--color-primary-content));
+  --color-widget-border: var(--vscode-widget-border, color-mix(in oklab, var(--color-base-content) 10%, transparent));
+
+  --color-menu: var(--vscode-menu-background, var(--color-base-200));
+  --color-menu-fg: var(--vscode-menu-foreground, var(--color-base-content));
+  --color-menu-border: var(--vscode-menu-border, color-mix(in oklab, var(--color-base-content) 10%, transparent));
+  --color-menu-selection: var(--vscode-menu-selectionBackground, var(--color-primary));
+  --color-menu-selection-fg: var(--vscode-menu-selectionForeground, var(--color-primary-content));
+
+  --color-list-hover: var(--vscode-list-hoverBackground, color-mix(in oklab, var(--color-base-content) 10%, transparent));
+  --color-list-inactive: var(--vscode-list-inactiveSelectionBackground, color-mix(in oklab, var(--color-primary) 25%, transparent));
+
+  --color-input: var(--vscode-input-background, var(--color-base-100));
+  --color-input-fg: var(--vscode-input-foreground, var(--color-base-content));
+  --color-input-border: var(--vscode-input-border, color-mix(in oklab, var(--color-base-content) 15%, transparent));
+  --color-focus: var(--vscode-focusBorder, var(--color-primary));
+
+  --color-git-added: var(--vscode-gitDecoration-addedResourceForeground, var(--color-success));
+  --color-git-modified: var(--vscode-gitDecoration-modifiedResourceForeground, var(--color-warning));
+  --color-git-deleted: var(--vscode-gitDecoration-deletedResourceForeground, var(--color-error));
+  --color-git-untracked: var(--vscode-gitDecoration-untrackedResourceForeground, var(--color-success));
+  --color-git-conflict: var(--vscode-gitDecoration-conflictingResourceForeground, var(--color-error));
+}
+
 /* Sashes (resize handles between sidebar, editors and panel), VS Code style:
    invisible until hovered or dragged. */
 .sash {

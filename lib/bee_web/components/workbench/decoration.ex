@@ -5,9 +5,11 @@ defmodule BeeWeb.Workbench.Decoration do
   """
 
   def color_class(%{color: color}), do: color_class(color)
-  def color_class("modified"), do: "text-warning"
-  def color_class(color) when color in ["added", "untracked"], do: "text-success"
-  def color_class(color) when color in ["deleted", "conflict"], do: "text-error"
+  def color_class("modified"), do: "text-git-modified"
+  def color_class("added"), do: "text-git-added"
+  def color_class("untracked"), do: "text-git-untracked"
+  def color_class("deleted"), do: "text-git-deleted"
+  def color_class("conflict"), do: "text-git-conflict"
   def color_class("ignored"), do: "opacity-50"
   def color_class(_), do: nil
 end

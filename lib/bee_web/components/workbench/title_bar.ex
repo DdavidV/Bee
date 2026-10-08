@@ -26,7 +26,7 @@ defmodule BeeWeb.Workbench.TitleBar do
     ~H"""
     <header
       id="titlebar"
-      class="col-span-full h-9 grid grid-cols-[1fr_auto_1fr] items-center bg-base-300 border-b border-base-content/10 text-xs select-none"
+      class="col-span-full h-9 grid grid-cols-[1fr_auto_1fr] items-center bg-titlebar text-titlebar-fg border-b border-titlebar-border text-xs select-none"
     >
       <%!-- Click-away covers the whole menu bar, so moving from one menu
            button to another switches menus instead of closing first. --%>
@@ -100,8 +100,8 @@ defmodule BeeWeb.Workbench.TitleBar do
         id={"menu-#{@menu.id}-button"}
         aria-expanded={to_string(@open)}
         class={[
-          "px-2 py-1 rounded cursor-pointer hover:bg-base-content/10",
-          @open && "bg-base-content/10"
+          "px-2 py-1 rounded cursor-pointer hover:bg-titlebar-fg/10",
+          @open && "bg-titlebar-fg/10"
         ]}
         phx-click="toggle_menu"
         phx-value-menu={@menu.id}
@@ -112,16 +112,16 @@ defmodule BeeWeb.Workbench.TitleBar do
         :if={@open}
         id={"menu-#{@menu.id}"}
         role="menu"
-        class="absolute left-0 top-full mt-1 z-40 min-w-64 w-max py-1 rounded-md bg-base-200 border border-base-content/10 shadow-lg"
+        class="absolute left-0 top-full mt-1 z-40 min-w-64 w-max py-1 rounded-md bg-menu text-menu-fg border border-menu-border shadow-lg"
       >
         <%= for item <- @menu.items do %>
-          <hr :if={item == :separator} class="my-1 border-base-content/10" />
+          <hr :if={item == :separator} class="my-1 border-menu-border" />
           <button
             :if={item != :separator}
             data-command={item.command}
             role="menuitem"
             disabled={item.disabled}
-            class="w-full flex items-center gap-2 px-3 py-1 text-left cursor-pointer hover:bg-primary hover:text-primary-content disabled:opacity-40 disabled:pointer-events-none"
+            class="w-full flex items-center gap-2 px-3 py-1 text-left cursor-pointer hover:bg-menu-selection hover:text-menu-selection-fg disabled:opacity-40 disabled:pointer-events-none"
             phx-click="run_command"
             phx-value-command={item.command}
           >
@@ -149,7 +149,7 @@ defmodule BeeWeb.Workbench.TitleBar do
       id={@id}
       title={@title}
       aria-pressed={to_string(@pressed)}
-      class="size-7 grid place-items-center rounded cursor-pointer hover:bg-base-content/10"
+      class="size-7 grid place-items-center rounded cursor-pointer hover:bg-titlebar-fg/10"
       phx-click="run_command"
       phx-value-command={@command}
     >

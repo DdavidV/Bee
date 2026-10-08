@@ -33,9 +33,8 @@
     },
     "workbench.colorTheme": {
       "type": "string",
-      "enum": ["dark", "light"],
       "default": "dark",
-      "description": "Color theme of the workbench, editor and terminal."
+      "description": "Color theme of the workbench, editor and terminal: the id of one Bee or a plugin contributes (\"dark\", \"light\", or e.g. a theme installed from a VSIX)."
     },
     "workbench.quickOpen.recentFiles": {
       "type": "integer",

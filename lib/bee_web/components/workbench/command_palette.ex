@@ -33,7 +33,7 @@ defmodule BeeWeb.Workbench.CommandPalette do
     <button
       id="command-center"
       title={"Search files by name, > for commands#{@shortcut && " (#{@shortcut})"}"}
-      class="w-[32rem] max-w-full h-6 flex items-center justify-center gap-2 px-3 rounded-md border border-base-content/15 bg-base-100/50 hover:bg-base-100 cursor-pointer"
+      class="w-[32rem] max-w-full h-6 flex items-center justify-center gap-2 px-3 rounded-md border border-input-border bg-input/50 text-input-fg hover:bg-input cursor-pointer"
       phx-click="run_command"
       phx-value-command="workbench.action.quickOpen"
     >
@@ -60,7 +60,7 @@ defmodule BeeWeb.Workbench.CommandPalette do
           spellcheck="false"
           placeholder={placeholder(@palette)}
           phx-keydown="palette_key"
-          class="w-full h-6 px-3 rounded-md text-xs bg-base-100 border border-primary outline-none select-text"
+          class="w-full h-6 px-3 rounded-md text-xs bg-input text-input-fg border border-focus outline-none select-text"
         />
         <span
           :if={@busy}
@@ -73,7 +73,7 @@ defmodule BeeWeb.Workbench.CommandPalette do
       <ul
         id="palette-items"
         role="listbox"
-        class="absolute left-0 right-0 top-full mt-1 z-50 max-h-[60vh] overflow-auto py-1 rounded-md bg-base-200 border border-base-content/10 shadow-2xl text-sm"
+        class="absolute left-0 right-0 top-full mt-1 z-50 max-h-[60vh] overflow-auto py-1 rounded-md bg-quickinput text-quickinput-fg border border-widget-border shadow-2xl text-sm"
       >
         <li :if={@palette.mode == :input} id="palette-prompt" class="px-4 py-1.5 opacity-80">
           {if @palette.prompt != "", do: @palette.prompt <> " ", else: ""}(Press 'Enter' to confirm or 'Escape' to cancel)
@@ -88,8 +88,8 @@ defmodule BeeWeb.Workbench.CommandPalette do
             class={[
               "w-full flex items-center gap-2 px-4 py-1 text-left cursor-pointer",
               if(i == @palette.index,
-                do: "bg-primary text-primary-content",
-                else: "hover:bg-base-content/10"
+                do: "bg-quickinput-focus text-quickinput-focus-fg",
+                else: "hover:bg-list-hover"
               )
             ]}
             phx-click="palette_pick"

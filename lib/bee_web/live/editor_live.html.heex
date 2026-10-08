@@ -1,9 +1,16 @@
+<%!-- The color theme's colors, when it has its own (Bee.ColorThemes.Theme.css/2):
+     CSS variables on #workbench, over its daisyUI theme (data-theme, its base).
+     <%= %>: HEEx doesn't interpolate {…} in a style element. --%>
+<style :if={@color_theme_css != ""} id="color-theme">
+  <%= @color_theme_css %>
+</style>
 <%!-- The Keybindings hook reads data-keybindings and data-context (the server
      part of the `when` context; focus keys are added in the browser). --%>
 <div
   id="workbench"
   phx-hook="Keybindings"
-  data-theme={@settings["workbench.colorTheme"]}
+  data-theme={@color_theme.base}
+  data-color-theme={@color_theme.id}
   data-keybindings={Jason.encode!(@client_keybindings)}
   data-context={Jason.encode!(context(assigns))}
   data-root={@root}
@@ -66,7 +73,7 @@
       class="sash absolute inset-y-0 left-0 w-1 -translate-x-1/2 z-30 cursor-col-resize"
     >
     </div>
-    <div class="flex bg-base-200 shrink-0">
+    <div class="flex bg-tabs shrink-0">
       <%!-- Tabs: dragged to reorder, middle-clicked to close (the Tabs hook);
            right-clicked for the editor/title/context menu. --%>
       <div id="tabs" phx-hook="Tabs" class="flex flex-1 min-w-0 overflow-x-auto text-sm">
@@ -81,10 +88,11 @@
           data-menu-args={Jason.encode!([tab.path])}
           data-menu-context={Jason.encode!(tab_menu_context(tab.path))}
           class={[
-            "group flex items-center gap-1 pl-3 pr-1 py-1.5 border-r border-base-300 cursor-pointer whitespace-nowrap",
+            "group flex items-center gap-1 pl-3 pr-1 py-1.5 border-r border-tab-border cursor-pointer whitespace-nowrap",
             if(tab.path == @active,
-              do: "bg-base-100",
-              else: "bg-base-200 opacity-70 hover:opacity-100 hover:bg-base-content/5"
+              do: "bg-tab-active text-tab-active-fg",
+              else:
+                "bg-tab-inactive text-tab-inactive-fg hover:text-tab-active-fg hover:bg-base-content/5"
             )
           ]}
           phx-click="activate_tab"
@@ -108,7 +116,7 @@
             phx-value-command="workbench.action.closeEditor"
             phx-value-args={Jason.encode!([tab.path])}
           >
-            <span :if={tab.dirty} class="size-2 rounded-full bg-base-content group-hover:hidden" />
+            <span :if={tab.dirty} class="size-2 rounded-full bg-current group-hover:hidden" />
             <.icon
               name="hero-x-mark-mini"
               class={["size-4", tab.dirty && "hidden group-hover:block"]}
@@ -135,7 +143,7 @@
       </div>
       <div
         :if={@tabs == []}
-        class="absolute inset-0 grid place-items-center bg-base-100 text-sm"
+        class="absolute inset-0 grid place-items-center bg-editor text-editor-fg text-sm"
       >
         <div class="text-center space-y-1 opacity-40">
           <BeeWeb.Logo.logo class="size-12 mx-auto mb-2" />
@@ -179,7 +187,7 @@
   </main>
 
   <%!-- Status bar --%>
-  <footer class="col-span-full h-6 bg-primary text-primary-content text-xs flex items-center gap-4 px-3">
+  <footer class="col-span-full h-6 bg-statusbar text-statusbar-fg text-xs flex items-center gap-4 px-3">
     <span class="truncate">{@root}</span>
     <.status_item :for={item <- @status_items} :if={item.alignment == :left} item={item} />
     <button

@@ -251,6 +251,42 @@ defmodule Bee.Workbench.Actions do
   def open_global_keybindings_file(wb),
     do: Workbench.open_editor(wb, Bee.Commands.Keybindings.ensure_user_file!())
 
+  # Like VS Code's: pick one of the contributed color themes, light ones
+  # first; the selected one is previewed until the pick closes.
+  @command "workbench.action.selectTheme"
+  def select_theme(wb) do
+    current = Bee.ColorThemes.get(Bee.Settings.get("workbench.colorTheme")).id
+    themes = Enum.sort_by(Bee.ColorThemes.themes(), &(&1.base == :dark))
+
+    items =
+      for t <- themes do
+        source = if t.plugin, do: t.plugin, else: "Bee"
+        kind = if t.base == :light, do: "light", else: "dark"
+
+        %{
+          label: t.label,
+          description:
+            Enum.join([source, kind] ++ if(t.id == current, do: ["current"], else: []), " · "),
+          value: t.id
+        }
+      end
+
+    Workbench.open_quick_pick(wb, %{
+      items: items,
+      index: Enum.find_index(themes, &(&1.id == current)) || 0,
+      preview: :color_theme,
+      command: "workbench.action.setColorTheme",
+      placeholder: "Select Color Theme (Up/Down keys to preview)"
+    })
+  end
+
+  # The pick's choice, saved in the user settings.
+  @command "workbench.action.setColorTheme"
+  def set_color_theme(wb, [id]) when is_binary(id),
+    do: {wb, [{:update_setting, "workbench.colorTheme", id}]}
+
+  def set_color_theme(wb, _args), do: wb
+
   # Like VS Code's: pick one of the contributed file icon themes (or none).
   @command "workbench.action.selectIconTheme"
   def select_icon_theme(wb) do

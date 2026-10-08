@@ -4,8 +4,13 @@
 // EditorState (document, selection, undo history) in `this.states`, and
 // switching tabs swaps the state into the view.
 //
-// Settings arrive in data-settings (editor.* and workbench.colorTheme) and
-// are applied through compartments to the active and all inactive states.
+// Settings arrive in data-settings (editor.* and the color theme) and are
+// applied through compartments to the active and all inactive states.
+//
+// Color: `theme` is the color theme's base, "dark" or "light". Bee's own
+// themes use One Dark or CodeMirror's light default; a theme with colors
+// of its own (`themeColors`) colors the editor with them, through the
+// --vscode-* CSS variables it sets on the page (Bee.ColorThemes.Theme).
 //
 // Highlighting: the server sends each file's language and the name of the
 // mode for it (editor/modes.js); a mode registered later by a plugin is
@@ -37,7 +42,7 @@ import {
 import {highlightSelectionMatches, searchKeymap} from "@codemirror/search"
 import {closeBrackets, autocompletion, closeBracketsKeymap, completionKeymap} from "@codemirror/autocomplete"
 import {lintKeymap} from "@codemirror/lint"
-import {oneDark} from "@codemirror/theme-one-dark"
+import {oneDark, oneDarkHighlightStyle} from "@codemirror/theme-one-dark"
 import {registerCommand} from "../commands/registry"
 import {modeExtension, onModeChange} from "../editor/modes"
 import "../editor/builtin_modes"
@@ -92,8 +97,55 @@ const pluginCompartment = new Compartment()
 
 const DEFAULTS = {fontSize: 14, tabSize: 2, wordWrap: "off", lineNumbers: "on", theme: "dark"}
 
+// The editor in a color theme's colors (VS Code's keys, as CSS variables).
+const v = key => `var(--vscode-${key.replaceAll(".", "-")})`
+const themeColors = dark => [
+  EditorView.theme(
+    {
+      "&": {color: v("editor.foreground"), backgroundColor: v("editor.background")},
+      ".cm-content": {caretColor: v("editorCursor.foreground")},
+      ".cm-cursor, .cm-dropCursor": {borderLeftColor: v("editorCursor.foreground")},
+      ".cm-selectionBackground": {backgroundColor: v("editor.inactiveSelectionBackground")},
+      "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-content ::selection":
+        {backgroundColor: v("editor.selectionBackground")},
+      ".cm-activeLine": {backgroundColor: v("editor.lineHighlightBackground")},
+      ".cm-selectionMatch": {backgroundColor: v("editor.selectionHighlightBackground")},
+      ".cm-searchMatch": {backgroundColor: v("editor.findMatchHighlightBackground")},
+      ".cm-searchMatch.cm-searchMatch-selected": {backgroundColor: v("editor.findMatchBackground")},
+      "&.cm-focused .cm-matchingBracket, &.cm-focused .cm-nonmatchingBracket": {
+        backgroundColor: v("editorBracketMatch.background"),
+        outline: `1px solid ${v("editorBracketMatch.border")}`,
+      },
+      ".cm-gutters": {
+        backgroundColor: v("editorGutter.background"),
+        color: v("editorLineNumber.foreground"),
+        border: "none",
+      },
+      ".cm-activeLineGutter": {backgroundColor: "transparent", color: v("editorLineNumber.activeForeground")},
+      ".cm-foldPlaceholder": {backgroundColor: "transparent", border: "none", color: v("editorLineNumber.foreground")},
+      ".cm-panels": {backgroundColor: v("editorWidget.background"), color: v("editorWidget.foreground")},
+      ".cm-tooltip": {
+        backgroundColor: v("editorWidget.background"),
+        color: v("editorWidget.foreground"),
+        border: `1px solid ${v("editorWidget.border")}`,
+      },
+      ".cm-tooltip-autocomplete": {
+        backgroundColor: v("editorSuggestWidget.background"),
+        color: v("editorSuggestWidget.foreground"),
+      },
+      ".cm-tooltip-autocomplete > ul > li[aria-selected]": {
+        backgroundColor: v("editorSuggestWidget.selectedBackground"),
+        color: v("editorSuggestWidget.selectedForeground"),
+      },
+    },
+    {dark},
+  ),
+  // Syntax: still Bee's own colors for now.
+  syntaxHighlighting(dark ? oneDarkHighlightStyle : defaultHighlightStyle),
+]
+
 const settingExtensions = s => ({
-  theme: s.theme === "light" ? [] : oneDark,
+  theme: s.themeColors ? themeColors(s.theme !== "light") : s.theme === "light" ? [] : oneDark,
   fontSize: EditorView.theme({"&": {fontSize: `${s.fontSize}px`}}),
   tabSize: [EditorState.tabSize.of(s.tabSize), indentUnit.of(" ".repeat(s.tabSize))],
   wordWrap: s.wordWrap === "on" ? EditorView.lineWrapping : [],

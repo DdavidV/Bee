@@ -406,7 +406,10 @@ defmodule Bee.Workbench do
     * `:quick_open` – files and commands, by the query: see
       `Bee.Workbench.QuickOpen` (`>` for commands)
     * `:pick` – choose one of `items` (`%{label, description, value}`); the
-      choice runs `command` with `arguments ++ [value]`
+      choice runs `command` with `arguments ++ [value]`. Optional: `index`,
+      the item selected first; `preview`, what the selected item previews
+      while it is selected (`:color_theme`: its value is a theme id, see
+      `BeeWeb.EditorLive`)
     * `:input` – type a line; Enter runs `command` with `arguments ++ [text]`
 
   `open_quick_open/2` opens the first with `query` typed in: `""` for
@@ -428,11 +431,12 @@ defmodule Bee.Workbench do
     palette = %{
       mode: :pick,
       query: "",
-      index: 0,
+      index: Map.get(spec, :index, 0),
       items: items,
       command: command,
       arguments: Map.get(spec, :arguments, []),
-      placeholder: Map.get(spec, :placeholder, "")
+      placeholder: Map.get(spec, :placeholder, ""),
+      preview: Map.get(spec, :preview)
     }
 
     %{wb | palette: palette, open_menu: nil}

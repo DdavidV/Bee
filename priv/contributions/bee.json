@@ -277,6 +277,18 @@
         "runtime": "server"
       },
       {
+        "command": "workbench.action.selectTheme",
+        "category": "Preferences",
+        "title": "Color Theme",
+        "runtime": "server"
+      },
+      {
+        "command": "workbench.action.setColorTheme",
+        "category": "Preferences",
+        "title": "Set Color Theme",
+        "runtime": "server"
+      },
+      {
         "command": "workbench.action.selectIconTheme",
         "category": "Preferences",
         "title": "File Icon Theme",
@@ -413,7 +425,13 @@
       {"key": "alt+w", "mac": "cmd+alt+w", "command": "toggleSearchWholeWord", "when": "searchViewletFocus"},
       {"key": "alt+r", "mac": "cmd+alt+r", "command": "toggleSearchRegex", "when": "searchViewletFocus"},
       {"key": "ctrl+,", "mac": "cmd+,", "command": "workbench.action.openSettingsJson"},
-      {"key": "ctrl+k ctrl+s", "mac": "cmd+k cmd+s", "command": "workbench.action.openGlobalKeybindingsFile"}
+      {"key": "ctrl+k ctrl+s", "mac": "cmd+k cmd+s", "command": "workbench.action.openGlobalKeybindingsFile"},
+      {"key": "ctrl+k ctrl+t", "mac": "cmd+k cmd+t", "command": "workbench.action.selectTheme"}
+    ],
+
+    "themes": [
+      {"id": "dark", "label": "Bee Dark", "uiTheme": "vs-dark"},
+      {"id": "light", "label": "Bee Light", "uiTheme": "vs"}
     ],
 
     "viewsContainers": {
@@ -452,7 +470,8 @@
         {"command": "workbench.action.openSettingsJson", "group": "2_preferences@1"},
         {"command": "workbench.action.openWorkspaceSettingsFile", "group": "2_preferences@2"},
         {"command": "workbench.action.openGlobalKeybindingsFile", "group": "2_preferences@3"},
-        {"command": "workbench.action.selectIconTheme", "group": "2_preferences@4"}
+        {"command": "workbench.action.selectTheme", "group": "2_preferences@4"},
+        {"command": "workbench.action.selectIconTheme", "group": "2_preferences@5"}
       ],
       "menubar/edit": [
         {"command": "undo", "group": "1_do@1"},
@@ -519,6 +538,7 @@
         {"command": "bee.plugins.uninstall", "when": "false"},
         {"command": "bee.plugins.uninstallConfirmed", "when": "false"},
         {"command": "workbench.action.setIconTheme", "when": "false"},
+        {"command": "workbench.action.setColorTheme", "when": "false"},
         {"command": "bee.plugins.disable", "when": "false"}
       ],
       "editor/title": [

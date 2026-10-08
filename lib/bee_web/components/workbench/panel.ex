@@ -51,7 +51,7 @@ defmodule BeeWeb.Workbench.Panel do
       id="panel"
       data-maximized={to_string(@maximized)}
       class={[
-        "relative shrink-0 overflow-hidden border-t border-base-300 flex flex-col bg-base-100",
+        "relative shrink-0 overflow-hidden border-t border-panel-border flex flex-col bg-panel",
         if(@maximized,
           do: "h-[calc(100%-2.5rem)]",
           else: "h-[var(--drag-panel-height,var(--panel-height))] max-h-[calc(100%-4rem)]"
@@ -66,7 +66,7 @@ defmodule BeeWeb.Workbench.Panel do
         class="sash absolute inset-x-0 top-0 h-1 z-30 cursor-row-resize"
       >
       </div>
-      <header class="flex items-center gap-1 h-9 pr-2 text-xs shrink-0 select-none border-b border-base-300">
+      <header class="flex items-center gap-1 h-9 pr-2 text-xs shrink-0 select-none border-b border-panel-border">
         <%!-- The sections' tabs: click to show, drag to reorder (PanelSections). --%>
         <nav
           id="panel-sections"
@@ -85,9 +85,9 @@ defmodule BeeWeb.Workbench.Panel do
               "flex items-center gap-1.5 px-3 -mb-px border-b-2 cursor-pointer",
               "text-[11px] font-semibold uppercase tracking-wide",
               if(section.container.id == @active,
-                do: "border-primary text-base-content bg-base-content/5",
+                do: "border-panel-title-border text-panel-title-active bg-base-content/5",
                 else:
-                  "border-transparent text-base-content/50 hover:text-base-content hover:bg-base-content/5"
+                  "border-transparent text-panel-title-inactive hover:text-panel-title-active hover:bg-base-content/5"
               )
             ]}
             phx-click="run_command"
@@ -166,7 +166,7 @@ defmodule BeeWeb.Workbench.Panel do
       id="terminal-list"
       phx-hook="TerminalList"
       role="listbox"
-      class="w-44 shrink-0 overflow-y-auto border-l border-base-300 py-1 text-xs"
+      class="w-44 shrink-0 overflow-y-auto border-l border-panel-border py-1 text-xs"
     >
       <li
         :for={term <- @terminals}
@@ -175,7 +175,7 @@ defmodule BeeWeb.Workbench.Panel do
         aria-selected={to_string(term.id == @active_term)}
         class={[
           "group flex items-center pr-1",
-          if(term.id == @active_term, do: "bg-base-content/10", else: "hover:bg-base-content/5")
+          if(term.id == @active_term, do: "bg-list-inactive", else: "hover:bg-list-hover")
         ]}
       >
         <.terminal_item terminal={term} class="flex-1 min-w-0 px-2 py-1" />

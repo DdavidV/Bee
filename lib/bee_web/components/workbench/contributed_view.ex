@@ -104,7 +104,7 @@ defmodule BeeWeb.Workbench.ContributedView do
       <div
         id={"view-item-#{@view.id}-#{@item.id}"}
         data-item={@item.id}
-        class="group flex items-center gap-1 pr-2 py-0.5 cursor-pointer hover:bg-base-content/10"
+        class="group flex items-center gap-1 pr-2 py-0.5 cursor-pointer hover:bg-list-hover"
         style={"padding-left: #{0.5 + @depth * 0.75}rem"}
         title={@item.tooltip}
         phx-click={click(@item, @view.id)}

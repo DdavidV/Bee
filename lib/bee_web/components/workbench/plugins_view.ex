@@ -28,7 +28,7 @@ defmodule BeeWeb.Workbench.PluginsView do
       <div
         :for={plugin <- @plugins}
         id={"plugin-#{plugin.name}"}
-        class="px-3 py-2 border-b border-base-300 hover:bg-base-content/5"
+        class="px-3 py-2 border-b border-sidebar-section-border hover:bg-list-hover"
       >
         <div class="flex items-center gap-2">
           <span class={["font-medium truncate", plugin.status == :disabled && "opacity-50"]}>

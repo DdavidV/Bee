@@ -60,18 +60,18 @@ defmodule Bee.SettingsTest do
 
     write(
       Settings.workspace_path(root()),
-      ~s({"editor.fontSize": "huge", "editor.tabSize": 0, "workbench.colorTheme": "pink"})
+      ~s({"editor.fontSize": "huge", "editor.tabSize": 0, "editor.wordWrap": "sometimes"})
     )
 
     assert Settings.get("editor.fontSize", root()) == 18
     assert Settings.get("editor.tabSize", root()) == 2
-    assert Settings.get("workbench.colorTheme", root()) == "dark"
+    assert Settings.get("editor.wordWrap", root()) == "off"
 
     messages = Enum.map(Settings.errors(root()), & &1.message)
     assert ~s("editor.fontSize": Type mismatch. Expected Integer but got String.) in messages
     assert ~s("editor.tabSize": Expected the value to be >= 1) in messages
 
-    assert ~s("workbench.colorTheme": value is not allowed, expected one of "dark", "light") in messages
+    assert ~s("editor.wordWrap": value is not allowed, expected one of "off", "on") in messages
   end
 
   test "nested values are validated too, naming the offending key" do

@@ -174,7 +174,7 @@ defmodule BeeWeb.Workbench.SearchView do
         <li :for={{file, matches} <- @files} role="treeitem">
           <div
             data-search-file={file.path}
-            class="group flex items-center gap-1 pl-2 pr-2 py-0.5 cursor-pointer hover:bg-base-content/10"
+            class="group flex items-center gap-1 pl-2 pr-2 py-0.5 cursor-pointer hover:bg-list-hover"
             title={file.path}
             phx-click="search_toggle_file"
             phx-value-path={file.path}
@@ -209,7 +209,7 @@ defmodule BeeWeb.Workbench.SearchView do
             <li
               :for={match <- matches}
               data-search-match={"#{file.path}:#{match.from}"}
-              class="group flex items-center gap-1 pl-9 pr-2 py-0.5 cursor-pointer hover:bg-base-content/10 whitespace-nowrap"
+              class="group flex items-center gap-1 pl-9 pr-2 py-0.5 cursor-pointer hover:bg-list-hover whitespace-nowrap"
               title={"#{file.path}:#{match.line}"}
               phx-click="search_open"
               phx-value-path={file.path}

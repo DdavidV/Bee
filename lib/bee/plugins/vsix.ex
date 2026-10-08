@@ -2,8 +2,9 @@ defmodule Bee.Plugins.Vsix do
   @moduledoc """
   Installs a VS Code extension package (`.vsix`, a zip as downloaded from
   the Marketplace or Open VSX) as a Bee plugin in the user's plugins
-  folder – for the parts Bee understands, which for now are icon themes
-  (`contributes.iconThemes`, see `Bee.IconThemes`).
+  folder – for the parts Bee understands, which for now are themes: file
+  icon themes (`contributes.iconThemes`, see `Bee.IconThemes`) and color
+  themes (`contributes.themes`, see `Bee.ColorThemes`).
 
   The extension's files (the zip's `extension/` folder) are unpacked into
   `<plugins>/<name>`, `name` being the extension's, and a `plugin.json` is
@@ -26,10 +27,10 @@ defmodule Bee.Plugins.Vsix do
   def install(path) do
     with {:ok, files} <- read(path),
          {:ok, package} <- json(files, "package.json"),
-         {:ok, themes} <- icon_themes(package),
+         {:ok, contributes} <- themes(package, files),
          {:ok, name} <- plugin_name(package),
          :ok <- check_target(name) do
-      write(name, files, manifest(name, package, files, themes))
+      write(name, files, manifest(name, package, files, contributes))
     end
   end
 
@@ -102,15 +103,32 @@ defmodule Bee.Plugins.Vsix do
     end
   end
 
-  defp icon_themes(package) do
-    case get_in(package, ["contributes", "iconThemes"]) do
-      [_ | _] = themes ->
-        {:ok, for(t <- themes, do: Map.take(t, ~w(id label path)))}
+  # The contributes section of the plugin: the themes, with the fields Bee
+  # knows (color themes need a label, a known uiTheme and a file). Labels
+  # can be "%key%" (package.nls.json).
+  defp themes(package, files) do
+    contributes =
+      %{
+        "iconThemes" =>
+          for(
+            %{} = t <- List.wrap(get_in(package, ["contributes", "iconThemes"])),
+            do: t |> Map.take(~w(id label path)) |> localize_label(files)
+          ),
+        "themes" =>
+          for(
+            %{"label" => label, "path" => path, "uiTheme" => ui} = t <-
+              List.wrap(get_in(package, ["contributes", "themes"])),
+            is_binary(label) and is_binary(path) and ui in ~w(vs vs-dark hc-black hc-light),
+            do: t |> Map.take(~w(id label uiTheme path)) |> localize_label(files)
+          )
+      }
+      |> Map.reject(fn {_k, list} -> list == [] end)
 
-      _ ->
+    if contributes == %{},
+      do:
         {:error,
-         "#{package["name"] || "the extension"} contributes no icon themes; Bee can only install icon themes from VSIX files for now"}
-    end
+         "#{package["name"] || "the extension"} contributes no color or file icon themes; Bee can only install themes from VSIX files for now"},
+      else: {:ok, contributes}
   end
 
   # A Bee plugin name (lowercase letters, digits, dashes) from the extension's.
@@ -139,16 +157,21 @@ defmodule Bee.Plugins.Vsix do
     end
   end
 
-  defp manifest(name, package, files, themes) do
+  defp manifest(name, package, files, contributes) do
     %{
       "name" => name,
       "displayName" => localized(package["displayName"], files) || package["name"],
       "description" => localized(package["description"], files),
       "version" => package["version"],
-      "contributes" => %{"iconThemes" => themes}
+      "contributes" => contributes
     }
     |> Map.reject(fn {_k, v} -> is_nil(v) end)
   end
+
+  defp localize_label(%{"label" => label} = theme, files),
+    do: %{theme | "label" => localized(label, files) || label}
+
+  defp localize_label(theme, _files), do: theme
 
   # "%displayName%" → its text in package.nls.json.
   defp localized("%" <> _ = text, files) do

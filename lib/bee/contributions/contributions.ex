@@ -29,7 +29,8 @@ defmodule Bee.Contributions do
     Bee.Languages,
     Bee.Settings.Configuration,
     Bee.Views,
-    Bee.IconThemes
+    Bee.IconThemes,
+    Bee.ColorThemes
   ]
 
   # Bee's own manifests, embedded and schema-checked at compile time (see

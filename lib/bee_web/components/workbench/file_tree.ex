@@ -232,8 +232,8 @@ defmodule BeeWeb.Workbench.FileTree do
           }
           style={"padding-left: #{0.5 + @depth * 0.75}rem"}
           class={[
-            "w-full flex items-center gap-1 pr-2 py-[2px] text-left cursor-pointer hover:bg-base-content/10 truncate",
-            @tree.active == entry.path && "bg-primary/25",
+            "w-full flex items-center gap-1 pr-2 py-[2px] text-left cursor-pointer hover:bg-list-hover truncate",
+            @tree.active == entry.path && "bg-list-inactive",
             MapSet.member?(@tree.cut, entry.path) && "opacity-50"
           ]}
         >
@@ -324,8 +324,8 @@ defmodule BeeWeb.Workbench.FileTree do
         aria-label={label(@edit.kind)}
         aria-invalid={to_string(@edit.error != nil)}
         class={[
-          "flex-1 min-w-0 h-5 px-1 text-sm bg-base-100 outline outline-1 rounded-none",
-          if(@edit.error, do: "outline-error", else: "outline-primary")
+          "flex-1 min-w-0 h-5 px-1 text-sm bg-input text-input-fg outline outline-1 rounded-none",
+          if(@edit.error, do: "outline-error", else: "outline-focus")
         ]}
       />
     </form>

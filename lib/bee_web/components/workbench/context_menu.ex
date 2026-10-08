@@ -24,17 +24,17 @@ defmodule BeeWeb.Workbench.ContextMenu do
       phx-window-keydown="close_context_menu"
       phx-key="Escape"
       style={"left: #{@menu.x}px; top: #{@menu.y}px"}
-      class="fixed z-50 min-w-52 w-max py-1 rounded-md bg-base-200 border border-base-content/10 shadow-lg text-sm"
+      class="fixed z-50 min-w-52 w-max py-1 rounded-md bg-menu text-menu-fg border border-menu-border shadow-lg text-sm"
     >
       <%= for item <- @items do %>
-        <hr :if={item == :separator} class="my-1 border-base-content/10" />
+        <hr :if={item == :separator} class="my-1 border-menu-border" />
         <button
           :if={item != :separator}
           type="button"
           role="menuitem"
           data-command={item.command}
           disabled={item.disabled}
-          class="w-full flex items-center gap-2 px-3 py-1 text-left cursor-pointer hover:bg-primary hover:text-primary-content disabled:opacity-40 disabled:pointer-events-none"
+          class="w-full flex items-center gap-2 px-3 py-1 text-left cursor-pointer hover:bg-menu-selection hover:text-menu-selection-fg disabled:opacity-40 disabled:pointer-events-none"
           phx-click={click(item, @menu)}
           phx-value-command={item.command}
           phx-value-args={Jason.encode!(@menu.args)}

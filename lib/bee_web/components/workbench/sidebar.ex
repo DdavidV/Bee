@@ -32,7 +32,7 @@ defmodule BeeWeb.Workbench.Sidebar do
     <aside
       id="activity-bar"
       phx-hook="ActivityBar"
-      class="bg-base-300 flex flex-col items-center gap-1 py-2"
+      class="bg-activitybar flex flex-col items-center gap-1 py-2"
     >
       <button
         :for={container <- @containers}
@@ -40,7 +40,10 @@ defmodule BeeWeb.Workbench.Sidebar do
         data-container={container.id}
         class={[
           "relative btn btn-ghost btn-square btn-sm",
-          @sidebar_open && @sidebar_view == container.id && "btn-active"
+          if(@sidebar_open && @sidebar_view == container.id,
+            do: "btn-active text-activitybar-fg",
+            else: "text-activitybar-inactive hover:text-activitybar-fg"
+          )
         ]}
         title={title(container, @keybindings)}
         aria-label={container.title}
@@ -50,7 +53,7 @@ defmodule BeeWeb.Workbench.Sidebar do
         <BeeWeb.Icons.named_icon name={container.icon} class="size-5" />
         <span
           :if={container.badge}
-          class="absolute -bottom-0.5 -right-0.5 min-w-4 h-4 px-1 rounded-full bg-primary text-primary-content text-[10px] leading-4"
+          class="absolute -bottom-0.5 -right-0.5 min-w-4 h-4 px-1 rounded-full bg-badge text-badge-fg text-[10px] leading-4"
         >
           {container.badge}
         </span>
@@ -99,7 +102,7 @@ defmodule BeeWeb.Workbench.Sidebar do
     <aside
       id="sidebar"
       class={[
-        "bg-base-200 overflow-hidden min-h-0 border-r border-base-300 flex flex-col",
+        "bg-sidebar text-sidebar-fg overflow-hidden min-h-0 border-r border-sidebar-border flex flex-col",
         !@sidebar_open && "hidden"
       ]}
     >
@@ -144,7 +147,7 @@ defmodule BeeWeb.Workbench.Sidebar do
           id={"view-header-#{pane.view.id}"}
           role="button"
           aria-expanded={to_string(pane.open)}
-          class="flex items-center gap-0.5 h-7 shrink-0 pl-1 pr-2 text-xs font-semibold uppercase tracking-wide border-t border-base-300 cursor-pointer select-none"
+          class="flex items-center gap-0.5 h-7 shrink-0 pl-1 pr-2 text-xs font-semibold uppercase tracking-wide border-t border-sidebar-section-border cursor-pointer select-none"
           phx-click="toggle_view"
           phx-value-view={pane.view.id}
         >

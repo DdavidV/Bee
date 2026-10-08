@@ -58,8 +58,11 @@ const LIGHT = {
   brightWhite: "#ffffff",
 }
 
-// data-settings: {fontSize, theme} from terminal.integrated.fontSize / workbench.colorTheme
+// data-settings: {fontSize, theme, colors} – terminal.integrated.fontSize,
+// the color theme's base ("dark"/"light") and its terminal colors (xterm's
+// theme; null for Bee's own themes, which use the ones here).
 const readSettings = el => ({fontSize: 13, theme: "dark", ...JSON.parse(el.dataset.settings || "{}")})
+const xtermTheme = s => s.colors || (s.theme === "light" ? LIGHT : DARK)
 
 export const Terminal = {
   mounted() {
@@ -71,7 +74,7 @@ export const Terminal = {
       cursorBlink: true,
       fontSize: this.settings.fontSize,
       fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
-      theme: this.settings.theme === "light" ? LIGHT : DARK,
+      theme: xtermTheme(this.settings),
       scrollback: 5000,
     })
     this.fitAddon = new FitAddon()
@@ -109,16 +112,18 @@ export const Terminal = {
     })
   },
 
-  // Called when data-active changes (the only attributes LiveView patches here).
+  // Called when data-active or data-settings change (the only attributes
+  // LiveView patches here). Focus moves here only when this one becomes
+  // the active terminal – not when, say, a color theme is previewed.
   updated() {
     const settings = readSettings(this.el)
     if (JSON.stringify(settings) !== JSON.stringify(this.settings)) {
       this.settings = settings
       this.term.options.fontSize = settings.fontSize
-      this.term.options.theme = settings.theme === "light" ? LIGHT : DARK
+      this.term.options.theme = xtermTheme(settings)
     }
     this.fit()
-    this.focusIfActive()
+    if (this.el.dataset.active !== this.wasActive) this.focusIfActive()
   },
 
   destroyed() {
@@ -129,7 +134,8 @@ export const Terminal = {
   },
 
   focusIfActive() {
-    if (this.el.dataset.active === "true") this.term.focus()
+    this.wasActive = this.el.dataset.active
+    if (this.wasActive === "true") this.term.focus()
   },
 
   fit() {

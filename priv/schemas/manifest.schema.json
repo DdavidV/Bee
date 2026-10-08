@@ -72,7 +72,8 @@
           "description": "Views container id (yours, or e.g. \"explorer\") to the views shown in it.",
           "additionalProperties": {"type": "array", "items": {"$ref": "#/definitions/view"}}
         },
-        "iconThemes": {"type": "array", "items": {"$ref": "#/definitions/iconTheme"}}
+        "iconThemes": {"type": "array", "items": {"$ref": "#/definitions/iconTheme"}},
+        "themes": {"type": "array", "items": {"$ref": "#/definitions/colorTheme"}}
       }
     }
   },
@@ -165,6 +166,18 @@
         "id": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+$"},
         "label": {"type": "string", "minLength": 1},
         "path": {"type": "string", "minLength": 1, "description": "The theme's JSON file, relative to the plugin's folder."}
+      }
+    },
+    "colorTheme": {
+      "type": "object",
+      "required": ["label", "uiTheme"],
+      "additionalProperties": false,
+      "description": "A color theme, in VS Code's format; picked with the workbench.colorTheme setting (by id, or by label when there is no id).",
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "label": {"type": "string", "minLength": 1},
+        "uiTheme": {"enum": ["vs", "vs-dark", "hc-black", "hc-light"], "description": "Light (vs, hc-light) or dark (vs-dark, hc-black): the defaults for the colors the theme leaves out."},
+        "path": {"type": "string", "minLength": 1, "description": "The theme's JSON file, relative to the plugin's folder. Without one: Bee's own light or dark theme."}
       }
     },
     "language": {

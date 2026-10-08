@@ -542,8 +542,10 @@ defmodule BeeWeb.EditorLive do
 
     socket =
       if :icon_themes in keys,
-        do: assign(socket, icon_theme: icon_theme(socket.assigns.settings)),
+        do: assign(socket, icon_theme: icon_theme(socket.assigns)),
         else: socket
+
+    socket = if :color_themes in keys, do: sync_theme(socket, true), else: socket
 
     {:noreply, socket}
   end
@@ -649,7 +651,7 @@ defmodule BeeWeb.EditorLive do
   # Applies `fun` (a Workbench function or command handler) and its effects.
   defp change(socket, fun) do
     {wb, effects} = Workbench.wrap(fun.(workbench(socket)))
-    socket |> put_workbench(wb) |> run_effects(effects) |> sync_quick_open()
+    socket |> put_workbench(wb) |> run_effects(effects) |> sync_quick_open() |> sync_theme()
   end
 
   @doc false
@@ -761,10 +763,16 @@ defmodule BeeWeb.EditorLive do
     socket |> load_plugins() |> put_flash(:info, "Plugins reloaded")
   end
 
+  # Applied at once (the change notice comes later): a picked color theme
+  # replaces the previewed one without showing the old one in between.
   defp run_effect({:update_setting, key, value}, socket) do
     case Settings.update(:user, key, fn _ -> value end) do
-      :ok -> socket
-      {:error, message} -> put_flash(socket, :error, message)
+      :ok ->
+        root = socket.assigns.root
+        load_settings(socket, Settings.all(root), Settings.errors(root))
+
+      {:error, message} ->
+        put_flash(socket, :error, message)
     end
   end
 
@@ -1227,7 +1235,6 @@ defmodule BeeWeb.EditorLive do
 
   defp load_settings(socket, settings, errors) do
     socket
-    |> assign(icon_theme: icon_theme(settings))
     |> assign(
       settings: settings,
       settings_errors: errors,
@@ -1235,23 +1242,60 @@ defmodule BeeWeb.EditorLive do
         fontSize: settings["editor.fontSize"],
         tabSize: settings["editor.tabSize"],
         wordWrap: settings["editor.wordWrap"],
-        lineNumbers: settings["editor.lineNumbers"],
-        theme: settings["workbench.colorTheme"]
+        lineNumbers: settings["editor.lineNumbers"]
       },
-      terminal_settings: %{
-        fontSize: settings["terminal.integrated.fontSize"],
-        theme: settings["workbench.colorTheme"]
-      }
+      terminal_settings: %{fontSize: settings["terminal.integrated.fontSize"]}
     )
+    |> sync_theme(true)
   end
 
-  # The file icon theme picked in workbench.iconTheme, in its light or dark
-  # variant; nil (Bee's own icons) when none is set or it isn't loaded (yet).
-  defp icon_theme(settings) do
-    variant = if settings["workbench.colorTheme"] == "light", do: :light, else: :dark
+  ## Color theme
 
+  # The color theme shown: the one selected in the Color Theme pick while
+  # it is open (a preview), else workbench.colorTheme's. Loaded again only
+  # when that changes, or when `reload?` (settings or themes changed).
+  defp sync_theme(socket, reload? \\ false) do
+    id = previewed_theme(socket.assigns) || socket.assigns.settings["workbench.colorTheme"]
+
+    if not reload? and socket.assigns[:color_theme_id] == id do
+      socket
+    else
+      theme = Bee.ColorThemes.get(id)
+      base = to_string(theme.base)
+      colors = theme.custom?
+
+      socket
+      |> assign(
+        color_theme_id: id,
+        color_theme: theme,
+        color_theme_css: Bee.ColorThemes.Theme.css(theme, "#workbench"),
+        editor_settings:
+          Map.merge(socket.assigns.editor_settings, %{theme: base, themeColors: colors}),
+        terminal_settings:
+          Map.merge(socket.assigns.terminal_settings, %{
+            theme: base,
+            colors: Bee.ColorThemes.Theme.terminal(theme)
+          })
+      )
+      |> then(&assign(&1, icon_theme: icon_theme(&1.assigns)))
+    end
+  end
+
+  defp previewed_theme(%{palette: %{mode: :pick, preview: :color_theme, index: index}} = assigns) do
+    case Enum.at(palette_items(assigns), index) do
+      %{value: id} -> id
+      nil -> nil
+    end
+  end
+
+  defp previewed_theme(_assigns), do: nil
+
+  # The file icon theme picked in workbench.iconTheme, in its variant for
+  # the color theme's base; nil (Bee's own icons) when none is set or it
+  # isn't loaded (yet).
+  defp icon_theme(%{settings: settings, color_theme: color_theme}) do
     with id when is_binary(id) <- settings["workbench.iconTheme"],
-         {:ok, theme} <- Bee.IconThemes.load(id, variant) do
+         {:ok, theme} <- Bee.IconThemes.load(id, color_theme.base) do
       theme
     else
       _ -> nil
@@ -1648,7 +1692,7 @@ defmodule BeeWeb.EditorLive do
       type="button"
       class={[
         "flex items-center gap-1 px-1 rounded shrink-0",
-        @item.command && "cursor-pointer hover:bg-primary-content/15"
+        @item.command && "cursor-pointer hover:bg-statusbar-fg/15"
       ]}
       title={@item.tooltip}
       disabled={!@item.command}

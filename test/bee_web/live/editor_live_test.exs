@@ -1086,7 +1086,7 @@ defmodule BeeWeb.EditorLiveTest do
 
       assert has_element?(
                view,
-               "#explorer button[phx-value-path='README.md'] .text-success",
+               "#explorer button[phx-value-path='README.md'] .text-git-untracked",
                "README.md"
              )
 
@@ -1108,7 +1108,7 @@ defmodule BeeWeb.EditorLiveTest do
              )
 
       open_file(view, "README.md")
-      assert has_element?(view, "#tabs .text-success", "README.md")
+      assert has_element?(view, "#tabs .text-git-untracked", "README.md")
     end
   end
 
@@ -1349,6 +1349,63 @@ defmodule BeeWeb.EditorLiveTest do
       Bee.Plugins.reload()
 
       refute Bee.Plugins.get("word-count", Bee.Workspace.root()).status == :disabled
+    end
+
+    test "a color theme is picked like in VS Code, previewed while selected", %{conn: conn} do
+      dir = Path.join(Bee.Plugins.user_dir(), "purple")
+      File.mkdir_p!(dir)
+
+      File.write!(Path.join(dir, "plugin.json"), ~s({"name": "purple", "contributes": {"themes":
+        [{"id": "purple", "label": "Purple", "uiTheme": "vs-dark", "path": "purple.json"}]}}))
+
+      File.write!(
+        Path.join(dir, "purple.json"),
+        ~s({"colors": {"editor.background": "#2d1b4e", "terminal.ansiRed": "#ff5555"}})
+      )
+
+      Bee.Plugins.reload()
+      {:ok, view, _html} = live(conn, ~p"/")
+      run(view, "workbench.action.togglePanel")
+      # Bee's dark theme: its daisyUI colors, nothing else.
+      assert data(view, "#workbench", "data-theme") == "dark"
+      refute has_element?(view, "#color-theme")
+
+      # Light themes first; the current one is selected.
+      run(view, "workbench.action.selectTheme")
+
+      assert view |> element("#palette-items") |> render() =~ ~r/Bee Light.*Bee Dark.*Purple/s
+
+      assert has_element?(view, "#palette-items [aria-selected=true]", "Bee Dark")
+
+      # The selected one is shown, not saved.
+      view |> element("#palette-input") |> render_keydown(%{"key" => "ArrowDown"})
+      assert data(view, "#workbench", "data-color-theme") == "purple"
+      assert view |> element("#color-theme") |> render() =~ "--vscode-editor-background:#2d1b4e;"
+      assert %{"themeColors" => true} = json_data(view, "#editor", "data-settings")
+      assert Bee.Settings.get("workbench.colorTheme") == "dark"
+
+      # Escape: back to the setting's.
+      view |> element("#palette-input") |> render_keydown(%{"key" => "Escape"})
+      assert data(view, "#workbench", "data-color-theme") == "dark"
+      refute has_element?(view, "#color-theme")
+
+      # Picked: saved, and shown everywhere.
+      run(view, "workbench.action.selectTheme")
+      view |> form("#palette-form", %{query: "purple"}) |> render_change()
+      view |> form("#palette-form") |> render_submit()
+      assert Bee.Settings.get("workbench.colorTheme") == "purple"
+      assert has_element?(view, "#color-theme")
+
+      assert %{"theme" => "dark", "themeColors" => true} =
+               json_data(view, "#editor", "data-settings")
+
+      assert %{"theme" => "dark", "colors" => %{"red" => "#ff5555", "background" => "#2d1b4e"}} =
+               json_data(view, "#panel [phx-hook=Terminal]", "data-settings")
+
+      # Its plugin gone: Bee's dark theme again.
+      File.rm_rf!(dir)
+      Bee.Plugins.reload()
+      eventually(fn -> not has_element?(view, "#color-theme") end)
     end
 
     test "the file icon theme draws the Explorer's and tabs' icons", %{conn: conn} do
