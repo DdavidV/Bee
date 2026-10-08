@@ -57,6 +57,11 @@
       return core().invoke("bridge_copy_text", {text})
     },
 
+    // A web link, in the user's browser.
+    openUrl(url) {
+      return core().invoke("bridge_open_url", {url})
+    },
+
     // The native folder dialog: the folder picked, or null.
     pickFolder(title, start) {
       return core().invoke("bridge_pick_folder", {title, start}).catch(e => {

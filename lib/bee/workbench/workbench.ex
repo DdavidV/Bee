@@ -108,8 +108,41 @@ defmodule Bee.Workbench do
   end
 
   ## Editors
+  #
+  # Each tab is an editor, `path` its id: a file (`kind: :file`, its
+  # absolute path; CodeMirror shows it) or a plugin's details page
+  # (`kind: :extension`, path "extension:<name>", like VS Code's extension
+  # editor; see `BeeWeb.Workbench.ExtensionEditor`).
 
   def open?(wb, path), do: Enum.any?(wb.tabs, &(&1.path == path))
+
+  @doc "The tab of `path`, or nil."
+  def tab(wb, path), do: Enum.find(wb.tabs, &(&1.path == path))
+
+  @doc "The active editor's file, or nil (none, or not a file)."
+  def active_file(wb) do
+    case tab(wb, wb.active) do
+      %{kind: :file, path: path} -> path
+      _ -> nil
+    end
+  end
+
+  @doc "Shows plugin `name`'s details in an editor tab (VS Code's extension editor)."
+  def open_extension(wb, name) do
+    path = "extension:" <> name
+
+    if open?(wb, path),
+      do: activate_editor(wb, path),
+      else:
+        activate_editor(
+          %{
+            wb
+            | tabs:
+                wb.tabs ++ [%{path: path, kind: :extension, name: name, dirty: false, lang: nil}]
+          },
+          path
+        )
+  end
 
   @doc "Shows `path`: activates its tab, or asks for the file to be opened."
   def open_editor(wb, path) do
@@ -118,16 +151,17 @@ defmodule Bee.Workbench do
 
   @doc "Called once the buffer for `path` is open; `lang` is its language id."
   def editor_opened(wb, path, dirty, lang) do
-    %{wb | tabs: wb.tabs ++ [%{path: path, dirty: dirty, lang: lang}], active: path}
+    %{wb | tabs: wb.tabs ++ [%{path: path, kind: :file, dirty: dirty, lang: lang}], active: path}
   end
 
   def language(wb, path), do: Enum.find_value(wb.tabs, &(&1.path == path && &1.lang))
 
   def activate_editor(wb, path) do
-    if open?(wb, path) do
-      {%{wb | active: path}, [{:push, "cm:activate", %{path: path}}]}
-    else
-      wb
+    case tab(wb, path) do
+      %{kind: :file} -> {%{wb | active: path}, [{:push, "cm:activate", %{path: path}}]}
+      # Not a file: CodeMirror puts its file away (and its focus).
+      %{} -> {%{wb | active: path}, [{:push, "cm:deactivate", %{}}]}
+      nil -> wb
     end
   end
 
@@ -138,7 +172,12 @@ defmodule Bee.Workbench do
 
       index ->
         remaining = List.delete_at(wb.tabs, index)
-        effects = [{:close_buffer, path}, {:push, "cm:close", %{path: path}}]
+
+        effects =
+          if Enum.at(wb.tabs, index).kind == :file,
+            do: [{:close_buffer, path}, {:push, "cm:close", %{path: path}}],
+            else: []
+
         wb = %{wb | tabs: remaining}
 
         cond do
@@ -479,13 +518,16 @@ defmodule Bee.Workbench do
   exist). `settings` adds `config.*`. The browser adds focus keys.
   """
   def context(wb, settings \\ %{}) do
-    active = wb.active
+    # resource*, editorLangId, undo/redo: the active editor's file, if it is one.
+    active = active_file(wb)
 
     settings
     |> Map.new(fn {key, value} -> {"config." <> key, value} end)
     |> Map.merge(%{
-      "activeEditor" => active && Bee.Workspace.FS.relative(wb.root, active),
+      "activeEditor" =>
+        if(active, do: Bee.Workspace.FS.relative(wb.root, active), else: wb.active),
       "activeEditorIsDirty" => Enum.any?(wb.tabs, &(&1.path == active and &1.dirty)),
+      "resourceScheme" => wb.active && if(active, do: "file", else: "extension"),
       "resourceFilename" => active && Path.basename(active),
       "resourceExtname" => active && Path.extname(active),
       "resourcePath" => active,

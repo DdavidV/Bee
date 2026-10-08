@@ -17,6 +17,7 @@ base64 = "0.22"
 tauri-plugin-single-instance = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-clipboard-manager = "2"
+tauri-plugin-opener = "2"
 
 [features]
 # The GUI self-test (src/selftest.rs, tests/selftest.js); not in normal builds.

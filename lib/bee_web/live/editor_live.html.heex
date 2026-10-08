@@ -24,7 +24,12 @@
   ]}
 >
   <BeeWeb.Workbench.TitleBar.title_bar
-    title={window_title(@active, @root)}
+    title={
+      window_title(
+        @active && tab_label(Workbench.tab(workbench_from(assigns), @active), @extension_details),
+        @root
+      )
+    }
     palette={@palette}
     palette_items={palette_items(assigns)}
     palette_shortcut={Bee.Commands.Keybindings.label("workbench.action.quickOpen", @keybindings)}
@@ -49,7 +54,7 @@
     views={sidebar_views(assigns)}
     sidebar_open={@sidebar_open}
     root={@root}
-    active={@active}
+    active={Workbench.active_file(workbench_from(assigns))}
     plugins={@plugins}
     view_contents={@view_contents}
     view_inputs={@view_inputs}
@@ -86,7 +91,7 @@
           data-dirty={tab.dirty && "true"}
           data-menu="editor/title/context"
           data-menu-args={Jason.encode!([tab.path])}
-          data-menu-context={Jason.encode!(tab_menu_context(tab.path))}
+          data-menu-context={Jason.encode!(tab_menu_context(tab))}
           class={[
             "group flex items-center gap-1 pl-3 pr-1 py-1.5 border-r border-tab-border cursor-pointer whitespace-nowrap",
             if(tab.path == @active,
@@ -97,16 +102,28 @@
           ]}
           phx-click="activate_tab"
           phx-value-path={tab.path}
-          title={Bee.Workspace.FS.relative(@root, tab.path)}
+          title={
+            if tab.kind == :file,
+              do: Bee.Workspace.FS.relative(@root, tab.path),
+              else: tab_label(tab, @extension_details)
+          }
         >
           <BeeWeb.Workbench.FileIcon.file_icon
-            :if={@icon_theme}
+            :if={@icon_theme && tab.kind == :file}
             theme={@icon_theme}
             path={tab.path}
             language={tab.lang}
           />
-          <span class={tab_color(@file_decorations, @root, tab.path)}>
-            {Path.basename(tab.path)}
+          <.icon
+            :if={tab.kind == :extension}
+            name="hero-puzzle-piece"
+            class="size-4 shrink-0 opacity-70"
+          />
+          <span class={[
+            tab.kind == :file && tab_color(@file_decorations, @root, tab.path),
+            tab.kind == :extension && "italic"
+          ]}>
+            {tab_label(tab, @extension_details)}
           </span>
           <button
             class="size-5 grid place-items-center rounded cursor-pointer hover:bg-base-content/10"
@@ -140,6 +157,17 @@
         data-settings={Jason.encode!(@editor_settings)}
         class="absolute inset-0"
       >
+      </div>
+      <%!-- A plugin's details, over the (emptied) editor --%>
+      <div
+        :for={tab <- @tabs}
+        :if={tab.kind == :extension and tab.path == @active}
+        class="absolute inset-0"
+      >
+        <BeeWeb.Workbench.ExtensionEditor.extension_editor
+          name={tab.name}
+          details={@extension_details[tab.name]}
+        />
       </div>
       <div
         :if={@tabs == []}
@@ -207,7 +235,7 @@
     <span id="keybinding-status" phx-update="ignore"></span>
     <span :if={@status} id="status" class="truncate">{@status}</span>
     <span
-      :if={lang = @active && Bee.Workbench.language(%Bee.Workbench{tabs: @tabs}, @active)}
+      :if={lang = @active && Workbench.language(%Workbench{tabs: @tabs}, @active)}
       id="status-lang"
     >
       {Bee.Languages.name(lang)}

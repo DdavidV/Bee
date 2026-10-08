@@ -276,6 +276,17 @@ fn bridge_copy_text(app: AppHandle, text: String) -> Result<(), String> {
     app.clipboard().write_text(text).map_err(|e| e.to_string())
 }
 
+/// A web link (a plugin's README, its repository): opened in the user's
+/// browser, not in Bee's window. Only http(s) URLs.
+#[tauri::command]
+fn bridge_open_url(app: AppHandle, url: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err(format!("not a web link: {url}"));
+    }
+    app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
+}
+
 /// The page's title changed (another folder): so does the window's.
 #[tauri::command]
 fn bridge_title(window: tauri::WebviewWindow, title: String) {
@@ -536,10 +547,11 @@ fn main() {
             open_paths(app, &launch_paths(&args, Path::new(&cwd)));
         }));
     // Open Folder's native dialog (bridge_pick_folder); the clipboard
-    // (bridge_copy_text).
+    // (bridge_copy_text); the user's browser (bridge_open_url).
     let builder = builder
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_clipboard_manager::init());
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_opener::init());
 
     #[cfg(not(feature = "selftest"))]
     let builder = builder.invoke_handler(tauri::generate_handler![
@@ -549,6 +561,7 @@ fn main() {
         bridge_open_window,
         bridge_pick_folder,
         bridge_copy_text,
+        bridge_open_url,
         bridge_title
     ]);
 
@@ -560,6 +573,7 @@ fn main() {
         bridge_open_window,
         bridge_pick_folder,
         bridge_copy_text,
+        bridge_open_url,
         bridge_title,
         selftest::selftest_report,
         selftest::selftest_done,

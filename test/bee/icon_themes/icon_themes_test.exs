@@ -76,7 +76,8 @@ defmodule Bee.IconThemesTest do
     File.touch!(Path.join(dir, "theme.json"), System.os_time(:second) + 5)
     assert {:ok, %Theme{icons: icons}} = IconThemes.load("my", :dark)
     assert icons == %{}
-    assert :error = Plugins.asset_path("my-icons", "icons/elixir.svg")
+    # Still served, as an image in the plugin's folder (its details page's).
+    assert {:ok, _, :icon} = Plugins.asset_path("my-icons", "icons/elixir.svg")
 
     assert {:error, message} = IconThemes.load("nope", :dark)
     assert message =~ "no icon theme"
@@ -97,6 +98,10 @@ defmodule Bee.IconThemesTest do
     install_theme("my-icons", "my")
     Bee.Contributions.unregister({:plugin, "my-icons"})
     assert IconThemes.themes() == []
-    assert :error = Plugins.asset_path("my-icons", "icons/elixir.svg")
+
+    assert IconThemes.icon_file?(
+             "my-icons",
+             Path.join(Plugins.user_dir(), "my-icons/icons/elixir.svg")
+           ) == false
   end
 end

@@ -19,7 +19,11 @@ defmodule BeeWeb.Workbench.Sidebar do
   alias BeeWeb.Workbench.{ContributedView, PluginsView, SearchView, Toolbar}
 
   @explorer "workbench.explorer.fileView"
-  @plugins "workbench.extensions.installed"
+  # Bee's Plugins views: the plugins of these scopes.
+  @plugins %{
+    "workbench.extensions.installed" => [:user, :workspace],
+    "workbench.extensions.builtin" => [:builtin]
+  }
   @search "workbench.view.search"
 
   attr :containers, :list, required: true, doc: "with :badge"
@@ -92,7 +96,7 @@ defmodule BeeWeb.Workbench.Sidebar do
         explorer_shown: Enum.any?(assigns.views, &(&1.view.id == @explorer)),
         single: match?([_], assigns.views),
         explorer_id: @explorer,
-        plugins_id: @plugins,
+        plugin_views: Map.keys(@plugins),
         search_id: @search
       )
 
@@ -159,6 +163,12 @@ defmodule BeeWeb.Workbench.Sidebar do
             ]}
           />
           <span class="flex-1 truncate">{pane.view.name}</span>
+          <span
+            :if={pane[:count]}
+            class="min-w-4 h-4 px-1 rounded-full bg-badge text-badge-fg text-[10px] leading-4 text-center font-normal"
+          >
+            {pane.count}
+          </span>
           <Toolbar.toolbar :if={pane.open} actions={pane.title_actions} class="normal-case" />
         </div>
         <div class="flex-1 min-h-0 overflow-auto" inert={!pane.open}>
@@ -168,13 +178,15 @@ defmodule BeeWeb.Workbench.Sidebar do
             icon_theme={@icon_theme}
           />
           <PluginsView.plugins_view
-            :if={pane.view.id == @plugins_id}
-            plugins={@plugins}
+            :if={pane.view.id in @plugin_views}
+            id={pane.view.id}
+            plugins={plugins_in(@plugins, pane.view.id)}
+            builtin={pane.view.id == "workbench.extensions.builtin"}
             user_dir={Bee.Plugins.user_dir()}
             item_actions={pane.item_actions}
           />
           <ContributedView.contributed_view
-            :if={pane.view.id not in [@explorer_id, @plugins_id, @search_id]}
+            :if={pane.view.id not in [@explorer_id, @search_id | @plugin_views]}
             view={pane.view}
             content={@view_contents[pane.view.id]}
             input={Map.get(@view_inputs, pane.view.id, "")}
@@ -209,7 +221,12 @@ defmodule BeeWeb.Workbench.Sidebar do
             open: open?,
             grow: if(open?, do: Map.get(assigns.view_sizes, entry.view.id, default), else: 0),
             sash: open? and open_above?,
-            var: "--pane-" <> String.replace(entry.view.id, ~r/[^A-Za-z0-9_-]/, "_")
+            var: "--pane-" <> String.replace(entry.view.id, ~r/[^A-Za-z0-9_-]/, "_"),
+            # Plugins views count their plugins, like VS Code's.
+            count:
+              if(Map.has_key?(@plugins, entry.view.id),
+                do: length(plugins_in(assigns.plugins, entry.view.id))
+              )
           })
 
         {pane, open_above? or open?}
@@ -217,4 +234,6 @@ defmodule BeeWeb.Workbench.Sidebar do
 
     panes
   end
+
+  defp plugins_in(plugins, view_id), do: Enum.filter(plugins, &(&1.scope in @plugins[view_id]))
 end

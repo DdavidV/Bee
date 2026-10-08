@@ -97,17 +97,21 @@ defmodule Bee.Plugins do
 
   @doc """
   The file `rel` of plugin `name` that may be served to the browser: its
-  browser module, or an icon of one of its icon themes (`Bee.IconThemes`).
-  `{:ok, absolute_path, :module | :icon}` or `:error`.
+  browser module, an icon of one of its icon themes (`Bee.IconThemes`), or
+  an image in its folder (its icon, its README's pictures – of disabled
+  plugins too, for their details page). `{:ok, absolute_path, :module |
+  :icon}` or `:error`.
   """
   def asset_path(name, rel) do
     case get(name) do
-      %{dir: dir, status: status} = plugin when status not in [:invalid, :disabled] ->
+      %{dir: dir, status: status} = plugin ->
         path = Path.expand(rel, dir)
+        usable? = status not in [:invalid, :disabled]
 
         cond do
-          match?(%{browser: %{path: ^path}}, plugin) -> {:ok, path, :module}
-          Bee.IconThemes.icon_file?(name, path) -> {:ok, path, :icon}
+          usable? and match?(%{browser: %{path: ^path}}, plugin) -> {:ok, path, :module}
+          usable? and Bee.IconThemes.icon_file?(name, path) -> {:ok, path, :icon}
+          image?(path, dir) -> {:ok, path, :icon}
           true -> :error
         end
 
@@ -115,6 +119,13 @@ defmodule Bee.Plugins do
         :error
     end
   end
+
+  @images ~w(.png .jpg .jpeg .gif .svg .webp)
+
+  defp image?(path, dir),
+    do:
+      String.starts_with?(path, dir <> "/") and String.downcase(Path.extname(path)) in @images and
+        File.regular?(path)
 
   @doc """
   Runs plugin `name`'s server command `id` in the workspace of `ctx.root`,

@@ -651,7 +651,33 @@ defmodule BeeWeb.EditorLive do
   # Applies `fun` (a Workbench function or command handler) and its effects.
   defp change(socket, fun) do
     {wb, effects} = Workbench.wrap(fun.(workbench(socket)))
-    socket |> put_workbench(wb) |> run_effects(effects) |> sync_quick_open() |> sync_theme()
+
+    socket
+    |> put_workbench(wb)
+    |> run_effects(effects)
+    |> sync_quick_open()
+    |> sync_theme()
+    |> sync_extension_details()
+  end
+
+  # The details of the plugins shown in editor tabs (BeeWeb.Workbench.ExtensionEditor),
+  # read when a tab opens and again when plugins change (`reload?`).
+  defp sync_extension_details(socket, reload? \\ false) do
+    cached = if reload?, do: %{}, else: socket.assigns[:extension_details] || %{}
+
+    details =
+      for %{kind: :extension, name: name} <- socket.assigns.tabs, into: %{} do
+        case Map.fetch(cached, name) do
+          {:ok, details} ->
+            {name, details}
+
+          :error ->
+            plugin = Enum.find(socket.assigns[:plugins] || [], &(&1.name == name))
+            {name, plugin && Bee.Plugins.Details.get(plugin)}
+        end
+      end
+
+    assign(socket, extension_details: details)
   end
 
   @doc false
@@ -994,7 +1020,7 @@ defmodule BeeWeb.EditorLive do
   end
 
   defp plugin_context(assigns) do
-    active = assigns.active
+    active = Workbench.active_file(workbench_from(assigns))
 
     selections =
       case assigns.selection do
@@ -1144,8 +1170,8 @@ defmodule BeeWeb.EditorLive do
           %{items: items} ->
             item_contexts(items)
 
-          # Bee's Plugins view: its rows (BeeWeb.Workbench.PluginsView).
-          _ when view.id == "workbench.extensions.installed" ->
+          # Bee's Plugins views: their rows (BeeWeb.Workbench.PluginsView).
+          _ when view.id in ["workbench.extensions.installed", "workbench.extensions.builtin"] ->
             BeeWeb.Workbench.PluginsView.contexts()
 
           _ ->
@@ -1190,34 +1216,40 @@ defmodule BeeWeb.EditorLive do
   end
 
   defp load_plugins(socket) do
-    assign(socket,
+    socket
+    |> assign(
       plugins: Plugins.list(socket.assigns.root),
       plugin_errors: Plugins.errors(socket.assigns.root),
       browser_plugins: Plugins.browser_modules(socket.assigns.root)
     )
+    |> sync_extension_details(true)
   end
 
   ## Languages
 
   # Language contributions or files.associations changed: re-detect open tabs.
   defp redetect_languages(socket) do
-    Enum.reduce(socket.assigns.tabs, socket, fn %{path: path, lang: old}, socket ->
-      text =
-        try do
-          Buffer.get(path).text
-        catch
-          :exit, _ -> ""
+    Enum.reduce(socket.assigns.tabs, socket, fn
+      %{kind: :file, path: path, lang: old}, socket ->
+        text =
+          try do
+            Buffer.get(path).text
+          catch
+            :exit, _ -> ""
+          end
+
+        case Languages.detect(path, first_line: Languages.first_line(text)) do
+          ^old ->
+            socket
+
+          lang ->
+            socket
+            |> change(&Workbench.set_language(&1, path, lang))
+            |> push_event("cm:language", %{path: path, lang: lang, mode: Languages.mode(lang)})
         end
 
-      case Languages.detect(path, first_line: Languages.first_line(text)) do
-        ^old ->
-          socket
-
-        lang ->
-          socket
-          |> change(&Workbench.set_language(&1, path, lang))
-          |> push_event("cm:language", %{path: path, lang: lang, mode: Languages.mode(lang)})
-      end
+      _other, socket ->
+        socket
     end)
   end
 
@@ -1664,13 +1696,22 @@ defmodule BeeWeb.EditorLive do
 
   @doc false
   # `when` keys of a tab's right-click menu (editor/title/context).
-  def tab_menu_context(path) do
+  def tab_menu_context(%{kind: :file, path: path}) do
     %{
+      "resourceScheme" => "file",
       "resourcePath" => path,
       "resourceFilename" => Path.basename(path),
       "resourceExtname" => Path.extname(path)
     }
   end
+
+  def tab_menu_context(_tab), do: %{"resourceScheme" => "extension"}
+
+  # A tab's name: the file's, or "Extension: <plugin>".
+  defp tab_label(%{kind: :file, path: path}, _details), do: Path.basename(path)
+
+  defp tab_label(%{kind: :extension, name: name}, details),
+    do: "Extension: " <> ((details[name] && details[name].display_name) || name)
 
   # Tabs are coloured like their file in the Explorer (git status…).
   defp tab_color(decorations, root, path) do
@@ -1710,7 +1751,7 @@ defmodule BeeWeb.EditorLive do
 
   # "file — workspace", like VS Code's window title.
   defp window_title(nil, root), do: Path.basename(root)
-  defp window_title(active, root), do: "#{Path.basename(active)} — #{Path.basename(root)}"
+  defp window_title(label, root), do: "#{label} — #{Path.basename(root)}"
 
   # Workspace-relative where possible; settings files get readable names.
   defp display_path(root, path) do

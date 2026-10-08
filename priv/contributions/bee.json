@@ -48,7 +48,7 @@
         "category": "File",
         "title": "Save",
         "runtime": "client",
-        "enablement": "activeEditor"
+        "enablement": "resourceScheme == file"
       },
       {
         "command": "undo",
@@ -105,7 +105,7 @@
         "category": "File",
         "title": "Copy Path",
         "runtime": "client",
-        "enablement": "activeEditor"
+        "enablement": "resourceScheme == file"
       },
       {
         "command": "workbench.action.toggleSidebarVisibility",
@@ -289,6 +289,12 @@
         "runtime": "server"
       },
       {
+        "command": "extension.open",
+        "category": "Plugins",
+        "title": "Show Plugin Details",
+        "runtime": "server"
+      },
+      {
         "command": "workbench.action.selectIconTheme",
         "category": "Preferences",
         "title": "File Icon Theme",
@@ -449,7 +455,10 @@
     "views": {
       "explorer": [{"id": "workbench.explorer.fileView", "name": "Folders"}],
       "search": [{"id": "workbench.view.search", "name": "Search"}],
-      "extensions": [{"id": "workbench.extensions.installed", "name": "Installed"}],
+      "extensions": [
+        {"id": "workbench.extensions.installed", "name": "Installed"},
+        {"id": "workbench.extensions.builtin", "name": "Built-in"}
+      ],
       "terminal": [{"id": "workbench.panel.terminal", "name": "Terminal"}],
       "console": [{"id": "workbench.panel.console", "name": "Bee Console"}]
     },
@@ -492,8 +501,8 @@
         {"command": "bee.plugins.reload", "group": "navigation@2", "when": "view == workbench.extensions.installed"}
       ],
       "view/item/context": [
-        {"command": "bee.plugins.disable", "group": "inline@1", "when": "view == workbench.extensions.installed && viewItem =~ /^plugin\\.enabled\\./"},
-        {"command": "bee.plugins.enable", "group": "inline@1", "when": "view == workbench.extensions.installed && viewItem =~ /^plugin\\.disabled\\./"},
+        {"command": "bee.plugins.disable", "group": "inline@1", "when": "view =~ /^workbench\\.extensions\\./ && viewItem =~ /^plugin\\.enabled\\./"},
+        {"command": "bee.plugins.enable", "group": "inline@1", "when": "view =~ /^workbench\\.extensions\\./ && viewItem =~ /^plugin\\.disabled\\./"},
         {"command": "bee.plugins.uninstall", "group": "inline@2", "when": "view == workbench.extensions.installed && viewItem =~ /\\.user$/"}
       ],
       "panel/title": [
@@ -510,7 +519,7 @@
         {"command": "workbench.action.closeEditor", "group": "1_close@1"},
         {"command": "workbench.action.closeOtherEditors", "group": "1_close@2"},
         {"command": "workbench.action.closeAllEditors", "group": "1_close@3"},
-        {"command": "copyFilePath", "group": "2_copy@1"}
+        {"command": "copyFilePath", "group": "2_copy@1", "when": "resourceScheme == file"}
       ],
       "explorer/context": [
         {"command": "explorer.newFile", "group": "navigation@1", "when": "explorerResourceIsFolder"},
@@ -539,11 +548,12 @@
         {"command": "bee.plugins.uninstallConfirmed", "when": "false"},
         {"command": "workbench.action.setIconTheme", "when": "false"},
         {"command": "workbench.action.setColorTheme", "when": "false"},
+        {"command": "extension.open", "when": "false"},
         {"command": "bee.plugins.disable", "when": "false"}
       ],
       "editor/title": [
-        {"command": "undo", "group": "navigation@1", "when": "activeEditor"},
-        {"command": "redo", "group": "navigation@2", "when": "activeEditor"}
+        {"command": "undo", "group": "navigation@1", "when": "resourceScheme == file"},
+        {"command": "redo", "group": "navigation@2", "when": "resourceScheme == file"}
       ],
       "menubar/view": [
         {"command": "workbench.action.showCommands", "group": "1_commands@1"},

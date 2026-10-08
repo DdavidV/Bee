@@ -177,7 +177,7 @@ defmodule Bee.WorkbenchTest do
 
   describe "tabs" do
     defp with_tabs(paths, dirty \\ []) do
-      tabs = for p <- paths, do: %{path: p, dirty: p in dirty, lang: "plaintext"}
+      tabs = for p <- paths, do: %{path: p, kind: :file, dirty: p in dirty, lang: "plaintext"}
       %{wb() | tabs: tabs, active: List.last(paths)}
     end
 

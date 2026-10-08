@@ -252,11 +252,16 @@ defmodule Bee.Workbench.Actions do
     do: Workbench.open_editor(wb, Bee.Commands.Keybindings.ensure_user_file!())
 
   # Like VS Code's: pick one of the contributed color themes, light ones
-  # first; the selected one is previewed until the pick closes.
+  # first; the selected one is previewed until the pick closes. With a
+  # plugin's name, only its themes (its details page's Set Color Theme).
   @command "workbench.action.selectTheme"
-  def select_theme(wb) do
+  def select_theme(wb, args \\ []) do
     current = Bee.ColorThemes.get(Bee.Settings.get("workbench.colorTheme")).id
-    themes = Enum.sort_by(Bee.ColorThemes.themes(), &(&1.base == :dark))
+
+    themes =
+      Bee.ColorThemes.themes()
+      |> only_plugin(args)
+      |> Enum.sort_by(&(&1.base == :dark))
 
     items =
       for t <- themes do
@@ -287,16 +292,22 @@ defmodule Bee.Workbench.Actions do
 
   def set_color_theme(wb, _args), do: wb
 
-  # Like VS Code's: pick one of the contributed file icon themes (or none).
+  defp only_plugin(themes, [name | _]) when is_binary(name),
+    do: Enum.filter(themes, &(&1.plugin == name))
+
+  defp only_plugin(themes, _args), do: themes
+
+  # Like VS Code's: pick one of the contributed file icon themes (or none);
+  # with a plugin's name, one of its themes.
   @command "workbench.action.selectIconTheme"
-  def select_icon_theme(wb) do
+  def select_icon_theme(wb, args \\ []) do
     current = Bee.Settings.get("workbench.iconTheme")
+    none = if args == [], do: [{"None", "Bee's own icons", nil}], else: []
 
     items =
-      for {label, plugin, id} <- [
-            {"None", "Bee's own icons", nil}
-            | for(t <- Bee.IconThemes.themes(), do: {t.label, t.plugin, t.id})
-          ] do
+      for {label, plugin, id} <-
+            none ++
+              for(t <- only_plugin(Bee.IconThemes.themes(), args), do: {t.label, t.plugin, t.id}) do
         %{
           label: label,
           description: if(id == current, do: "#{plugin} · current", else: plugin),
@@ -317,6 +328,13 @@ defmodule Bee.Workbench.Actions do
     do: {wb, [{:update_setting, "workbench.iconTheme", if(id == "", do: nil, else: id)}]}
 
   def set_icon_theme(wb, _args), do: wb
+
+  ## Plugins' details
+
+  # Like VS Code's extension editor: the plugin's details in an editor tab.
+  @command "extension.open"
+  def open_extension(wb, [name | _]) when is_binary(name), do: Workbench.open_extension(wb, name)
+  def open_extension(wb, _args), do: wb
 
   ## Folders (workspaces)
 

@@ -1301,8 +1301,33 @@ defmodule BeeWeb.EditorLiveTest do
     test "the Plugins view lists installed plugins and their problems", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
       view |> element("#view-extensions") |> render_click()
-      assert has_element?(view, "#plugins-view", "No plugins installed")
+
+      assert has_element?(
+               view,
+               "#plugins-workbench\\.extensions\\.installed",
+               "No plugins installed"
+             )
+
       assert has_element?(view, "#sidebar > div.hidden #explorer")
+
+      # Two sections, VS Code style, each with its count (built-in plugins
+      # are off in tests).
+      assert has_element?(view, "#view-header-workbench\\.extensions\\.installed", "0")
+
+      assert has_element?(
+               view,
+               "#plugins-workbench\\.extensions\\.builtin",
+               "No built-in plugins"
+             )
+
+      view |> element("#view-header-workbench\\.extensions\\.builtin") |> render_click()
+
+      assert has_element?(
+               view,
+               "#view-header-workbench\\.extensions\\.builtin[aria-expanded=false]"
+             )
+
+      view |> element("#view-header-workbench\\.extensions\\.builtin") |> render_click()
 
       install(["word-count"])
       File.mkdir_p!(Path.join(Bee.Plugins.user_dir(), "broken"))
@@ -1310,6 +1335,13 @@ defmodule BeeWeb.EditorLiveTest do
       Bee.Plugins.reload()
 
       assert has_element?(view, "#plugin-word-count", "Word Count")
+
+      assert has_element?(
+               view,
+               "#plugins-workbench\\.extensions\\.installed #plugin-word-count"
+             )
+
+      assert has_element?(view, "#view-header-workbench\\.extensions\\.installed", "2")
       assert has_element?(view, "#plugin-word-count", "installed")
       assert has_element?(view, "#plugin-broken", "invalid")
       assert has_element?(view, "#problems", "1 problem")
@@ -1349,6 +1381,85 @@ defmodule BeeWeb.EditorLiveTest do
       Bee.Plugins.reload()
 
       refute Bee.Plugins.get("word-count", Bee.Workspace.root()).status == :disabled
+    end
+
+    test "a plugin's details open in an editor tab, like VS Code's extension editor", %{
+      conn: conn
+    } do
+      install(["word-count"])
+      dir = Path.join(Bee.Plugins.user_dir(), "word-count")
+      File.write!(Path.join(dir, "README.md"), "# Word Count\n\nCounts **words**.")
+      File.write!(Path.join(dir, "icon.svg"), "<svg/>")
+
+      manifest =
+        Path.join(dir, "plugin.json")
+        |> File.read!()
+        |> Jason.decode!()
+        |> Map.merge(%{"publisher" => "bee", "icon" => "icon.svg", "license" => "MIT"})
+
+      File.write!(Path.join(dir, "plugin.json"), Jason.encode!(manifest))
+      Bee.Plugins.reload()
+
+      {:ok, view, _html} = live(conn, ~p"/")
+      open_file(view, "README.md")
+      view |> element("#view-extensions") |> render_click()
+      view |> element("#plugin-word-count") |> render_click()
+
+      # Its tab, after the file's; CodeMirror puts the file away.
+      assert has_element?(
+               view,
+               "#tabs [data-path='extension:word-count']",
+               "Extension: Word Count"
+             )
+
+      assert data(view, "#tabs [data-path='extension:word-count']", "data-active") == "true"
+      assert_push_event(view, "cm:deactivate", %{})
+      assert has_element?(view, "#window-title", "Extension: Word Count")
+
+      page = element(view, "#extension-word-count") |> render()
+      assert page =~ "Word Count"
+      assert page =~ "bee"
+      assert page =~ "v0.1.0"
+      assert page =~ "MIT"
+      assert page =~ ~s(src="/plugins/word-count/icon.svg")
+      # The README, for the browser to render (the Markdown hook).
+      assert data(view, "#extension-word-count-readme", "data-markdown") =~ "Counts **words**."
+      assert data(view, "#extension-word-count-readme", "data-base") == "/plugins/word-count/"
+      # Features: its command (with its key) and setting.
+      assert has_element?(view, "#extension-word-count-features td", "Word Count: Count Words")
+      assert has_element?(view, "#extension-word-count-features td", "ctrl+alt+w")
+      assert has_element?(view, "#extension-word-count-features td", "wordCount.countNumbers")
+      assert has_element?(view, "#extension-word-count [data-command='bee.plugins.uninstall']")
+
+      # Its icon and pictures are served from its folder, nothing else is.
+      assert build_conn() |> get("/plugins/word-count/icon.svg") |> response(200) == "<svg/>"
+      assert build_conn() |> get("/plugins/word-count/README.md") |> response(404)
+
+      # Not a file: no Save, Copy Path, undo or redo.
+      ctx = json_data(view, "#workbench", "data-context")
+      assert ctx["resourceScheme"] == "extension"
+      assert ctx["activeEditor"] == "extension:word-count"
+      refute ctx["resourcePath"]
+      refute has_element?(view, "#editor-actions [data-command='undo']")
+
+      # Opened again: the same tab. The file's tab brings the file back.
+      view |> element("#plugin-word-count") |> render_click()
+      assert view |> element("#tabs") |> render() |> String.split("data-tab") |> length() == 3
+      view |> element("#tabs [data-path$='/README.md']") |> render_click()
+      assert_push_event(view, "cm:activate", %{path: _})
+      refute has_element?(view, "#extension-word-count")
+
+      # Disabled from its page; closed like any tab (no buffer to close).
+      run(view, "extension.open", ["word-count"])
+
+      view
+      |> element("#extension-word-count [data-command='bee.plugins.disable']")
+      |> render_click()
+
+      eventually(fn -> has_element?(view, "#extension-word-count", "disabled") end)
+      run(view, "workbench.action.closeActiveEditor")
+      refute has_element?(view, "#tabs [data-path='extension:word-count']")
+      run(view, "bee.plugins.enable", ["word-count"])
     end
 
     test "a color theme is picked like in VS Code, previewed while selected", %{conn: conn} do
@@ -2119,6 +2230,9 @@ defmodule BeeWeb.EditorLiveTest do
 
   # What a keybinding does: the hook pushes run_command.
   defp run(view, command), do: render_hook(view, "run_command", %{"command" => command})
+
+  defp run(view, command, args),
+    do: render_hook(view, "run_command", %{"command" => command, "args" => Jason.encode!(args)})
 
   defp open_panel(view) do
     html = view |> element("#layout-panel") |> render_click()

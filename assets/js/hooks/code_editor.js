@@ -16,7 +16,8 @@
 // mode for it (editor/modes.js); a mode registered later by a plugin is
 // applied to the files waiting for it.
 //
-// Server -> client: cm:open, cm:activate, cm:close, cm:reload, cm:language,
+// Server -> client: cm:open, cm:activate, cm:deactivate (an editor that
+//                   isn't a file is shown), cm:close, cm:reload, cm:language,
 //                   cm:edit (server-side edits, UTF-8 byte offsets),
 //                   cm:reveal (select a range / go to a line)
 // Client -> server: doc_changed (throttled), save, selection_changed
@@ -166,6 +167,7 @@ export const CodeEditor = {
 
     this.handleEvent("cm:open", ({path, text, mode}) => this.open(path, text, mode))
     this.handleEvent("cm:activate", ({path}) => this.activate(path))
+    this.handleEvent("cm:deactivate", () => this.deactivate())
     this.handleEvent("cm:close", ({path}) => this.close(path))
     this.handleEvent("cm:reload", ({path, text}) => this.reload(path, text))
     this.handleEvent("cm:language", ({path, mode}) => this.setMode(path, mode))
@@ -304,6 +306,16 @@ export const CodeEditor = {
     this.states.delete(path)
     this.view.focus()
     this.selectionChanged()
+    this.historyChanged()
+  },
+
+  // Another kind of editor is shown: the file is put away until activated.
+  deactivate() {
+    if (this.active === null) return
+    this.stash()
+    this.active = null
+    this.view.setState(EditorState.create())
+    this.view.contentDOM.blur()
     this.historyChanged()
   },
 

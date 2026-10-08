@@ -1,34 +1,45 @@
 defmodule BeeWeb.Workbench.PluginsView do
   @moduledoc """
-  The Plugins sidebar view (`workbench.extensions.installed`): installed
-  plugins from `Bee.Plugins.list/0` with their status and problems. Its
-  Install from VSIX and reload buttons are `view/title` menu items in
-  `bee.json`; each row's Enable/Disable and Uninstall buttons
-  `view/item/context` ones (`viewItem` is
-  `plugin.<enabled|disabled>.<builtin|user|workspace>`).
+  The Plugins sidebar views, sections like VS Code's: Installed
+  (`workbench.extensions.installed`: the user's and the workspace's
+  plugins) and Built-in (`workbench.extensions.builtin`), from
+  `Bee.Plugins.list/0` with their status and problems. Their Install from
+  VSIX and reload buttons are `view/title` menu items in `bee.json`; each
+  row's Enable/Disable and Uninstall buttons `view/item/context` ones
+  (`viewItem` is `plugin.<enabled|disabled>.<builtin|user|workspace>`).
+  Clicking a row opens the plugin's details (`extension.open`).
   """
   use BeeWeb, :html
 
   alias BeeWeb.Workbench.Toolbar
 
-  attr :plugins, :list, required: true
+  attr :id, :string, required: true, doc: "the view's id"
+  attr :plugins, :list, required: true, doc: "this section's"
+  attr :builtin, :boolean, default: false, doc: "the Built-in section"
   attr :user_dir, :string, required: true
   attr :item_actions, :map, required: true, doc: "row context → inline actions"
 
   def plugins_view(assigns) do
     ~H"""
-    <div id="plugins-view" class="text-sm">
-      <div :if={@plugins == []} class="px-3 py-2 text-xs opacity-60 space-y-2">
+    <div id={"plugins-#{@id}"} class="text-sm">
+      <p :if={@plugins == [] and @builtin} class="px-3 py-2 text-xs opacity-60">
+        No built-in plugins.
+      </p>
+      <div :if={@plugins == [] and not @builtin} class="px-3 py-2 text-xs opacity-60 space-y-2">
         <p>No plugins installed.</p>
         <p>
-          Put a plugin folder (with a <code>plugin.json</code>) in <code class="break-all">{@user_dir}</code>.
+          Install one from a VSIX, or put a plugin folder (with a <code>plugin.json</code>)
+          in <code class="break-all">{@user_dir}</code>.
         </p>
       </div>
 
       <div
         :for={plugin <- @plugins}
         id={"plugin-#{plugin.name}"}
-        class="px-3 py-2 border-b border-sidebar-section-border hover:bg-list-hover"
+        class="px-3 py-2 border-b border-sidebar-section-border hover:bg-list-hover cursor-pointer"
+        phx-click="run_command"
+        phx-value-command="extension.open"
+        phx-value-args={Jason.encode!([plugin.name])}
       >
         <div class="flex items-center gap-2">
           <span class={["font-medium truncate", plugin.status == :disabled && "opacity-50"]}>
