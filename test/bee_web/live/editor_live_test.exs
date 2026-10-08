@@ -297,9 +297,9 @@ defmodule BeeWeb.EditorLiveTest do
   describe "Bee Console" do
     test "opens as a panel tab and evaluates in this window", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
-      [_, id] = Regex.run(~r/id="term-(\d+)"/, run(view, "bee.console.open"))
-      id = String.to_integer(id)
-      assert has_element?(view, "#term-tab-#{id}", "Bee Console")
+      run(view, "bee.console.open")
+      assert has_element?(view, "#panel-section-console[aria-selected=true]")
+      id = view |> data("#bee-console", "data-id") |> String.to_integer()
 
       # Like a terminal: the scrollback (the banner) on term_ready, then output.
       render_hook(view, "term_ready", %{"id" => id, "cols" => 80, "rows" => 24})
@@ -312,8 +312,7 @@ defmodule BeeWeb.EditorLiveTest do
         "data" => ~s|run("workbench.action.showCommands")\r|
       })
 
-      assert_push_event(view, "palette:query", %{query: ">"}, 2_000)
-      assert has_element?(view, "#palette")
+      eventually(fn -> has_element?(view, "#palette-input[value='>']") end)
     end
   end
 
@@ -323,7 +322,9 @@ defmodule BeeWeb.EditorLiveTest do
       refute has_element?(view, "#panel")
 
       id = open_panel(view)
-      assert has_element?(view, "#term-tab-#{id}", "1: sh")
+      assert has_element?(view, "#term-tab-#{id}", "sh")
+      assert has_element?(view, "#panel-section-terminal[aria-selected=true]", "Terminal")
+      assert has_element?(view, "#panel-section-console", "Bee Console")
       assert [{_pid, _}] = Registry.lookup(Bee.Registry, {:terminal, id})
     end
 
@@ -347,7 +348,7 @@ defmodule BeeWeb.EditorLiveTest do
       [{pid, _}] = Registry.lookup(Bee.Registry, {:terminal, id})
       ref = Process.monitor(pid)
 
-      view |> element("#panel button[phx-click='close_terminal']") |> render_click()
+      view |> element("#panel [data-command='workbench.action.terminal.kill']") |> render_click()
       assert_receive {:DOWN, ^ref, :process, ^pid, :normal}
       refute has_element?(view, "#term-tab-#{id}")
     end
@@ -377,6 +378,121 @@ defmodule BeeWeb.EditorLiveTest do
       run(view, "workbench.action.togglePanel")
       assert has_element?(view, "#term-#{id}")
       refute has_element?(view, "#term-tab-#{id} ~ [id^='term-tab-']")
+    end
+
+    test "two or more: a list to pick from, reorder and right-click", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      first = open_panel(view)
+      refute has_element?(view, "#terminal-list")
+
+      run(view, "workbench.action.terminal.new")
+
+      [second] =
+        view
+        |> render()
+        |> then(&Regex.scan(~r/id="term-(\d+)"/, &1))
+        |> Enum.map(fn [_, id] -> String.to_integer(id) end)
+        |> Kernel.--([first])
+
+      assert has_element?(view, "#terminal-list [data-term='#{first}']")
+      assert has_element?(view, "#terminal-list [data-term='#{second}'][aria-selected=true]")
+
+      view |> element("#term-tab-#{first}") |> render_click()
+      assert has_element?(view, "#terminal-list [data-term='#{first}'][aria-selected=true]")
+
+      render_hook(view, "reorder_terminals", %{"order" => ["#{second}", "#{first}"]})
+      assert has_element?(view, "#terminal-list li:first-child[data-term='#{second}']")
+
+      right_click(view, "#term-tab-#{first}")
+
+      assert menu_items(view) == [
+               "workbench.action.terminal.rename",
+               "workbench.action.terminal.changeIcon",
+               "workbench.action.terminal.changeColor",
+               "workbench.action.terminal.kill"
+             ]
+
+      # Rename: asks, with the current name.
+      menu_click(view, "workbench.action.terminal.rename")
+      assert has_element?(view, "#palette-input[value='sh']")
+      view |> form("#palette-form", %{query: "server"}) |> render_change()
+      view |> form("#palette-form") |> render_submit()
+      assert has_element?(view, "#term-tab-#{first}", "server")
+
+      # Icon and colour: picked from lists.
+      right_click(view, "#term-tab-#{first}")
+      menu_click(view, "workbench.action.terminal.changeIcon")
+      view |> form("#palette-form", %{query: "rocket"}) |> render_change()
+      view |> form("#palette-form") |> render_submit()
+
+      right_click(view, "#term-tab-#{first}")
+      menu_click(view, "workbench.action.terminal.changeColor")
+      view |> form("#palette-form", %{query: "green"}) |> render_change()
+      view |> form("#palette-form") |> render_submit()
+
+      assert has_element?(
+               view,
+               "#term-tab-#{first}[data-icon='rocket-launch'][data-color='green']"
+             )
+
+      assert view |> element("#term-tab-#{first}") |> render() =~ "text-green-400"
+
+      # Each entry has its own kill button (shown on hover).
+      assert has_element?(
+               view,
+               "#terminal-list [data-term='#{second}'] [data-kill][phx-value-args='[#{second}]']"
+             )
+
+      # Kill from the menu: one left, the list goes.
+      right_click(view, "#term-tab-#{second}")
+      menu_click(view, "workbench.action.terminal.kill")
+      refute has_element?(view, "#terminal-list")
+      assert has_element?(view, "#panel header #term-tab-#{first}", "server")
+    end
+
+    test "the sections' tabs can be reordered", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      open_panel(view)
+      assert has_element?(view, "#panel-sections > :first-child[data-section='terminal']")
+
+      render_hook(view, "reorder_panel", %{"order" => ["console", "terminal"]})
+      assert has_element?(view, "#panel-sections > :first-child[data-section='console']")
+      assert has_element?(view, "#panel-sections > :last-child[data-section='terminal']")
+    end
+
+    test "maximize, and plugins' panel sections", %{conn: conn} do
+      on_exit(fn ->
+        Bee.Contributions.unregister({:plugin, "panel-test"})
+        Bee.UI.forget("panel-test")
+      end)
+
+      :ok =
+        Bee.Contributions.register({:plugin, "panel-test"}, %{
+          "name" => "panel-test",
+          "contributes" => %{
+            "viewsContainers" => %{
+              "panel" => [%{"id" => "panelTest", "title" => "Output", "icon" => "list-bullet"}]
+            },
+            "views" => %{"panelTest" => [%{"id" => "panelTest.log", "name" => "Log"}]}
+          }
+        })
+
+      ctx = %Bee.Plugins.Context{plugin: "panel-test", root: Bee.Workspace.root()}
+      :ok = Bee.API.set_view(ctx, "panelTest.log", %{message: "hello from a plugin"})
+
+      {:ok, view, _html} = live(conn, ~p"/")
+      open_panel(view)
+      view |> element("#panel-section-panelTest") |> render_click()
+      assert has_element?(view, "#panel-section-panelTest[aria-selected=true]", "Output")
+      assert has_element?(view, "#panel-body-panelTest", "hello from a plugin")
+      assert has_element?(view, "#panel-body-terminal.invisible")
+
+      view
+      |> element("#panel-actions [data-command='workbench.action.toggleMaximizedPanel']")
+      |> render_click()
+
+      assert has_element?(view, "#panel[data-maximized=true]")
+      assert has_element?(view, "#panel-actions [title='Restore Panel Size']")
     end
 
     test "terminals of other sessions cannot be driven", %{conn: conn} do
@@ -1667,7 +1783,12 @@ defmodule BeeWeb.EditorLiveTest do
         "x" => 10,
         "y" => 20,
         "args" => json_data(view, selector, "data-menu-args"),
-        "context" => json_data(view, selector, "data-menu-context")
+        # Optional, as in the page.
+        "context" =>
+          if(has_element?(view, selector <> "[data-menu-context]"),
+            do: json_data(view, selector, "data-menu-context"),
+            else: %{}
+          )
       })
     end
 

@@ -123,15 +123,122 @@ defmodule Bee.Workbench.Actions do
   @command "workbench.action.togglePanel"
   def toggle_panel(wb), do: Workbench.toggle_panel(wb)
 
-  # An Elixir shell inside Bee, in a panel tab (Bee.Console).
+  ## Panel
+
+  @command "workbench.action.closePanel"
+  def close_panel(%{panel_open: true} = wb), do: Workbench.toggle_panel(wb)
+  def close_panel(wb), do: wb
+
+  @command "workbench.action.toggleMaximizedPanel"
+  def toggle_maximized_panel(wb), do: Workbench.toggle_maximized_panel(wb)
+
+  # A section's tab in the panel: [container id].
+  @command "workbench.action.showPanel"
+  def show_panel(wb, [id]) when is_binary(id), do: Workbench.show_panel(wb, id)
+  def show_panel(wb, _args), do: wb
+
+  # An Elixir shell inside Bee, the panel's Bee Console section (Bee.Console).
   @command "bee.console.open"
-  def open_console(wb), do: {wb, [:new_console]}
+  def open_console(wb), do: Workbench.show_panel(wb, "console")
+
+  @command "bee.console.clear"
+  def clear_console(%{console: nil} = wb), do: wb
+  def clear_console(wb), do: {wb, [{:clear_console, wb.console}]}
 
   @command "workbench.action.terminal.new"
   def new_terminal(wb), do: {wb, [:new_terminal]}
 
+  # Terminal commands act on the terminal of their first argument (the
+  # tab right-clicked), else the active one. Given a value too (a name, an
+  # icon, a colour) they set it; else they ask for it.
+
   @command "workbench.action.terminal.kill"
-  def kill_terminal(wb), do: Workbench.kill_terminal(wb, wb.active_term)
+  def kill_terminal(wb, args), do: Workbench.kill_terminal(wb, terminal_id(wb, args))
+
+  @command "workbench.action.terminal.rename"
+  def rename_terminal(wb, [id, name]) when is_binary(name),
+    do: Workbench.rename_terminal(wb, id, name)
+
+  def rename_terminal(wb, args) do
+    case terminal(wb, args) do
+      nil ->
+        wb
+
+      t ->
+        Workbench.open_input_box(wb, %{
+          command: "workbench.action.terminal.rename",
+          arguments: [t.id],
+          value: t.name,
+          prompt: "Terminal name",
+          placeholder: "Enter a name for the terminal"
+        })
+    end
+  end
+
+  @terminal_icons ~w(command-line code-bracket cpu-chip server server-stack circle-stack
+                     cloud globe-alt rocket-launch play bolt fire beaker bug-ant
+                     wrench-screwdriver cog-6-tooth cube sparkles star heart flag
+                     bookmark document-text folder home shield-check eye chart-bar)
+
+  @command "workbench.action.terminal.changeIcon"
+  def change_terminal_icon(wb, [id, icon]) when icon in @terminal_icons,
+    do: Workbench.set_terminal_icon(wb, id, icon)
+
+  def change_terminal_icon(wb, args) do
+    case terminal(wb, args) do
+      nil ->
+        wb
+
+      t ->
+        Workbench.open_quick_pick(wb, %{
+          items:
+            for(
+              icon <- @terminal_icons,
+              do: %{label: icon, description: "", value: icon, icon: icon, color: t.color}
+            ),
+          command: "workbench.action.terminal.changeIcon",
+          arguments: [t.id],
+          placeholder: "Select an icon for #{t.name}"
+        })
+    end
+  end
+
+  @command "workbench.action.terminal.changeColor"
+  def change_terminal_color(wb, [id, color]) when is_binary(color),
+    do: Workbench.set_terminal_color(wb, id, if(color == "default", do: nil, else: color))
+
+  def change_terminal_color(wb, args) do
+    case terminal(wb, args) do
+      nil ->
+        wb
+
+      t ->
+        colors =
+          for c <- ["default" | Workbench.terminal_colors()],
+              do: %{
+                label: String.capitalize(c),
+                description: if(c == (t.color || "default"), do: "current", else: ""),
+                value: c,
+                icon: t.icon,
+                color: if(c != "default", do: c)
+              }
+
+        Workbench.open_quick_pick(wb, %{
+          items: colors,
+          command: "workbench.action.terminal.changeColor",
+          arguments: [t.id],
+          placeholder: "Select a color for #{t.name}"
+        })
+    end
+  end
+
+  defp terminal(wb, args) do
+    id = terminal_id(wb, args)
+    Enum.find(wb.terminals, &(&1.id == id))
+  end
+
+  defp terminal_id(_wb, [id | _]) when is_integer(id), do: id
+  defp terminal_id(wb, _args), do: wb.active_term
 
   @command "workbench.action.openSettingsJson"
   def open_settings_json(wb), do: Workbench.open_editor(wb, Bee.Settings.ensure_user_file!())

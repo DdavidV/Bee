@@ -1,13 +1,17 @@
 defmodule Bee.Views do
   @moduledoc """
-  Sidebar views: a `Bee.Contributions.Point` for the `viewsContainers` and
-  `views` sections of manifests, VS Code style.
+  Views: a `Bee.Contributions.Point` for the `viewsContainers` and `views`
+  sections of manifests, VS Code style.
 
-    * a container is an icon in the activity bar (`"explorer"`,
-      `"extensions"`, a plugin's `"scm"`…); clicking it shows its views
-    * a view is a section of the sidebar inside a container. Bee renders its
-      own views (Explorer, Plugins, Search) itself; a plugin fills its views
-      with data through `Bee.API.set_view/3` (stored in `Bee.UI`)
+    * a container is either an icon in the activity bar
+      (`viewsContainers.activitybar`: `"explorer"`, `"extensions"`, a
+      plugin's `"scm"`…; clicking it shows its views in the sidebar) or a
+      section of the bottom panel (`viewsContainers.panel`: `"terminal"`,
+      `"console"`…; its title is the panel's tab)
+    * a view is a part of a container. Bee renders its own views (Explorer,
+      Plugins, Search, Terminal, Bee Console) itself; a plugin fills its
+      views with data through `Bee.API.set_view/3` (stored in `Bee.UI`),
+      wherever they are
 
   A source may add views to another source's container (e.g. a plugin to
   `"explorer"`). Container and view ids are unique across sources.
@@ -16,7 +20,14 @@ defmodule Bee.Views do
 
   alias Bee.Contributions
 
-  @type container :: %{id: String.t(), title: String.t(), icon: String.t(), source: term()}
+  @type location :: :activitybar | :panel
+  @type container :: %{
+          id: String.t(),
+          title: String.t(),
+          icon: String.t(),
+          location: location,
+          source: term()
+        }
   @type view :: %{
           id: String.t(),
           name: String.t(),
@@ -25,11 +36,18 @@ defmodule Bee.Views do
           source: term()
         }
 
-  @doc "Activity bar containers, Bee's first, then in registration order."
-  @spec containers() :: [container]
-  def containers, do: Enum.flat_map(Contributions.entries(:views), &elem(&1, 1).containers)
+  @doc """
+  The containers at `location` (the activity bar's, or the panel's
+  sections), Bee's first, then in registration order.
+  """
+  @spec containers(location) :: [container]
+  def containers(location \\ :activitybar),
+    do: Enum.filter(all_containers(), &(&1.location == location))
 
-  def container(id), do: Enum.find(containers(), &(&1.id == id))
+  defp all_containers,
+    do: Enum.flat_map(Contributions.entries(:views), &elem(&1, 1).containers)
+
+  def container(id), do: Enum.find(all_containers(), &(&1.id == id))
 
   @spec views() :: [view]
   def views, do: Enum.flat_map(Contributions.entries(:views), &elem(&1, 1).views)
@@ -62,8 +80,9 @@ defmodule Bee.Views do
     contributes = manifest["contributes"]
 
     containers =
-      for c <- get_in(contributes, ["viewsContainers", "activitybar"]) || [] do
-        %{id: c["id"], title: c["title"], icon: c["icon"], source: source}
+      for location <- [:activitybar, :panel],
+          c <- get_in(contributes, ["viewsContainers", Atom.to_string(location)]) || [] do
+        %{id: c["id"], title: c["title"], icon: c["icon"], location: location, source: source}
       end
 
     views =

@@ -11,9 +11,10 @@ defmodule Bee.Workbench do
     * `{:open_file, path}` – open a `Bee.Editor.Buffer`, then `editor_opened/3`
     * `{:close_buffer, path}` – detach from the file's `Bee.Editor.Buffer`
     * `:new_terminal` – start a `Bee.Terminal`, then `terminal_started/3`
-    * `:new_console` – start a `Bee.Console` (a terminal tab too), then `terminal_started/3`
+    * `:start_console` – start the window's `Bee.Console`, then `console_started/2`
     * `{:stop_terminal, id}` – stop it (`{:forget_terminal, id}` when it already exited)
-    * `:panel_hidden` – the terminals' xterm views were unmounted
+    * `:panel_hidden` – the panel's xterm views (terminals, console) were unmounted
+    * `{:panel_shown, id}` – panel section `id` is shown (a plugin's starts)
     * `{:exec_client, command}` – run a client-side command in the browser
     * `{:run_plugin_command, command}` – run a plugin's server command
     * `:reload_plugins`
@@ -43,6 +44,13 @@ defmodule Bee.Workbench do
             panel_height: 288,
             activity_order: [],
             panel_open: false,
+            # The panel's section shown (a panel views container).
+            panel_view: "terminal",
+            # The sections' order, as dragged (container ids).
+            panel_order: [],
+            panel_maximized: false,
+            # The window's Bee Console (its id, once started).
+            console: nil,
             terminals: [],
             active_term: nil,
             open_menu: nil,
@@ -68,6 +76,10 @@ defmodule Bee.Workbench do
     :sidebar_width,
     :panel_height,
     :panel_open,
+    :panel_view,
+    :panel_order,
+    :panel_maximized,
+    :console,
     :terminals,
     :active_term,
     :open_menu,
@@ -222,11 +234,16 @@ defmodule Bee.Workbench do
   def reorder_activity(wb, order) when is_list(order),
     do: %{wb | activity_order: order |> Enum.filter(&is_binary/1) |> Enum.uniq()}
 
+  @doc "Remembers the order of the panel's sections (container ids), as dragged."
+  def reorder_panel(wb, order) when is_list(order),
+    do: %{wb | panel_order: order |> Enum.filter(&is_binary/1) |> Enum.uniq()}
+
   @doc """
-  Sorts views containers by an `activity_order`; those it doesn't name (a
-  plugin's, installed since) keep their order, after the others.
+  Sorts views containers by an order as dragged (`activity_order`,
+  `panel_order`); those it doesn't name (a plugin's, installed since) keep
+  their order, after the others.
   """
-  def sort_activity(containers, order) do
+  def sort_containers(containers, order) do
     index = order |> Enum.with_index() |> Map.new()
 
     containers
@@ -238,21 +255,97 @@ defmodule Bee.Workbench do
   @doc "Shows sidebar view `view`, also when it is already shown."
   def reveal_view(wb, view), do: %{wb | sidebar_open: true, sidebar_view: view}
 
+  ## Panel
+  #
+  # Sections (panel views containers, `Bee.Views.containers(:panel)`):
+  # Terminal and Bee Console, and plugins'. Showing one prepares it: the
+  # terminal section starts a shell when there is none, the console section
+  # the window's console when it isn't running.
+
   @doc """
-  Closing the panel keeps the shells running (their views re-attach on
-  reopen); opening an empty panel starts a shell.
+  Closing the panel keeps the shells and the console running (their views
+  re-attach on reopen).
   """
   def toggle_panel(%{panel_open: true} = wb), do: {%{wb | panel_open: false}, [:panel_hidden]}
-  def toggle_panel(%{terminals: []} = wb), do: {wb, [:new_terminal]}
-  def toggle_panel(wb), do: %{wb | panel_open: true}
+  def toggle_panel(wb), do: show_panel(wb, wb.panel_view)
+
+  @doc "Opens the panel on section `id`."
+  def show_panel(wb, id) do
+    wb = %{wb | panel_open: true, panel_view: id}
+
+    case id do
+      "terminal" when wb.terminals == [] -> {wb, [:new_terminal]}
+      "console" when wb.console == nil -> {wb, [:start_console]}
+      _ -> {wb, [{:panel_shown, id}]}
+    end
+  end
+
+  def toggle_maximized_panel(%{panel_open: false} = wb),
+    do: chain({%{wb | panel_maximized: true}, []}, &toggle_panel/1)
+
+  def toggle_maximized_panel(wb), do: %{wb | panel_maximized: not wb.panel_maximized}
+
+  @doc "Called once the window's `Bee.Console` with `id` is running."
+  def console_started(wb, id), do: %{wb | console: id, panel_open: true, panel_view: "console"}
+
+  @doc "A terminal or the console: an xterm view of the panel."
+  def term_view?(wb, id), do: id == wb.console or terminal?(wb, id)
 
   ## Terminals
 
   def terminal?(wb, id), do: Enum.any?(wb.terminals, &(&1.id == id))
 
-  @doc "Called once a `Bee.Terminal` with `id` is running."
+  @doc """
+  Called once a `Bee.Terminal` with `id` is running. A terminal has a
+  `name`, an `icon` (a Heroicons outline name) and a `color` (nil or one of
+  `terminal_colors/0`), all of which the user can change.
+  """
   def terminal_started(wb, id, name) do
-    %{wb | terminals: wb.terminals ++ [%{id: id, name: name}], active_term: id, panel_open: true}
+    terminal = %{id: id, name: name, icon: "command-line", color: nil}
+
+    %{
+      wb
+      | terminals: wb.terminals ++ [terminal],
+        active_term: id,
+        panel_open: true,
+        panel_view: "terminal"
+    }
+  end
+
+  @terminal_colors ~w(red green yellow blue magenta cyan)
+
+  @doc "The colours a terminal can have (VS Code's terminal.ansi* ones)."
+  def terminal_colors, do: @terminal_colors
+
+  def rename_terminal(wb, id, name) do
+    case String.trim(name) do
+      "" -> wb
+      name -> update_terminal(wb, id, &%{&1 | name: name})
+    end
+  end
+
+  def set_terminal_icon(wb, id, icon), do: update_terminal(wb, id, &%{&1 | icon: icon})
+
+  def set_terminal_color(wb, id, color) when color == nil or color in @terminal_colors,
+    do: update_terminal(wb, id, &%{&1 | color: color})
+
+  def set_terminal_color(wb, _id, _color), do: wb
+
+  @doc "Puts the terminals in `order` (ids, after a drag); others keep their order, after."
+  def reorder_terminals(wb, order) when is_list(order) do
+    index = order |> Enum.with_index() |> Map.new()
+
+    terminals =
+      wb.terminals
+      |> Enum.with_index()
+      |> Enum.sort_by(fn {t, i} -> {Map.get(index, t.id, length(order)), i} end)
+      |> Enum.map(&elem(&1, 0))
+
+    %{wb | terminals: terminals}
+  end
+
+  defp update_terminal(wb, id, fun) do
+    %{wb | terminals: Enum.map(wb.terminals, &if(&1.id == id, do: fun.(&1), else: &1))}
   end
 
   def activate_terminal(wb, id) do
@@ -322,9 +415,13 @@ defmodule Bee.Workbench do
   def open_palette(wb), do: open_quick_open(wb, ">")
 
   def open_quick_open(wb, query \\ "") do
+    was_open? = wb.palette != nil
     wb = %{wb | palette: %{mode: :quick_open, query: query, index: 0}, open_menu: nil}
-    # The input keeps what was typed while it has focus: replace it.
-    {wb, [{:push, "palette:query", %{query: query}}]}
+
+    # Already open, its input keeps what was typed while it has focus:
+    # replace it. (Not when it opens: it shows the query, and the event
+    # could come after the first keys typed, and wipe them.)
+    if was_open?, do: {wb, [{:push, "palette:query", %{query: query}}]}, else: wb
   end
 
   def open_quick_pick(wb, %{items: items, command: command} = spec) do
@@ -395,6 +492,8 @@ defmodule Bee.Workbench do
       "sideBarVisible" => wb.sidebar_open,
       "activeViewlet" => wb.sidebar_open && "workbench.view.#{wb.sidebar_view}",
       "panelVisible" => wb.panel_open,
+      "activePanel" => wb.panel_open && wb.panel_view,
+      "panelMaximized" => wb.panel_maximized,
       "terminalCount" => length(wb.terminals),
       "searchHasQuery" => wb.search != nil and String.trim(wb.search.query) != "",
       "hasSearchResult" => wb.search != nil and wb.search.results != %{},

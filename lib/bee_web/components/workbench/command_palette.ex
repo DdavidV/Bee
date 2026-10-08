@@ -16,7 +16,8 @@ defmodule BeeWeb.Workbench.CommandPalette do
   Items have a `kind`: `:command` (`id`, `label`, `shortcut`), `:pick`
   (`label`, `description`), `:file` (`path`, `label`, `description`) or
   `:mode` (`prefix`, `label`); any may have a `section` title, shown on the
-  first item of a group.
+  first item of a group, and an `icon` (a Heroicons outline name) with a
+  `color` (a terminal colour, `BeeWeb.Workbench.Panel.color_class/1`).
   """
   use BeeWeb, :html
 
@@ -95,6 +96,11 @@ defmodule BeeWeb.Workbench.CommandPalette do
             phx-value-index={i}
             {item_data(item)}
           >
+            <BeeWeb.Icons.named_icon
+              :if={item[:icon]}
+              name={item.icon}
+              class={["size-4 shrink-0", BeeWeb.Workbench.Panel.color_class(item[:color])]}
+            />
             <BeeWeb.Workbench.FileIcon.file_icon
               :if={item.kind == :file}
               theme={@icon_theme}

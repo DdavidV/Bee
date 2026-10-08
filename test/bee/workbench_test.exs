@@ -59,7 +59,8 @@ defmodule Bee.WorkbenchTest do
 
   describe "panel and terminals" do
     test "opening an empty panel asks for a terminal; closing keeps shells" do
-      assert {%{panel_open: false}, [:new_terminal]} = Workbench.toggle_panel(wb())
+      assert {%{panel_open: true, panel_view: "terminal"}, [:new_terminal]} =
+               Workbench.toggle_panel(wb())
 
       wb = Workbench.terminal_started(wb(), 1, "sh")
       assert %{panel_open: true, active_term: 1} = wb
@@ -89,8 +90,11 @@ defmodule Bee.WorkbenchTest do
 
     test "palette selection stays within the items" do
       # The command palette is Quick Open with ">" typed in.
-      {wb, [{:push, "palette:query", %{query: ">"}}]} = Workbench.open_palette(wb())
+      wb = Workbench.open_palette(wb())
       assert %{mode: :quick_open, query: ">"} = wb.palette
+
+      # Already open: the input's text is replaced.
+      assert {_wb, [{:push, "palette:query", %{query: ""}}]} = Workbench.open_quick_open(wb)
       assert Workbench.move_palette(wb, -1, 3).palette.index == 0
 
       assert wb
@@ -165,10 +169,10 @@ defmodule Bee.WorkbenchTest do
     wb = Workbench.reorder_activity(wb(), ["scm", 1, "explorer", "gone", "scm"])
     assert wb.activity_order == ["scm", "explorer", "gone"]
 
-    assert Workbench.sort_activity(containers, wb.activity_order) |> Enum.map(& &1.id) ==
+    assert Workbench.sort_containers(containers, wb.activity_order) |> Enum.map(& &1.id) ==
              ~w(scm explorer search extensions)
 
-    assert Workbench.sort_activity(containers, []) == containers
+    assert Workbench.sort_containers(containers, []) == containers
   end
 
   describe "tabs" do
@@ -190,6 +194,42 @@ defmodule Bee.WorkbenchTest do
       assert Workbench.tab_paths(wb) == ["/b"]
       assert wb.active == "/b"
       assert {:close_buffer, "/a"} in effects and {:close_buffer, "/c"} in effects
+    end
+  end
+
+  describe "panel sections and terminals" do
+    test "a section prepares what it shows: a shell, the console" do
+      assert {%{panel_view: "console"}, [:start_console]} = Workbench.show_panel(wb(), "console")
+      wb = Workbench.console_started(wb(), 7)
+      assert Workbench.term_view?(wb, 7)
+
+      assert {%{panel_view: "console"}, [{:panel_shown, "console"}]} =
+               Workbench.show_panel(wb, "console")
+
+      assert {_, [{:panel_shown, "plugin.panel"}]} = Workbench.show_panel(wb, "plugin.panel")
+
+      assert {%{panel_open: true, panel_maximized: true}, _} =
+               Workbench.toggle_maximized_panel(wb())
+    end
+
+    test "names, icons, colours and order" do
+      wb = wb() |> Workbench.terminal_started(1, "sh") |> Workbench.terminal_started(2, "sh")
+      assert [%{icon: "command-line", color: nil} | _] = wb.terminals
+
+      wb =
+        wb
+        |> Workbench.rename_terminal(1, " server ")
+        |> Workbench.rename_terminal(2, "  ")
+        |> Workbench.set_terminal_icon(1, "rocket-launch")
+        |> Workbench.set_terminal_color(1, "green")
+        |> Workbench.set_terminal_color(2, "chartreuse")
+        |> Workbench.reorder_terminals([2, 1])
+
+      assert [
+               %{id: 2, name: "sh", color: nil},
+               %{id: 1, name: "server", icon: "rocket-launch", color: "green"}
+             ] =
+               wb.terminals
     end
   end
 end

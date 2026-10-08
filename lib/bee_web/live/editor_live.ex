@@ -348,6 +348,16 @@ defmodule BeeWeb.EditorLive do
   def handle_event("activate_tab", %{"path" => path}, socket),
     do: {:noreply, change(socket, &Workbench.activate_editor(&1, path))}
 
+  # A panel section's tab was dragged to another place: their container ids.
+  def handle_event("reorder_panel", %{"order" => order}, socket) when is_list(order),
+    do: {:noreply, change(socket, &Workbench.reorder_panel(&1, order))}
+
+  # A terminal was dragged to another place in the panel's list: their ids.
+  def handle_event("reorder_terminals", %{"order" => order}, socket) when is_list(order) do
+    ids = for id <- order, {int, ""} <- [Integer.parse(to_string(id))], do: int
+    {:noreply, change(socket, &Workbench.reorder_terminals(&1, ids))}
+  end
+
   # A tab was dragged to another place: the tabs' new order (paths).
   def handle_event("reorder_tabs", %{"order" => order}, socket) when is_list(order),
     do: {:noreply, change(socket, &Workbench.reorder_tabs(&1, order))}
@@ -427,7 +437,7 @@ defmodule BeeWeb.EditorLive do
     do: {:noreply, change(socket, &Workbench.kill_terminal(&1, String.to_integer(id)))}
 
   def handle_event("term_ready", %{"id" => id, "cols" => cols, "rows" => rows}, socket) do
-    if Workbench.terminal?(workbench(socket), id) do
+    if Workbench.term_view?(workbench(socket), id) do
       Terminal.resize(id, cols, rows)
       {scrollback, seq} = Terminal.scrollback(id)
 
@@ -442,12 +452,12 @@ defmodule BeeWeb.EditorLive do
   end
 
   def handle_event("term_input", %{"id" => id, "data" => data}, socket) do
-    if Workbench.terminal?(workbench(socket), id), do: Terminal.input(id, data)
+    if Workbench.term_view?(workbench(socket), id), do: Terminal.input(id, data)
     {:noreply, socket}
   end
 
   def handle_event("term_resize", %{"id" => id, "cols" => cols, "rows" => rows}, socket) do
-    if Workbench.terminal?(workbench(socket), id), do: Terminal.resize(id, cols, rows)
+    if Workbench.term_view?(workbench(socket), id), do: Terminal.resize(id, cols, rows)
     {:noreply, socket}
   end
 
@@ -692,18 +702,32 @@ defmodule BeeWeb.EditorLive do
     end
   end
 
-  defp run_effect(:new_console, socket) do
+  defp run_effect(:start_console, socket) do
     id = System.unique_integer([:positive])
     Phoenix.PubSub.subscribe(Bee.PubSub, Terminal.topic(id))
 
     case Bee.Console.start(id: id, owner: self(), root: socket.assigns.root) do
       {:ok, _pid} ->
-        change(socket, &Workbench.terminal_started(&1, id, "Bee Console"))
+        change(socket, &Workbench.console_started(&1, id))
 
       {:error, reason} ->
         Phoenix.PubSub.unsubscribe(Bee.PubSub, Terminal.topic(id))
         put_flash(socket, :error, "Could not start the Bee Console: #{inspect(reason)}")
     end
+  end
+
+  defp run_effect({:clear_console, id}, socket) do
+    Terminal.input(id, <<12>>)
+    socket
+  end
+
+  # A panel section is shown: its plugins' views need them running.
+  defp run_effect({:panel_shown, container}, socket) do
+    for view <- socket.assigns.views,
+        view.container == container,
+        do: Plugins.view_shown(view.id, socket.assigns.root)
+
+    socket
   end
 
   defp run_effect({:stop_terminal, id}, socket) do
@@ -1055,6 +1079,7 @@ defmodule BeeWeb.EditorLive do
 
     assign(socket,
       containers: Bee.Views.containers(),
+      panel_containers: Bee.Views.containers(:panel),
       views: views,
       view_contents: Map.new(views, &{&1.id, Bee.UI.view(socket.assigns.root, &1.id)})
     )
@@ -1071,11 +1096,12 @@ defmodule BeeWeb.EditorLive do
 
   @doc false
   # Views of the shown container whose `when` holds.
-  def visible_views(assigns) do
+  def visible_views(assigns, container \\ nil) do
     ctx = context(assigns)
+    container = container || assigns.sidebar_view
 
     for view <- assigns.views,
-        view.container == assigns.sidebar_view,
+        view.container == container,
         Bee.Commands.When.eval(view.when_ast, ctx),
         do: view
   end
@@ -1083,8 +1109,28 @@ defmodule BeeWeb.EditorLive do
   @doc false
   # The shown views with their header buttons and their items' inline buttons
   # (per item context), for BeeWeb.Workbench.Sidebar.
-  def sidebar_views(assigns) do
-    for view <- visible_views(assigns) do
+  def sidebar_views(assigns), do: container_views(assigns, assigns.sidebar_view)
+
+  @doc false
+  # The panel's sections (BeeWeb.Workbench.Panel): its containers, with
+  # their views like the sidebar's.
+  def panel_sections(assigns) do
+    for container <- Workbench.sort_containers(assigns.panel_containers, assigns.panel_order),
+        do: %{container: container, views: container_views(assigns, container.id)}
+  end
+
+  @doc false
+  # The panel's own buttons (panel/title): maximize reads "restore" when it is.
+  def panel_actions(assigns) do
+    for action <- toolbar(assigns, "panel/title") do
+      if action.command == "workbench.action.toggleMaximizedPanel" and assigns.panel_maximized,
+        do: %{action | icon: "chevron-down", label: "Restore Panel Size"},
+        else: action
+    end
+  end
+
+  defp container_views(assigns, container) do
+    for view <- visible_views(assigns, container) do
       contexts =
         case assigns.view_contents[view.id] do
           %{items: items} ->
@@ -1124,7 +1170,7 @@ defmodule BeeWeb.EditorLive do
   @doc false
   # Activity bar entries with the summed badges of their plugin views.
   def activity_bar(assigns) do
-    for container <- Workbench.sort_activity(assigns.containers, assigns.activity_order) do
+    for container <- Workbench.sort_containers(assigns.containers, assigns.activity_order) do
       badge =
         assigns.views
         |> Enum.filter(&(&1.container == container.id))
@@ -1538,8 +1584,13 @@ defmodule BeeWeb.EditorLive do
             if is_number(layout[key]), do: Workbench.resize(wb, part, layout[key]), else: wb
           end)
 
-        if is_list(layout["activity"]),
-          do: Workbench.reorder_activity(wb, layout["activity"]),
+        wb =
+          if is_list(layout["activity"]),
+            do: Workbench.reorder_activity(wb, layout["activity"]),
+            else: wb
+
+        if is_list(layout["panelSections"]),
+          do: Workbench.reorder_panel(wb, layout["panelSections"]),
           else: wb
 
       _ ->

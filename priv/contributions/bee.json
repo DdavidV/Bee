@@ -200,9 +200,32 @@
         "toggled": "panelVisible"
       },
       {
+        "command": "workbench.action.closePanel",
+        "category": "View",
+        "title": "Hide Panel",
+        "icon": "x-mark",
+        "runtime": "server",
+        "enablement": "panelVisible"
+      },
+      {
+        "command": "workbench.action.toggleMaximizedPanel",
+        "category": "View",
+        "title": "Maximize Panel Size",
+        "icon": "chevron-up",
+        "runtime": "server",
+        "toggled": "panelMaximized"
+      },
+      {
+        "command": "workbench.action.showPanel",
+        "category": "View",
+        "title": "Show Panel Section",
+        "runtime": "server"
+      },
+      {
         "command": "workbench.action.terminal.new",
         "category": "Terminal",
         "title": "Create New Terminal",
+        "icon": "plus",
         "runtime": "server"
       },
       {
@@ -212,9 +235,38 @@
         "runtime": "server"
       },
       {
+        "command": "bee.console.clear",
+        "category": "Developer",
+        "title": "Clear Bee Console",
+        "icon": "backspace",
+        "runtime": "server"
+      },
+      {
         "command": "workbench.action.terminal.kill",
         "category": "Terminal",
-        "title": "Kill the Active Terminal Instance",
+        "title": "Kill Terminal",
+        "icon": "trash",
+        "runtime": "server",
+        "enablement": "terminalCount > 0"
+      },
+      {
+        "command": "workbench.action.terminal.rename",
+        "category": "Terminal",
+        "title": "Rename...",
+        "runtime": "server",
+        "enablement": "terminalCount > 0"
+      },
+      {
+        "command": "workbench.action.terminal.changeIcon",
+        "category": "Terminal",
+        "title": "Change Icon...",
+        "runtime": "server",
+        "enablement": "terminalCount > 0"
+      },
+      {
+        "command": "workbench.action.terminal.changeColor",
+        "category": "Terminal",
+        "title": "Change Color...",
         "runtime": "server",
         "enablement": "terminalCount > 0"
       },
@@ -369,13 +421,19 @@
         {"id": "explorer", "title": "Explorer", "icon": "document-duplicate"},
         {"id": "search", "title": "Search", "icon": "magnifying-glass"},
         {"id": "extensions", "title": "Plugins", "icon": "puzzle-piece"}
+      ],
+      "panel": [
+        {"id": "terminal", "title": "Terminal", "icon": "command-line"},
+        {"id": "console", "title": "Bee Console", "icon": "code-bracket"}
       ]
     },
 
     "views": {
       "explorer": [{"id": "workbench.explorer.fileView", "name": "Folders"}],
       "search": [{"id": "workbench.view.search", "name": "Search"}],
-      "extensions": [{"id": "workbench.extensions.installed", "name": "Installed"}]
+      "extensions": [{"id": "workbench.extensions.installed", "name": "Installed"}],
+      "terminal": [{"id": "workbench.panel.terminal", "name": "Terminal"}],
+      "console": [{"id": "workbench.panel.console", "name": "Bee Console"}]
     },
 
     "menubar": [
@@ -403,6 +461,9 @@
         {"command": "workbench.action.replaceInFiles", "group": "2_find@2"}
       ],
       "view/title": [
+        {"command": "workbench.action.terminal.new", "group": "navigation@1", "when": "view == workbench.panel.terminal"},
+        {"command": "workbench.action.terminal.kill", "group": "navigation@2", "when": "view == workbench.panel.terminal"},
+        {"command": "bee.console.clear", "group": "navigation@1", "when": "view == workbench.panel.console"},
         {"command": "search.action.refreshSearchResults", "group": "navigation@1", "when": "view == workbench.view.search"},
         {"command": "search.action.clearSearchResults", "group": "navigation@2", "when": "view == workbench.view.search"},
         {"command": "search.action.collapseSearchResults", "group": "navigation@3", "when": "view == workbench.view.search"},
@@ -415,6 +476,16 @@
         {"command": "bee.plugins.disable", "group": "inline@1", "when": "view == workbench.extensions.installed && viewItem =~ /^plugin\\.enabled\\./"},
         {"command": "bee.plugins.enable", "group": "inline@1", "when": "view == workbench.extensions.installed && viewItem =~ /^plugin\\.disabled\\./"},
         {"command": "bee.plugins.uninstall", "group": "inline@2", "when": "view == workbench.extensions.installed && viewItem =~ /\\.user$/"}
+      ],
+      "panel/title": [
+        {"command": "workbench.action.toggleMaximizedPanel", "group": "navigation@1"},
+        {"command": "workbench.action.closePanel", "group": "navigation@2"}
+      ],
+      "terminal/title/context": [
+        {"command": "workbench.action.terminal.rename", "group": "1_edit@1"},
+        {"command": "workbench.action.terminal.changeIcon", "group": "1_edit@2"},
+        {"command": "workbench.action.terminal.changeColor", "group": "1_edit@3"},
+        {"command": "workbench.action.terminal.kill", "group": "2_kill@1"}
       ],
       "editor/title/context": [
         {"command": "workbench.action.closeEditor", "group": "1_close@1"},
@@ -441,6 +512,7 @@
         {"command": "bee.plugins.enable", "when": "false"},
         {"command": "bee.openFolder", "when": "false"},
         {"command": "bee.openFile", "when": "false"},
+        {"command": "workbench.action.showPanel", "when": "false"},
         {"command": "workbench.action.closeEditor", "when": "false"},
         {"command": "workbench.action.closeEditors.confirmed", "when": "false"},
         {"command": "workbench.action.quickOpenPrefix", "when": "false"},

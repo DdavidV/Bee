@@ -123,15 +123,19 @@ html[data-pane-drag] .view-pane {
   transition: none;
 }
 
-/* Activity bar icons (hooks/activity_bar.js) and editor tabs
-   (hooks/tabs.js): pressed ones shrink, held or dragged ones lift; the
-   others slide out of the way. */
+/* Activity bar icons and the panel's terminal list (hooks/sortable.js),
+   editor tabs (hooks/tabs.js): pressed ones shrink, held or dragged ones
+   lift; the others slide out of the way. */
 #activity-bar > [data-container],
+#terminal-list > [data-term],
 #tabs > [data-tab] {
   transition: scale 0.15s ease-out, translate 0.15s ease-out, box-shadow 0.15s ease-out;
 }
 #activity-bar > [data-pressed] {
   scale: 0.9;
+}
+#terminal-list > [data-pressed] {
+  scale: 0.97;
 }
 #tabs > [data-pressed] {
   scale: 0.95;
@@ -145,6 +149,7 @@ html[data-pane-drag] .view-pane {
   -webkit-user-drag: none;
 }
 #activity-bar > [data-lifted],
+#terminal-list > [data-lifted],
 #tabs > [data-lifted] {
   scale: 1.12;
   z-index: 10;
@@ -152,16 +157,19 @@ html[data-pane-drag] .view-pane {
   box-shadow: 0 4px 12px rgb(0 0 0 / 0.35);
   cursor: grabbing;
 }
-#tabs > [data-lifted] {
+#tabs > [data-lifted],
+#terminal-list > [data-lifted] {
   scale: 1.04;
   opacity: 1;
 }
 /* The dragged one follows the pointer without lag. */
 #activity-bar > [data-lifted][style*="translate"],
+#terminal-list > [data-lifted][style*="translate"],
 #tabs > [data-lifted][style*="translate"] {
   transition: scale 0.15s ease-out, box-shadow 0.15s ease-out;
 }
 #activity-bar[data-dragging],
+#terminal-list[data-dragging],
 #tabs[data-dragging] {
   cursor: grabbing;
 }

@@ -168,8 +168,9 @@ defmodule Bee.Console do
   defp keys(s, <<5, rest::binary>>), do: s |> end_of_line() |> keys(rest)
   defp keys(s, <<21, rest::binary>>), do: %{s | left: "", right: ""} |> redraw() |> keys(rest)
 
+  # Ctrl+L (and Clear Bee Console): the screen and the scrollback go.
   defp keys(s, <<12, rest::binary>>),
-    do: s |> write("\e[2J\e[H") |> redraw() |> keys(rest)
+    do: %{s | scrollback: ""} |> write("\e[2J\e[3J\e[H") |> redraw() |> keys(rest)
 
   defp keys(s, <<?\t, rest::binary>>), do: s |> complete() |> keys(rest)
 

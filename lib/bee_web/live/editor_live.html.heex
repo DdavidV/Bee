@@ -160,77 +160,22 @@
       </div>
     </div>
 
-    <%!-- Panel: terminals --%>
-    <section
+    <%!-- The bottom panel: Terminal, Bee Console, plugins' sections --%>
+    <BeeWeb.Workbench.Panel.panel
       :if={@panel_open}
-      id="panel"
-      class="relative h-[var(--drag-panel-height,var(--panel-height))] max-h-[calc(100%-4rem)] shrink-0 overflow-hidden border-t border-base-300 flex flex-col bg-base-100"
-    >
-      <div
-        id="sash-panel"
-        phx-hook="Sash"
-        data-part="panel"
-        class="sash absolute inset-x-0 top-0 h-1 z-30 cursor-row-resize"
-      >
-      </div>
-      <div class="flex items-center gap-1 px-2 text-xs shrink-0">
-        <span class="uppercase tracking-wide opacity-60 mr-2">Terminal</span>
-        <button
-          :for={{term, i} <- Enum.with_index(@terminals, 1)}
-          id={"term-tab-#{term.id}"}
-          class={[
-            "px-2 py-1 rounded cursor-pointer",
-            if(term.id == @active_term,
-              do: "bg-base-300",
-              else: "opacity-70 hover:bg-base-content/10"
-            )
-          ]}
-          phx-click="activate_terminal"
-          phx-value-id={term.id}
-        >
-          {i}: {term.name}
-        </button>
-        <div class="flex-1" />
-        <button
-          class="btn btn-ghost btn-xs btn-square"
-          title="New Terminal"
-          phx-click="run_command"
-          phx-value-command="workbench.action.terminal.new"
-        >
-          <.icon name="hero-plus" class="size-4" />
-        </button>
-        <button
-          :if={@active_term}
-          class="btn btn-ghost btn-xs btn-square"
-          title="Kill Terminal"
-          phx-click="close_terminal"
-          phx-value-id={@active_term}
-        >
-          <.icon name="hero-trash" class="size-4" />
-        </button>
-        <button
-          class="btn btn-ghost btn-xs btn-square"
-          title="Close Panel"
-          phx-click="run_command"
-          phx-value-command="workbench.action.togglePanel"
-        >
-          <.icon name="hero-x-mark" class="size-4" />
-        </button>
-      </div>
-      <div class="flex-1 min-h-0 relative">
-        <div
-          :for={term <- @terminals}
-          id={"term-#{term.id}"}
-          phx-hook="Terminal"
-          phx-update="ignore"
-          data-id={term.id}
-          data-active={to_string(term.id == @active_term)}
-          data-settings={Jason.encode!(@terminal_settings)}
-          class="absolute inset-0 pl-2 pt-1 data-[active=false]:invisible"
-        >
-        </div>
-      </div>
-    </section>
+      maximized={@panel_maximized}
+      active={@panel_view}
+      sections={panel_sections(assigns)}
+      actions={panel_actions(assigns)}
+      terminals={@terminals}
+      active_term={@active_term}
+      console={@console}
+      terminal_settings={@terminal_settings}
+      view_contents={@view_contents}
+      view_inputs={@view_inputs}
+      collapsed={@collapsed}
+      icon_theme={@icon_theme}
+    />
   </main>
 
   <%!-- Status bar --%>

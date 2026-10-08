@@ -63,7 +63,8 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "activitybar": {"type": "array", "items": {"$ref": "#/definitions/viewsContainer"}}
+            "activitybar": {"type": "array", "items": {"$ref": "#/definitions/viewsContainer"}, "description": "Icons in the activity bar; their views show in the sidebar."},
+            "panel": {"type": "array", "items": {"$ref": "#/definitions/viewsContainer"}, "description": "Sections of the bottom panel (its tabs: Terminal, Bee Console…); their views show in it."}
           }
         },
         "views": {
@@ -137,7 +138,7 @@
       "type": "object",
       "required": ["id", "title", "icon"],
       "additionalProperties": false,
-      "description": "An icon in the activity bar that shows a set of views in the sidebar.",
+      "description": "An icon in the activity bar, or a section of the bottom panel, that shows a set of views.",
       "properties": {
         "id": {"type": "string", "pattern": "^[A-Za-z0-9_-]+$"},
         "title": {"type": "string", "minLength": 1},
@@ -148,7 +149,7 @@
       "type": "object",
       "required": ["id", "name"],
       "additionalProperties": false,
-      "description": "A sidebar view. A plugin fills its views with Bee.API.set_view/3.",
+      "description": "A view in a sidebar container or a panel section. A plugin fills its views with Bee.API.set_view/3.",
       "properties": {
         "id": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+$"},
         "name": {"type": "string", "minLength": 1},
