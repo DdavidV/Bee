@@ -7,8 +7,16 @@ defmodule Bee.Languages do
   A language is identified by its id (`"elixir"`), the key shared by
   highlighting, `when` clauses (`editorLangId`) and – later – LSP.
   Contributions with the same id merge, so a plugin can add file names to an
-  existing language. A grammar names the CodeMirror mode (registered in the
-  browser) that highlights a language; the last one contributed wins.
+  existing language.
+
+  A grammar highlights a language, the last one contributed wins:
+
+    * `{"language", "mode"}` – a CodeMirror mode registered in the browser
+      (bundled with Bee, or a browser plugin's)
+    * `{"language", "scopeName", "path"}` – a TextMate grammar file, like
+      VS Code's (plugins only; the browser runs it with `vscode-textmate`).
+      Without a `language` it is only included by other grammars, or
+      injected into them (`injectTo`).
 
   `detect/2` picks a file's language like VS Code, first match wins:
 
@@ -70,17 +78,46 @@ defmodule Bee.Languages do
     end
   end
 
-  @doc "The CodeMirror mode highlighting `id`, or nil."
-  def mode(id) do
-    Contributions.entries(:languages)
-    |> Enum.flat_map(&elem(&1, 1).grammars)
-    |> Enum.filter(&(&1.language == id))
-    |> List.last()
-    |> case do
-      nil -> nil
-      grammar -> grammar.mode
+  @doc """
+  How the browser highlights language `id`: `%{mode: name}` (a CodeMirror
+  mode), `%{scope: scope_name}` (a TextMate grammar, see `grammars/0`) or
+  `%{}` (not at all).
+  """
+  def highlight(id) do
+    case Enum.filter(grammar_entries(), &(&1.language == id)) |> List.last() do
+      %{mode: mode} when is_binary(mode) -> %{mode: mode}
+      %{scope: scope} -> %{scope: scope}
+      nil -> %{}
     end
   end
+
+  @doc "The CodeMirror mode highlighting `id`, or nil (none, or a TextMate grammar)."
+  def mode(id), do: highlight(id)[:mode]
+
+  @doc """
+  The TextMate grammars, for the browser: `[%{scope, url, injectTo,
+  embeddedLanguages, language}]`, one per scope (the last contributed).
+  """
+  def grammars do
+    for %{scope: scope} = g when is_binary(scope) <- grammar_entries(),
+        into: %{},
+        do:
+          {scope,
+           %{
+             scope: scope,
+             url: g.url,
+             injectTo: g.inject_to,
+             embeddedLanguages: g.embedded_languages,
+             language: g.language
+           }}
+  end
+
+  @doc "Whether `path` is a TextMate grammar file of plugin `name` (served to the browser)."
+  def grammar_file?(name, path),
+    do: Enum.any?(grammar_entries(), &(&1[:plugin] == name and &1[:path] == path))
+
+  defp grammar_entries,
+    do: Enum.flat_map(Contributions.entries(:languages), &elem(&1, 1).grammars)
 
   @doc """
   The language of `path`. Options:
@@ -167,7 +204,7 @@ defmodule Bee.Languages do
   def key, do: :languages
 
   @impl Bee.Contributions.Point
-  def normalize!(manifest, _source, _opts) do
+  def normalize!(manifest, source, opts) do
     contributes = manifest["contributes"]
 
     languages =
@@ -192,12 +229,47 @@ defmodule Bee.Languages do
         }
       end
 
-    grammars =
-      for g <- Map.get(contributes, "grammars", []),
-          do: %{language: g["language"], mode: g["mode"]}
+    grammars = for g <- Map.get(contributes, "grammars", []), do: grammar!(g, source, opts[:dir])
 
     if languages == [] and grammars == [],
       do: nil,
       else: %{languages: languages, grammars: grammars}
+  end
+
+  defp grammar!(%{"mode" => mode} = g, _source, _dir), do: %{language: g["language"], mode: mode}
+
+  defp grammar!(%{"scopeName" => scope, "path" => rel} = g, source, dir) do
+    {plugin, dir} =
+      case {source, dir} do
+        {{:plugin, name}, dir} when is_binary(dir) ->
+          {name, Path.expand(dir)}
+
+        _ ->
+          raise ArgumentError, "grammar #{scope}: TextMate grammars can only come from a plugin"
+      end
+
+    path = Path.expand(rel, dir)
+
+    cond do
+      not String.starts_with?(path, dir <> "/") ->
+        raise ArgumentError, "grammar #{scope}: path must be inside the plugin"
+
+      not File.regular?(path) ->
+        raise ArgumentError, "grammar #{scope}: no file #{rel}"
+
+      true ->
+        rel = Path.relative_to(path, dir)
+
+        %{
+          language: g["language"],
+          scope: scope,
+          path: path,
+          plugin: plugin,
+          url:
+            "/plugins/#{URI.encode(plugin)}/#{rel |> String.split("/") |> Enum.map_join("/", &URI.encode/1)}",
+          inject_to: Map.get(g, "injectTo", []),
+          embedded_languages: Map.get(g, "embeddedLanguages", %{})
+        }
+    end
   end
 end

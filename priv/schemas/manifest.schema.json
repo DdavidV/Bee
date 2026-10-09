@@ -208,14 +208,30 @@
       }
     },
     "grammar": {
-      "type": "object",
-      "required": ["language", "mode"],
-      "additionalProperties": false,
-      "description": "Highlighting for a language: the name of a CodeMirror mode registered in the browser (bundled with Bee, or registerMode() of a browser plugin).",
-      "properties": {
-        "language": {"type": "string", "minLength": 1},
-        "mode": {"type": "string", "minLength": 1}
-      }
+      "description": "Highlighting for a language: the name of a CodeMirror mode registered in the browser (bundled with Bee, or registerMode() of a browser plugin), or a TextMate grammar file like VS Code's (plugins only).",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["language", "mode"],
+          "additionalProperties": false,
+          "properties": {
+            "language": {"type": "string", "minLength": 1},
+            "mode": {"type": "string", "minLength": 1}
+          }
+        },
+        {
+          "type": "object",
+          "required": ["scopeName", "path"],
+          "additionalProperties": false,
+          "properties": {
+            "language": {"type": "string", "minLength": 1, "description": "The language it highlights; none for a grammar only included by others or injected."},
+            "scopeName": {"type": "string", "minLength": 1, "description": "Its root scope, e.g. source.erlang."},
+            "path": {"type": "string", "minLength": 1, "description": "The grammar file (.json, .tmLanguage.json, .tmLanguage, .plist), relative to the plugin."},
+            "embeddedLanguages": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Scope → language id of the languages embedded in it."},
+            "injectTo": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "Scopes of the grammars it is injected into."}
+          }
+        }
+      ]
     },
     "configuration": {
       "type": "object",

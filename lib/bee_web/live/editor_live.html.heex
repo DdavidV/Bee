@@ -157,6 +157,8 @@
         phx-hook="CodeEditor"
         phx-update="ignore"
         data-settings={Jason.encode!(@editor_settings)}
+        data-grammars={Jason.encode!(@grammars)}
+        data-token-colors={Jason.encode!(@token_colors)}
         class="absolute inset-0"
       >
       </div>

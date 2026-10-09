@@ -21,6 +21,8 @@
     "codemirror": "^6.0.2",
     "codemirror-lang-elixir": "^4.0.1",
     "dompurify": "^3.4.16",
-    "marked": "^18.1.0"
+    "marked": "^18.1.0",
+    "vscode-oniguruma": "^2.0.1",
+    "vscode-textmate": "^9.3.2"
   }
 }

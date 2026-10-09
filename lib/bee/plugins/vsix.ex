@@ -34,7 +34,7 @@ defmodule Bee.Plugins.Vsix do
 
     with {:ok, files} <- read(path),
          {:ok, package} <- json(files, "package.json"),
-         contributes = themes(package, files),
+         contributes = contributes(package, files),
          {:ok, name} <- plugin_name(package),
          :ok <- check_target(name, source) do
       write(name, files, manifest(name, package, files, contributes), origin)
@@ -120,11 +120,13 @@ defmodule Bee.Plugins.Vsix do
     end
   end
 
-  # The contributes section of the plugin: the themes, with the fields Bee
-  # knows (color themes need a label, a known uiTheme and a file). Labels
-  # can be "%key%" (package.nls.json). Empty for other extensions.
-  defp themes(package, files) do
+  # The contributes section of the plugin: what Bee knows of the
+  # extension's, with the fields Bee knows (color themes need a label, a
+  # known uiTheme and a file). Labels can be "%key%" (package.nls.json).
+  defp contributes(package, files) do
     %{
+      "languages" => languages(package),
+      "grammars" => grammars(package, files),
       "iconThemes" =>
         for(
           %{} = t <- List.wrap(get_in(package, ["contributes", "iconThemes"])),
@@ -140,6 +142,55 @@ defmodule Bee.Plugins.Vsix do
     }
     |> Map.reject(fn {_k, list} -> list == [] end)
   end
+
+  # Languages: their ids and files (configuration, icons… aren't used yet).
+  defp languages(package) do
+    for %{"id" => id} = l <- List.wrap(get_in(package, ["contributes", "languages"])),
+        is_binary(id) and Regex.match?(~r/^[A-Za-z0-9_.+-]+$/, id) do
+      %{
+        "id" => id,
+        "aliases" => strings(l["aliases"]),
+        "extensions" => Enum.filter(strings(l["extensions"]), &String.starts_with?(&1, ".")),
+        "filenames" => strings(l["filenames"]),
+        "filenamePatterns" => strings(l["filenamePatterns"]),
+        # A JavaScript regex; kept when Elixir's understands it too.
+        "firstLine" =>
+          with(
+            line when is_binary(line) and line != "" <- l["firstLine"],
+            {:ok, _} <- Regex.compile(line),
+            do: line,
+            else: (_ -> nil)
+          )
+      }
+      |> Map.reject(fn {_k, v} -> v in [nil, []] end)
+    end
+  end
+
+  # TextMate grammars whose file is in the package.
+  defp grammars(package, files) do
+    for %{"scopeName" => scope, "path" => path} = g <-
+          List.wrap(get_in(package, ["contributes", "grammars"])),
+        is_binary(scope) and scope != "" and is_binary(path),
+        Map.has_key?(files, path |> Path.expand("/") |> String.trim_leading("/")) do
+      %{
+        "scopeName" => scope,
+        "path" => path,
+        "language" => if(is_binary(g["language"]) and g["language"] != "", do: g["language"]),
+        "injectTo" => strings(g["injectTo"]),
+        "embeddedLanguages" =>
+          for(
+            {k, v} when is_binary(v) <-
+              (is_map(g["embeddedLanguages"]) && g["embeddedLanguages"]) || %{},
+            into: %{},
+            do: {k, v}
+          )
+      }
+      |> Map.reject(fn {_k, v} -> v in [nil, [], %{}] end)
+    end
+  end
+
+  defp strings(list) when is_list(list), do: Enum.filter(list, &(is_binary(&1) and &1 != ""))
+  defp strings(_list), do: []
 
   # A Bee plugin name (lowercase letters, digits, dashes) from the extension's.
   defp plugin_name(package) do

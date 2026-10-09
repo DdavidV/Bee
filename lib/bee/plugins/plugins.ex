@@ -97,10 +97,10 @@ defmodule Bee.Plugins do
 
   @doc """
   The file `rel` of plugin `name` that may be served to the browser: its
-  browser module, an icon of one of its icon themes (`Bee.IconThemes`), or
-  an image in its folder (its icon, its README's pictures – of disabled
-  plugins too, for their details page). `{:ok, absolute_path, :module |
-  :icon}` or `:error`.
+  browser module, an icon of one of its icon themes (`Bee.IconThemes`), a
+  TextMate grammar (`Bee.Languages`), or an image in its folder (its icon,
+  its README's pictures – of disabled plugins too, for their details
+  page). `{:ok, absolute_path, :module | :icon | :grammar}` or `:error`.
   """
   def asset_path(name, rel) do
     case get(name) do
@@ -111,6 +111,7 @@ defmodule Bee.Plugins do
         cond do
           usable? and match?(%{browser: %{path: ^path}}, plugin) -> {:ok, path, :module}
           usable? and Bee.IconThemes.icon_file?(name, path) -> {:ok, path, :icon}
+          usable? and Bee.Languages.grammar_file?(name, path) -> {:ok, path, :grammar}
           image?(path, dir) -> {:ok, path, :icon}
           true -> :error
         end

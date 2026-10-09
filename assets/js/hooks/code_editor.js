@@ -12,9 +12,11 @@
 // of its own (`themeColors`) colors the editor with them, through the
 // --vscode-* CSS variables it sets on the page (Bee.ColorThemes.Theme).
 //
-// Highlighting: the server sends each file's language and the name of the
-// mode for it (editor/modes.js); a mode registered later by a plugin is
-// applied to the files waiting for it.
+// Highlighting: the server sends each file's language and how to highlight
+// it: the name of a CodeMirror mode (editor/modes.js; one registered later
+// by a plugin is applied to the files waiting for it), or the scope name of
+// a TextMate grammar (editor/textmate.js; data-grammars lists them,
+// data-token-colors has the color theme's tokenColors).
 //
 // Server -> client: cm:open, cm:activate, cm:deactivate (an editor that
 //                   isn't a file is shown), cm:close, cm:reload, cm:language,
@@ -50,6 +52,7 @@ import "../editor/builtin_modes"
 import {toBytes, fromBytes} from "../editor/offsets"
 import {setEditor} from "../editor/active"
 import {filePath, pluginExtensions, onExtensionsChange} from "../editor/extensions"
+import {textmate, setGrammars, setTokenColors, onTextMateChange} from "../editor/textmate"
 
 const SYNC_MS = 300
 const SELECTION_MS = 100
@@ -145,6 +148,9 @@ const themeColors = dark => [
   syntaxHighlighting(dark ? oneDarkHighlightStyle : defaultHighlightStyle),
 ]
 
+// A file's highlighting: a TextMate grammar, a CodeMirror mode, or none.
+const highlighting = ({mode, scope}) => (scope ? textmate(scope) : modeExtension(mode))
+
 const settingExtensions = s => ({
   theme: s.themeColors ? themeColors(s.theme !== "light") : s.theme === "light" ? [] : oneDark,
   fontSize: EditorView.theme({"&": {fontSize: `${s.fontSize}px`}}),
@@ -159,18 +165,19 @@ export const CodeEditor = {
     this.active = null
     this.timers = new Map() // path -> throttle timer
     this.pending = new Set() // paths with changes not yet sent
-    this.modes = new Map() // path -> mode name
+    this.modes = new Map() // path -> {mode, scope}
     this.selectionTimer = null
     this.settings = this.readSettings()
+    this.readTextMate()
 
     this.view = new EditorView({parent: this.el, state: EditorState.create()})
 
-    this.handleEvent("cm:open", ({path, text, mode}) => this.open(path, text, mode))
+    this.handleEvent("cm:open", ({path, text, mode, scope}) => this.open(path, text, {mode, scope}))
     this.handleEvent("cm:activate", ({path}) => this.activate(path))
     this.handleEvent("cm:deactivate", () => this.deactivate())
     this.handleEvent("cm:close", ({path}) => this.close(path))
     this.handleEvent("cm:reload", ({path, text}) => this.reload(path, text))
-    this.handleEvent("cm:language", ({path, mode}) => this.setMode(path, mode))
+    this.handleEvent("cm:language", ({path, mode, scope}) => this.setMode(path, {mode, scope}))
     this.handleEvent("cm:edit", ({path, edits, text}) => this.edit(path, edits, text))
     this.handleEvent("cm:reveal", target => this.reveal(target))
 
@@ -185,8 +192,11 @@ export const CodeEditor = {
     this.unregisterEditor = setEditor(this)
     // A plugin registered a mode: re-apply it to the files using it.
     this.offModeChange = onModeChange(name => {
-      for (const [path, mode] of this.modes) if (mode === name) this.setMode(path, mode)
+      for (const [path, h] of this.modes) if (h.mode === name && !h.scope) this.setMode(path, h, true)
     })
+    // Grammars or token colors changed: the shown file highlights again
+    // (the others when shown).
+    this.offTextMateChange = onTextMateChange(() => this.view.dispatch({}))
     this.offExtensionsChange = onExtensionsChange(() => {
       const effects = pluginCompartment.reconfigure(pluginExtensions())
       this.view.dispatch({effects})
@@ -198,14 +208,29 @@ export const CodeEditor = {
 
   // LiveView patches data-settings even though the content is ignored.
   updated() {
+    this.readTextMate()
     const settings = this.readSettings()
     if (JSON.stringify(settings) !== JSON.stringify(this.settings)) this.configure(settings)
+  },
+
+  // Unchanged strings are ignored cheaply (textmate.js compares them too).
+  readTextMate() {
+    const {grammars, tokenColors} = this.el.dataset
+    if (grammars !== this.grammarsJson) {
+      this.grammarsJson = grammars
+      setGrammars(JSON.parse(grammars || "{}"))
+    }
+    if (tokenColors !== this.tokenColorsJson) {
+      this.tokenColorsJson = tokenColors
+      setTokenColors(JSON.parse(tokenColors || "[]"))
+    }
   },
 
   destroyed() {
     this.unregisterCommands.forEach(unregister => unregister())
     this.unregisterEditor()
     this.offModeChange()
+    this.offTextMateChange()
     this.offExtensionsChange()
     window.removeEventListener("bee:flush", this.onFlush)
     clearTimeout(this.selectionTimer)
@@ -225,14 +250,14 @@ export const CodeEditor = {
     for (const [path, state] of this.states) this.states.set(path, state.update({effects}).state)
   },
 
-  createState(path, text, mode) {
+  createState(path, text, highlight) {
     const exts = settingExtensions(this.settings)
     return EditorState.create({
       doc: text,
       extensions: [
         setup,
         filePath.of(path),
-        languageCompartment.of(modeExtension(mode)),
+        languageCompartment.of(highlighting(highlight)),
         pluginCompartment.of(pluginExtensions()),
         Object.entries(compartments).map(([name, c]) => c.of(exts[name])),
         EditorView.updateListener.of(update => {
@@ -275,20 +300,23 @@ export const CodeEditor = {
     }
   },
 
-  setMode(path, mode) {
+  // `highlight`: {mode, scope}; the same again changes nothing, unless `force`.
+  setMode(path, highlight, force = false) {
     if (!this.stateOf(path)) return
-    this.modes.set(path, mode)
-    this.updateState(path, {effects: languageCompartment.reconfigure(modeExtension(mode))})
+    const old = this.modes.get(path)
+    if (!force && old && old.mode === highlight.mode && old.scope === highlight.scope) return
+    this.modes.set(path, highlight)
+    this.updateState(path, {effects: languageCompartment.reconfigure(highlighting(highlight))})
   },
 
   stateOf(path) {
     return path === this.active ? this.view.state : this.states.get(path)
   },
 
-  open(path, text, mode) {
+  open(path, text, highlight) {
     // Always start from the server's text, even if we had a stale state.
-    const state = this.createState(path, text, mode)
-    this.modes.set(path, mode)
+    const state = this.createState(path, text, highlight)
+    this.modes.set(path, highlight)
     this.stash()
     this.active = path
     this.states.delete(path)

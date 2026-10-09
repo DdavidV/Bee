@@ -9,7 +9,8 @@ defmodule Bee.ColorThemes.Theme do
         "tokenColors": [{"scope": ["comment"], "settings": {"foreground": "#6a9955"}}, …]
       }
 
-  `colors` are VS Code's color keys. The ones a theme leaves out get VS
+  `colors` are VS Code's color keys; `tokenColors` color the tokens of
+  TextMate grammars (`token_colors/1`). The ones a theme leaves out get VS
   Code's defaults for its base, dark or light (`priv/color_themes/defaults.json`,
   which only has the keys Bee uses). Colors are `#rgb`, `#rgba`, `#rrggbb`
   or `#rrggbbaa`; anything else is dropped.
@@ -37,6 +38,9 @@ defmodule Bee.ColorThemes.Theme do
 
   @external_resource Bee.Priv.path("color_themes/defaults.json")
   @defaults Bee.Priv.read_json!("color_themes/defaults.json")
+  # VS Code's Dark+ and Light+ token colors.
+  @external_resource Bee.Priv.path("color_themes/token_colors.json")
+  @default_token_colors Bee.Priv.read_json!("color_themes/token_colors.json")
 
   @color ~r/^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/
   @key ~r/^[A-Za-z0-9_.-]+$/
@@ -143,6 +147,29 @@ defmodule Bee.ColorThemes.Theme do
     vscode = for {key, color} <- Enum.sort(colors), do: "#{var(key)}:#{color};"
     daisy = for {var, key} <- @daisy, color = colors[key], do: "#{var}:#{color};"
     "#{selector}{#{Enum.join(vscode)}#{Enum.join(daisy)}}"
+  end
+
+  @doc """
+  The syntax colors (`tokenColors` rules, for TextMate grammars), after a
+  rule of the editor's own colors: the theme's, or – a theme without any,
+  like Bee's own – VS Code's Dark+ or Light+ ones.
+  """
+  def token_colors(%__MODULE__{base: base} = theme) do
+    rules =
+      if theme.token_colors == [],
+        do: @default_token_colors[to_string(base)],
+        else: theme.token_colors
+
+    editor =
+      %{
+        "foreground" =>
+          theme.colors["editor.foreground"] || @defaults[to_string(base)]["editor.foreground"],
+        "background" =>
+          theme.colors["editor.background"] || @defaults[to_string(base)]["editor.background"]
+      }
+      |> Map.reject(fn {_k, v} -> not is_binary(v) or not String.starts_with?(v, "#") end)
+
+    [%{"settings" => editor} | rules]
   end
 
   @doc "The CSS variable of a VS Code color key, as VS Code names it for webviews."

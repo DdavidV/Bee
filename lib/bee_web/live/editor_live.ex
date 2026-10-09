@@ -65,6 +65,7 @@ defmodule BeeWeb.EditorLive do
      |> assign(keybindings: Keybindings.all(), keybinding_errors: Keybindings.errors())
      |> load_commands()
      |> load_plugins()
+     |> assign(grammars: Languages.grammars())
      |> allow_upload(:vsix,
        accept: :any,
        max_entries: 1,
@@ -558,7 +559,10 @@ defmodule BeeWeb.EditorLive do
         socket
       end
 
-    socket = if :languages in keys, do: redetect_languages(socket), else: socket
+    socket =
+      if :languages in keys,
+        do: socket |> assign(grammars: Languages.grammars()) |> redetect_languages(),
+        else: socket
 
     socket =
       if :icon_themes in keys,
@@ -1006,12 +1010,10 @@ defmodule BeeWeb.EditorLive do
 
       socket
       |> change(&Workbench.editor_opened(&1, path, Buffer.dirty?(buffer), lang))
-      |> push_event("cm:open", %{
-        path: path,
-        text: buffer.text,
-        lang: lang,
-        mode: Languages.mode(lang)
-      })
+      |> push_event(
+        "cm:open",
+        Map.merge(%{path: path, text: buffer.text, lang: lang}, highlight(lang))
+      )
     else
       {:error, reason} ->
         message = "Cannot open #{display_path(socket.assigns.root, path)}: #{inspect(reason)}"
@@ -1325,6 +1327,9 @@ defmodule BeeWeb.EditorLive do
 
   ## Languages
 
+  # How the editor highlights `lang`: a CodeMirror `mode` or a TextMate `scope`.
+  defp highlight(lang), do: Map.merge(%{mode: nil, scope: nil}, Languages.highlight(lang))
+
   # Language contributions or files.associations changed: re-detect open tabs.
   defp redetect_languages(socket) do
     Enum.reduce(socket.assigns.tabs, socket, fn
@@ -1336,15 +1341,16 @@ defmodule BeeWeb.EditorLive do
             :exit, _ -> ""
           end
 
-        case Languages.detect(path, first_line: Languages.first_line(text)) do
-          ^old ->
-            socket
+        # Its highlighting may have changed too (a grammar was added): the
+        # editor ignores a cm:language that changes nothing.
+        lang = Languages.detect(path, first_line: Languages.first_line(text))
 
-          lang ->
-            socket
-            |> change(&Workbench.set_language(&1, path, lang))
-            |> push_event("cm:language", %{path: path, lang: lang, mode: Languages.mode(lang)})
-        end
+        socket =
+          if lang == old,
+            do: socket,
+            else: change(socket, &Workbench.set_language(&1, path, lang))
+
+        push_event(socket, "cm:language", Map.merge(%{path: path, lang: lang}, highlight(lang)))
 
       _other, socket ->
         socket
@@ -1399,6 +1405,7 @@ defmodule BeeWeb.EditorLive do
         color_theme_id: id,
         color_theme: theme,
         color_theme_css: Bee.ColorThemes.Theme.css(theme, "#workbench"),
+        token_colors: Bee.ColorThemes.Theme.token_colors(theme),
         editor_settings:
           Map.merge(socket.assigns.editor_settings, %{theme: base, themeColors: colors}),
         terminal_settings:

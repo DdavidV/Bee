@@ -2,8 +2,8 @@ defmodule BeeWeb.PluginAssetController do
   @moduledoc """
   Serves the files of a loaded plugin the browser needs, and nothing else
   from its folder: `GET /plugins/:name/*path` must name its browser part
-  (ES module) or an icon of one of its icon themes (see
-  `Bee.Plugins.asset_path/2`).
+  (ES module), an icon of one of its icon themes, or a TextMate grammar
+  (see `Bee.Plugins.asset_path/2`).
   """
   use BeeWeb, :controller
 
@@ -14,6 +14,14 @@ defmodule BeeWeb.PluginAssetController do
         |> put_resp_content_type("text/javascript")
         # The URL carries a version (?v=), so a changed file gets a new URL.
         |> put_resp_header("cache-control", "no-cache")
+        |> send_file(200, file)
+
+      # Fetched as text by the editor (vscode-textmate reads JSON and plist).
+      {:ok, file, :grammar} ->
+        conn
+        |> put_resp_content_type("text/plain")
+        |> put_resp_header("cache-control", "no-cache")
+        |> put_resp_header("content-security-policy", "default-src 'none'")
         |> send_file(200, file)
 
       {:ok, file, :icon} ->
