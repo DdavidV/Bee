@@ -23,7 +23,8 @@
 //                   isn't a file is shown), cm:close, cm:reload, cm:language,
 //                   cm:edit (server-side edits, UTF-8 byte offsets),
 //                   cm:reveal (select a range / go to a line),
-//                   cm:snippet (Insert Snippet)
+//                   cm:snippet (Insert Snippet), cm:diagnostics (a file's
+//                   problems, JSON validation)
 // Client -> server: doc_changed (throttled), save, selection_changed
 //                   (throttled, UTF-8 byte offsets; for plugin commands)
 //                   history_changed (whether the active file can undo/redo)
@@ -46,7 +47,7 @@ import {
 } from "@codemirror/language"
 import {highlightSelectionMatches, searchKeymap} from "@codemirror/search"
 import {closeBrackets, autocompletion, closeBracketsKeymap, completionKeymap} from "@codemirror/autocomplete"
-import {lintKeymap} from "@codemirror/lint"
+import {lintKeymap, setDiagnostics} from "@codemirror/lint"
 import {oneDark, oneDarkHighlightStyle} from "@codemirror/theme-one-dark"
 import {registerCommand} from "../commands/registry"
 import {modeExtension, onModeChange} from "../editor/modes"
@@ -57,6 +58,7 @@ import {filePath, pluginExtensions, onExtensionsChange} from "../editor/extensio
 import {textmate, setGrammars, setTokenColors, onTextMateChange} from "../editor/textmate"
 import {languageConfig} from "../editor/language_config"
 import {snippetCompletions, insertSnippet, setSnippetRoot} from "../editor/snippets"
+import {jsonAssist, setJsonRequester} from "../editor/json_assist"
 
 const SYNC_MS = 300
 const SELECTION_MS = 100
@@ -155,10 +157,11 @@ const themeColors = dark => [
 // A file's highlighting – a TextMate grammar, a CodeMirror mode, or none –
 // its language configuration (editor/language_config.js) and snippets
 // (editor/snippets.js).
-const highlighting = ({mode, scope, config, snippets}) => [
+const highlighting = ({mode, scope, config, snippets, json}) => [
   scope ? textmate(scope) : modeExtension(mode),
   languageConfig(config, !scope && !!mode),
   snippetCompletions(snippets),
+  jsonAssist(json),
 ]
 
 const settingExtensions = s => ({
@@ -180,20 +183,22 @@ export const CodeEditor = {
     this.settings = this.readSettings()
     this.readTextMate()
     setSnippetRoot(this.el.dataset.root)
+    setJsonRequester((kind, state, pos) => this.jsonRequest(kind, state, pos))
 
     this.view = new EditorView({parent: this.el, state: EditorState.create()})
 
-    this.handleEvent("cm:open", ({path, text, mode, scope, config, snippets}) =>
-      this.open(path, text, {mode, scope, config, snippets}),
+    this.handleEvent("cm:open", ({path, text, mode, scope, config, snippets, json}) =>
+      this.open(path, text, {mode, scope, config, snippets, json}),
     )
     this.handleEvent("cm:activate", ({path}) => this.activate(path))
     this.handleEvent("cm:deactivate", () => this.deactivate())
     this.handleEvent("cm:close", ({path}) => this.close(path))
     this.handleEvent("cm:reload", ({path, text}) => this.reload(path, text))
-    this.handleEvent("cm:language", ({path, mode, scope, config, snippets}) =>
-      this.setMode(path, {mode, scope, config, snippets}),
+    this.handleEvent("cm:language", ({path, mode, scope, config, snippets, json}) =>
+      this.setMode(path, {mode, scope, config, snippets, json}),
     )
     this.handleEvent("cm:snippet", ({path, body}) => this.insertSnippet(path, body))
+    this.handleEvent("cm:diagnostics", d => this.setDiagnostics(d))
     this.handleEvent("cm:edit", ({path, edits, text}) => this.edit(path, edits, text))
     this.handleEvent("cm:reveal", target => this.reveal(target))
 
@@ -410,6 +415,33 @@ export const CodeEditor = {
     } else {
       this.pushText("doc_changed", path)
     }
+  },
+
+  // A file's problems (JSON validation): underlined, with their message on
+  // hover. UTF-8 byte offsets in the text of `size` bytes: when ours isn't
+  // that one any more (typed since), they're dropped; newer ones follow.
+  setDiagnostics({path, size, diagnostics}) {
+    const state = this.stateOf(path)
+    if (!state) return
+    const doc = state.doc.toString()
+    if (new TextEncoder().encode(doc).length !== size) return
+    const offsets = fromBytes(doc, diagnostics.flatMap(d => [d.from, d.to]))
+    const list = diagnostics
+      .filter(d => offsets.has(d.from) && offsets.has(d.to))
+      .map(d => ({from: offsets.get(d.from), to: offsets.get(d.to), severity: d.severity, message: d.message, source: "JSON"}))
+    this.updateState(path, setDiagnostics(state, list))
+  },
+
+  // Completion or hover from a JSON file's schemas (editor/json_assist.js):
+  // the server gets the text first, then the question, in that order.
+  jsonRequest(kind, state, pos) {
+    const path = state.facet(filePath)
+    if (!path || path !== this.active) return Promise.resolve(null)
+    this.flushAll()
+    const doc = state.doc.toString()
+    const offset = toBytes(doc, [pos]).get(pos)
+    const size = new TextEncoder().encode(doc).length
+    return new Promise(resolve => this.pushEvent("json_assist", {path, kind, offset, size}, reply => resolve(reply)))
   },
 
   // Insert Snippet: over the active file's selection (TM_SELECTED_TEXT).

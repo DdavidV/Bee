@@ -31,7 +31,8 @@ defmodule Bee.Contributions do
     Bee.Views,
     Bee.IconThemes,
     Bee.ColorThemes,
-    Bee.Snippets
+    Bee.Snippets,
+    Bee.JSONValidation
   ]
 
   # Bee's own manifests, embedded and schema-checked at compile time (see

@@ -6,8 +6,8 @@ defmodule Bee.Plugins.Vsix do
   understands: file icon themes (`contributes.iconThemes`, see
   `Bee.IconThemes`), color themes (`contributes.themes`, see
   `Bee.ColorThemes`), languages with their configuration and TextMate
-  grammars (`Bee.Languages`), and snippets (`Bee.Snippets`). The rest of it
-  does nothing yet.
+  grammars (`Bee.Languages`), snippets (`Bee.Snippets`) and JSON schemas
+  (`Bee.JSONValidation`). The rest of it does nothing yet.
 
   The extension's files (the zip's `extension/` folder) are unpacked into
   `<plugins>/<name>`, `name` being the extension's, and a `plugin.json` is
@@ -129,6 +129,7 @@ defmodule Bee.Plugins.Vsix do
       "languages" => languages(package, files),
       "grammars" => grammars(package, files),
       "snippets" => snippets(package, files),
+      "jsonValidation" => json_validation(package, files),
       "iconThemes" =>
         for(
           %{} = t <- List.wrap(get_in(package, ["contributes", "iconThemes"])),
@@ -197,6 +198,17 @@ defmodule Bee.Plugins.Vsix do
       }
       |> Map.reject(fn {_k, v} -> v in [nil, [], %{}] end)
     end
+  end
+
+  # JSON schemas: web addresses, or files that are in the package.
+  defp json_validation(package, files) do
+    for %{"fileMatch" => match, "url" => url} <-
+          List.wrap(get_in(package, ["contributes", "jsonValidation"])),
+        match = Enum.filter(List.wrap(match), &(is_binary(&1) and &1 != "")),
+        match != [] and is_binary(url),
+        String.starts_with?(url, ["http://", "https://"]) or
+          Map.has_key?(files, package_path(url)),
+        do: %{"fileMatch" => match, "url" => url}
   end
 
   # Snippet files that are in the package.

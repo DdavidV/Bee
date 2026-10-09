@@ -16,6 +16,10 @@ config :phoenix_live_view, root_tag_attribute: "phx-r"
 
 config :logger, :default_formatter, format: "$time [$level] $message\n"
 
+# JSON Schemas' $refs to other schemas (Bee.JSONValidation).
+config :ex_json_schema,
+  remote_schema_resolver: {Bee.JSONValidation.Schemas, :fetch_remote}
+
 config :esbuild,
   version: "0.25.4",
   bee: [

@@ -296,6 +296,11 @@ defmodule Bee.Console.Helpers do
          t <- list.("iconThemes"),
          do: {theme_text(t["id"], t["label"]), theme_state.(t["id"], icon_theme)}
        )},
+      {"JSON Validation",
+       for(
+         v <- list.("jsonValidation"),
+         do: {"#{Enum.join(List.wrap(v["fileMatch"]), " ")}  #{v["url"]}", "active"}
+       )},
       {"Snippets",
        for(
          sn <- list.("snippets"),
@@ -389,7 +394,7 @@ defmodule Bee.Console.Helpers do
 
   # Contribution points of a VS Code extension's package.json that Bee
   # doesn't read.
-  @supported ~w(languages grammars themes iconThemes snippets)
+  @supported ~w(languages grammars themes iconThemes snippets jsonValidation)
   defp unsupported(plugin) do
     with dir when is_binary(dir) <- plugin.dir,
          true <- Bee.Plugins.Vsix.marker(dir) != %{},

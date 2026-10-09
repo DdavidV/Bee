@@ -66,6 +66,7 @@ defmodule BeeWeb.EditorLive do
      |> load_commands()
      |> load_plugins()
      |> assign(grammars: Languages.grammars())
+     |> assign(diagnostics: %{}, json_jobs: %{})
      |> allow_upload(:vsix,
        accept: :any,
        max_entries: 1,
@@ -164,6 +165,36 @@ defmodule BeeWeb.EditorLive do
   end
 
   ## Search view
+
+  ## JSON schemas: completion and hover (Bee.JSONValidation.Assist)
+
+  # From the editor (editor/json_assist.js), which sent its text first;
+  # `size`: the text's, to answer only for that text.
+  def handle_event(
+        "json_assist",
+        %{"path" => path, "kind" => kind, "offset" => offset} = params,
+        socket
+      )
+      when kind in ["complete", "hover"] and is_integer(offset) do
+    reply =
+      with true <- Workbench.open?(workbench(socket), path),
+           %{text: text} <-
+             (try do
+                Buffer.get(path)
+              catch
+                :exit, _ -> nil
+              end),
+           true <- byte_size(text) == params["size"] do
+        case kind do
+          "complete" -> Bee.JSONValidation.Assist.complete(path, text, offset)
+          "hover" -> Bee.JSONValidation.Assist.hover(path, text, offset) || %{}
+        end
+      else
+        _ -> %{}
+      end
+
+    {:reply, reply, socket}
+  end
 
   def handle_event("search_update", params, socket) do
     fields =
@@ -386,7 +417,9 @@ defmodule BeeWeb.EditorLive do
   def handle_event("doc_changed", %{"path" => path, "text" => text}, socket) do
     if Workbench.open?(workbench(socket), path) do
       dirty = Buffer.dirty?(Buffer.update(path, text))
-      {:noreply, change(socket, &Workbench.set_dirty(&1, path, dirty))}
+
+      {:noreply,
+       socket |> change(&Workbench.set_dirty(&1, path, dirty)) |> validate_json(path, text)}
     else
       {:noreply, socket}
     end
@@ -565,6 +598,11 @@ defmodule BeeWeb.EditorLive do
         else: socket
 
     socket =
+      if :json_validation in keys or :languages in keys,
+        do: validate_open_json(socket),
+        else: socket
+
+    socket =
       if :icon_themes in keys,
         do: assign(socket, icon_theme: icon_theme(socket.assigns)),
         else: socket
@@ -575,6 +613,25 @@ defmodule BeeWeb.EditorLive do
   end
 
   def handle_info(:plugins_changed, socket), do: {:noreply, load_plugins(socket)}
+
+  def handle_info({:json_diagnostics, path, size, diagnostics}, socket) do
+    {next, jobs} = Map.pop(socket.assigns.json_jobs, path)
+    socket = assign(socket, json_jobs: jobs)
+    socket = if next, do: validate_json(socket, path, next), else: socket
+
+    if Workbench.open?(workbench(socket), path) do
+      {:noreply,
+       socket
+       |> update(:diagnostics, &Map.put(&1, path, diagnostics))
+       |> push_event("cm:diagnostics", %{
+         path: path,
+         size: size,
+         diagnostics: for(d <- diagnostics, do: Map.take(d, [:from, :to, :severity, :message]))
+       })}
+    else
+      {:noreply, socket}
+    end
+  end
 
   def handle_info({:marketplace_results, ref, offset, result}, socket),
     do: {:noreply, change(socket, &Marketplace.results(&1, ref, offset, result))}
@@ -657,7 +714,11 @@ defmodule BeeWeb.EditorLive do
   def handle_info({:buffer_edited, path, _version, edits, text}, socket) do
     if Workbench.open?(workbench(socket), path) do
       edits = for {from, to, insert} <- edits, do: [from, to, insert]
-      {:noreply, push_event(socket, "cm:edit", %{path: path, edits: edits, text: text})}
+
+      {:noreply,
+       socket
+       |> push_event("cm:edit", %{path: path, edits: edits, text: text})
+       |> validate_json(path, text)}
     else
       {:noreply, socket}
     end
@@ -668,7 +729,8 @@ defmodule BeeWeb.EditorLive do
       {:noreply,
        socket
        |> change(&Workbench.set_dirty(&1, path, false))
-       |> push_event("cm:reload", %{path: path, text: text})}
+       |> push_event("cm:reload", %{path: path, text: text})
+       |> validate_json(path, text)}
     else
       {:noreply, socket}
     end
@@ -783,7 +845,7 @@ defmodule BeeWeb.EditorLive do
 
   defp run_effect({:close_buffer, path}, socket) do
     Buffer.close(path)
-    socket
+    update(socket, :diagnostics, &Map.delete(&1, path))
   end
 
   defp run_effect(:new_terminal, socket) do
@@ -1014,6 +1076,7 @@ defmodule BeeWeb.EditorLive do
         "cm:open",
         Map.merge(%{path: path, text: buffer.text, lang: lang}, highlight(lang))
       )
+      |> validate_json(path, buffer.text)
     else
       {:error, reason} ->
         message = "Cannot open #{display_path(socket.assigns.root, path)}: #{inspect(reason)}"
@@ -1335,7 +1398,8 @@ defmodule BeeWeb.EditorLive do
         mode: nil,
         scope: nil,
         config: Languages.configuration(lang),
-        snippets: Bee.Snippets.editor_snippets(lang)
+        snippets: Bee.Snippets.editor_snippets(lang),
+        json: Bee.JSONValidation.language?(lang)
       }
       |> Map.merge(Languages.highlight(lang))
 
@@ -1758,7 +1822,70 @@ defmodule BeeWeb.EditorLive do
   end
 
   defp problems(assigns),
-    do: assigns.settings_errors ++ assigns.keybinding_errors ++ assigns.plugin_errors
+    do:
+      assigns.settings_errors ++
+        assigns.keybinding_errors ++ assigns.plugin_errors ++ diagnostic_problems(assigns)
+
+  defp diagnostic_problems(assigns) do
+    for {path, diagnostics} <- Enum.sort(assigns[:diagnostics] || %{}),
+        d <- diagnostics,
+        do: %{path: path, message: "line #{d.line}: #{d.message}"}
+  end
+
+  ## JSON validation (Bee.JSONValidation)
+  #
+  # A JSON file's diagnostics – syntax, and its schemas' errors – are found
+  # in a task, one at a time per file: text arriving meanwhile waits for
+  # it (`json_jobs`: path => nil, or the text to validate next). They go to
+  # the editor (cm:diagnostics, with the size of the text they're for) and
+  # to the problems.
+
+  defp validate_json(socket, path, text) do
+    lang = Workbench.language(workbench(socket), path)
+
+    cond do
+      not Bee.JSONValidation.language?(lang) ->
+        socket
+
+      Map.has_key?(socket.assigns.json_jobs, path) ->
+        update(socket, :json_jobs, &Map.put(&1, path, text))
+
+      true ->
+        window = self()
+
+        Task.Supervisor.start_child(Bee.JSONValidation.TaskSup, fn ->
+          diagnostics =
+            try do
+              Bee.JSONValidation.validate(path, text)
+            rescue
+              e ->
+                require Logger
+                Logger.error("validating #{path}: #{Exception.message(e)}")
+                []
+            end
+
+          send(window, {:json_diagnostics, path, byte_size(text), diagnostics})
+        end)
+
+        update(socket, :json_jobs, &Map.put(&1, path, nil))
+    end
+  end
+
+  # Schemas changed: every open JSON file again.
+  defp validate_open_json(socket) do
+    Enum.reduce(socket.assigns.tabs, socket, fn
+      %{kind: :file, path: path}, socket ->
+        case Buffer.get(path) do
+          %{text: text} -> validate_json(socket, path, text)
+          _ -> socket
+        end
+
+      _tab, socket ->
+        socket
+    end)
+  catch
+    :exit, _ -> socket
+  end
 
   ## Layout
 

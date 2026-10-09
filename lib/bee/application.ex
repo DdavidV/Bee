@@ -27,6 +27,9 @@ defmodule Bee.Application do
       Bee.Plugins.OpenVsx.cache_child_spec(),
       {Task.Supervisor, name: Bee.Plugins.OpenVsx.TaskSup},
       Bee.Plugins.OpenVsx,
+      # jsonValidation: schemas (cached), validations (tasks).
+      Bee.JSONValidation.Schemas,
+      {Task.Supervisor, name: Bee.JSONValidation.TaskSup},
       BeeWeb.Endpoint,
       # Server mode: the address to open, once the endpoint listens.
       {Task, &Bee.Mode.announce/0}

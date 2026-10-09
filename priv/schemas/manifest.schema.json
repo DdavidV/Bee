@@ -63,6 +63,24 @@
         },
         "languages": {"type": "array", "items": {"$ref": "#/definitions/language"}},
         "grammars": {"type": "array", "items": {"$ref": "#/definitions/grammar"}},
+        "jsonValidation": {
+          "type": "array",
+          "description": "JSON Schemas for JSON files, like VS Code's (plugins only): fileMatch globs (a / matches the end of the path, ! excludes) and a schema file in the plugin or an http(s) address.",
+          "items": {
+            "type": "object",
+            "required": ["fileMatch", "url"],
+            "additionalProperties": false,
+            "properties": {
+              "fileMatch": {
+                "oneOf": [
+                  {"type": "string", "minLength": 1},
+                  {"type": "array", "items": {"type": "string", "minLength": 1}}
+                ]
+              },
+              "url": {"type": "string", "minLength": 1}
+            }
+          }
+        },
         "snippets": {
           "type": "array",
           "description": "Snippet files like VS Code's (plugins only): for a language, or – without one – for the languages each snippet's scope lists, else all.",
