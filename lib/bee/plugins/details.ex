@@ -134,6 +134,9 @@ defmodule Bee.Plugins.Details do
         files = List.wrap(l["extensions"]) ++ List.wrap(l["filenames"])
         [Enum.join(List.wrap(l["aliases"] || l["id"]), ", "), Enum.join(files, " ")]
       end),
+      table("Snippets", ["Language", "File"], contributes["snippets"], fn sn ->
+        [sn["language"] || "all languages", sn["path"]]
+      end),
       table("Views", ["View", "Where"], views(contributes["views"]), fn {where, v} ->
         [v["name"], where]
       end),

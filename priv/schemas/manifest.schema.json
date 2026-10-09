@@ -63,6 +63,19 @@
         },
         "languages": {"type": "array", "items": {"$ref": "#/definitions/language"}},
         "grammars": {"type": "array", "items": {"$ref": "#/definitions/grammar"}},
+        "snippets": {
+          "type": "array",
+          "description": "Snippet files like VS Code's (plugins only): for a language, or – without one – for the languages each snippet's scope lists, else all.",
+          "items": {
+            "type": "object",
+            "required": ["path"],
+            "additionalProperties": false,
+            "properties": {
+              "language": {"type": "string", "minLength": 1},
+              "path": {"type": "string", "minLength": 1}
+            }
+          }
+        },
         "configuration": {"$ref": "#/definitions/configuration"},
         "viewsContainers": {
           "type": "object",
@@ -204,7 +217,8 @@
           "items": {"type": "string", "minLength": 1},
           "description": "Globs matched against the file name, or the workspace-relative path when they contain a slash."
         },
-        "firstLine": {"type": "string", "minLength": 1, "description": "Regex matched against the first line."}
+        "firstLine": {"type": "string", "minLength": 1, "description": "Regex matched against the first line."},
+        "configuration": {"type": "string", "minLength": 1, "description": "A language-configuration.json like VS Code's, relative to the plugin: comments, brackets, auto-closing pairs, indentation, onEnter rules, folding (plugins only)."}
       }
     },
     "grammar": {

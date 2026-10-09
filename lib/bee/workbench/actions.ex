@@ -450,6 +450,50 @@ defmodule Bee.Workbench.Actions do
 
   defp folder(wb, _args), do: wb.root
 
+  ## Snippets (Bee.Snippets)
+
+  # VS Code's: a pick of the active file's language's snippets.
+  @command "editor.action.insertSnippet"
+  def insert_snippet(wb) do
+    case Workbench.active_file(wb) do
+      nil ->
+        {wb, [{:flash, :info, "Open a file to insert a snippet into"}]}
+
+      path ->
+        lang = Workbench.language(wb, path)
+
+        case Bee.Snippets.for_language(lang) do
+          [] ->
+            {wb, [{:flash, :info, "No snippets for #{Bee.Languages.name(lang)}"}]}
+
+          snippets ->
+            Workbench.open_quick_pick(wb, %{
+              items:
+                for(
+                  s <- snippets,
+                  do: %{label: s.name, description: Enum.join(s.prefixes, ", "), value: s.name}
+                ),
+              command: "bee.insertSnippet",
+              arguments: [lang],
+              placeholder: "Select a snippet"
+            })
+        end
+    end
+  end
+
+  # The pick: [language, snippet name]; the editor inserts it.
+  @command "bee.insertSnippet"
+  def insert_snippet_named(wb, [lang, name]) when is_binary(lang) and is_binary(name) do
+    with path when is_binary(path) <- Workbench.active_file(wb),
+         %{body: body} <- Enum.find(Bee.Snippets.for_language(lang), &(&1.name == name)) do
+      {wb, [{:push, "cm:snippet", %{path: path, body: body}}]}
+    else
+      _ -> wb
+    end
+  end
+
+  def insert_snippet_named(wb, _args), do: wb
+
   ## Open VSX (the Plugins view's search, `Bee.Workbench.Marketplace`)
 
   # VS Code's: shows the Plugins view searching for `query`.

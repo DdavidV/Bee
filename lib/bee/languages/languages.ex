@@ -28,6 +28,12 @@ defmodule Bee.Languages do
     6. `"plaintext"`
 
   Later sources win over earlier ones for the same file name or extension.
+
+  A language contributed by a plugin may have a `configuration`, a
+  `language-configuration.json` like VS Code's (comments, brackets,
+  auto-closing pairs, indentation rules, onEnter rules, folding):
+  `configuration/1` gives it to the editor, normalized; the last one
+  contributed for a language wins.
   """
   @behaviour Bee.Contributions.Point
 
@@ -88,6 +94,24 @@ defmodule Bee.Languages do
       %{mode: mode} when is_binary(mode) -> %{mode: mode}
       %{scope: scope} -> %{scope: scope}
       nil -> %{}
+    end
+  end
+
+  @doc """
+  Language `id`'s configuration (see the module doc), or nil: a map in the
+  file's own keys – `comments` (`lineComment`, `blockComment`),
+  `brackets`, `autoClosingPairs` and `surroundingPairs` (`[{open, close}]`),
+  `autoCloseBefore`, `indentationRules`, `onEnterRules`, `folding` – with
+  regexes as `%{"pattern" => source, "flags" => flags}` (JavaScript
+  regexes, compiled by the editor).
+  """
+  def configuration(id) do
+    contributed()
+    |> Enum.filter(&(&1.id == id and &1.configuration))
+    |> List.last()
+    |> case do
+      nil -> nil
+      lang -> lang.configuration
     end
   end
 
@@ -209,8 +233,8 @@ defmodule Bee.Languages do
 
     languages =
       for l <- Map.get(contributes, "languages", []) do
-        if source = l["firstLine"] do
-          case Regex.compile(source) do
+        if first_line = l["firstLine"] do
+          case Regex.compile(first_line) do
             {:ok, _} ->
               :ok
 
@@ -225,7 +249,8 @@ defmodule Bee.Languages do
           extensions: Map.get(l, "extensions", []),
           filenames: Map.get(l, "filenames", []),
           filename_patterns: Map.get(l, "filenamePatterns", []),
-          first_line: l["firstLine"]
+          first_line: l["firstLine"],
+          configuration: l["configuration"] && configuration!(l, source, opts[:dir])
         }
       end
 
@@ -272,4 +297,136 @@ defmodule Bee.Languages do
         }
     end
   end
+
+  ## Language configuration
+
+  defp configuration!(%{"id" => id, "configuration" => rel}, source, dir) do
+    dir =
+      case {source, dir} do
+        {{:plugin, _}, dir} when is_binary(dir) -> Path.expand(dir)
+        _ -> raise ArgumentError, "language #{id}: a configuration can only come from a plugin"
+      end
+
+    path = Path.expand(rel, dir)
+
+    unless String.starts_with?(path, dir <> "/"),
+      do: raise(ArgumentError, "language #{id}: configuration must be inside the plugin")
+
+    with {:ok, text} <- File.read(path),
+         {:ok, %{} = json} <- Bee.JSON.JSONC.decode(text) do
+      normalize_configuration(json)
+    else
+      {:error, reason} when is_atom(reason) ->
+        raise ArgumentError, "language #{id}: configuration #{rel}: #{:file.format_error(reason)}"
+
+      _ ->
+        raise ArgumentError, "language #{id}: configuration #{rel} is not a JSON object"
+    end
+  end
+
+  # What the editor uses, in the file's keys; malformed parts are left out.
+  defp normalize_configuration(json) do
+    comments = json["comments"] || %{}
+
+    %{
+      "comments" =>
+        %{
+          "lineComment" => string(comments["lineComment"]),
+          "blockComment" => pair(comments["blockComment"])
+        }
+        |> compact(),
+      "brackets" =>
+        json["brackets"] |> List.wrap() |> Enum.map(&pair/1) |> Enum.reject(&is_nil/1),
+      "autoClosingPairs" => pairs(json["autoClosingPairs"]),
+      "surroundingPairs" => pairs(json["surroundingPairs"]),
+      "autoCloseBefore" => string(json["autoCloseBefore"]),
+      "indentationRules" =>
+        case json["indentationRules"] do
+          %{} = rules ->
+            for key <-
+                  ~w(increaseIndentPattern decreaseIndentPattern indentNextLinePattern unIndentedLinePattern),
+                regex = regex(rules[key]),
+                into: %{},
+                do: {key, regex}
+
+          _ ->
+            %{}
+        end,
+      "onEnterRules" =>
+        for %{"beforeText" => before, "action" => %{} = action} = rule <-
+              List.wrap(json["onEnterRules"]),
+            before = regex(before),
+            action["indent"] in ~w(none indent outdent indentOutdent) do
+          %{
+            "beforeText" => before,
+            "afterText" => regex(rule["afterText"]),
+            "previousLineText" => regex(rule["previousLineText"]),
+            "action" =>
+              %{
+                "indent" => action["indent"],
+                "appendText" => string(action["appendText"]),
+                "removeText" => if(is_integer(action["removeText"]), do: action["removeText"])
+              }
+              |> compact()
+          }
+          |> compact()
+        end,
+      "folding" =>
+        case json["folding"] do
+          %{} = folding ->
+            %{
+              "offSide" => if(folding["offSide"] == true, do: true),
+              "markers" => markers(folding["markers"])
+            }
+            |> compact()
+
+          _ ->
+            %{}
+        end
+    }
+    |> compact()
+  end
+
+  defp markers(%{"start" => start, "end" => stop}) do
+    with %{} = start <- regex(start),
+         %{} = stop <- regex(stop),
+         do: %{"start" => start, "end" => stop}
+  end
+
+  defp markers(_other), do: nil
+
+  defp pairs(list) do
+    for item <- List.wrap(list),
+        p =
+          (case item do
+             %{"open" => open, "close" => close} -> pair([open, close])
+             list -> pair(list)
+           end),
+        do: %{"open" => hd(p), "close" => List.last(p)} |> Map.merge(not_in(item))
+  end
+
+  defp not_in(%{"notIn" => list}) when is_list(list),
+    do: %{"notIn" => Enum.filter(list, &is_binary/1)}
+
+  defp not_in(_item), do: %{}
+
+  defp pair([open, close])
+       when is_binary(open) and is_binary(close) and open != "" and close != "",
+       do: [open, close]
+
+  defp pair(_other), do: nil
+
+  defp string(s) when is_binary(s) and s != "", do: s
+  defp string(_s), do: nil
+
+  # VS Code's regexes: "source", or {"pattern": "source", "flags": "i"}.
+  defp regex(source) when is_binary(source) and source != "",
+    do: %{"pattern" => source, "flags" => ""}
+
+  defp regex(%{"pattern" => source} = r) when is_binary(source) and source != "",
+    do: %{"pattern" => source, "flags" => if(is_binary(r["flags"]), do: r["flags"], else: "")}
+
+  defp regex(_other), do: nil
+
+  defp compact(map), do: Map.reject(map, fn {_k, v} -> v in [nil, [], %{}] end)
 end

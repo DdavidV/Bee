@@ -16,12 +16,14 @@
 // it: the name of a CodeMirror mode (editor/modes.js; one registered later
 // by a plugin is applied to the files waiting for it), or the scope name of
 // a TextMate grammar (editor/textmate.js; data-grammars lists them,
-// data-token-colors has the color theme's tokenColors).
+// data-token-colors has the color theme's tokenColors). With them comes the
+// language's configuration, if it has one (editor/language_config.js).
 //
 // Server -> client: cm:open, cm:activate, cm:deactivate (an editor that
 //                   isn't a file is shown), cm:close, cm:reload, cm:language,
 //                   cm:edit (server-side edits, UTF-8 byte offsets),
-//                   cm:reveal (select a range / go to a line)
+//                   cm:reveal (select a range / go to a line),
+//                   cm:snippet (Insert Snippet)
 // Client -> server: doc_changed (throttled), save, selection_changed
 //                   (throttled, UTF-8 byte offsets; for plugin commands)
 //                   history_changed (whether the active file can undo/redo)
@@ -53,6 +55,8 @@ import {toBytes, fromBytes} from "../editor/offsets"
 import {setEditor} from "../editor/active"
 import {filePath, pluginExtensions, onExtensionsChange} from "../editor/extensions"
 import {textmate, setGrammars, setTokenColors, onTextMateChange} from "../editor/textmate"
+import {languageConfig} from "../editor/language_config"
+import {snippetCompletions, insertSnippet, setSnippetRoot} from "../editor/snippets"
 
 const SYNC_MS = 300
 const SELECTION_MS = 100
@@ -148,8 +152,14 @@ const themeColors = dark => [
   syntaxHighlighting(dark ? oneDarkHighlightStyle : defaultHighlightStyle),
 ]
 
-// A file's highlighting: a TextMate grammar, a CodeMirror mode, or none.
-const highlighting = ({mode, scope}) => (scope ? textmate(scope) : modeExtension(mode))
+// A file's highlighting – a TextMate grammar, a CodeMirror mode, or none –
+// its language configuration (editor/language_config.js) and snippets
+// (editor/snippets.js).
+const highlighting = ({mode, scope, config, snippets}) => [
+  scope ? textmate(scope) : modeExtension(mode),
+  languageConfig(config, !scope && !!mode),
+  snippetCompletions(snippets),
+]
 
 const settingExtensions = s => ({
   theme: s.themeColors ? themeColors(s.theme !== "light") : s.theme === "light" ? [] : oneDark,
@@ -165,19 +175,25 @@ export const CodeEditor = {
     this.active = null
     this.timers = new Map() // path -> throttle timer
     this.pending = new Set() // paths with changes not yet sent
-    this.modes = new Map() // path -> {mode, scope}
+    this.modes = new Map() // path -> {mode, scope, config, snippets}
     this.selectionTimer = null
     this.settings = this.readSettings()
     this.readTextMate()
+    setSnippetRoot(this.el.dataset.root)
 
     this.view = new EditorView({parent: this.el, state: EditorState.create()})
 
-    this.handleEvent("cm:open", ({path, text, mode, scope}) => this.open(path, text, {mode, scope}))
+    this.handleEvent("cm:open", ({path, text, mode, scope, config, snippets}) =>
+      this.open(path, text, {mode, scope, config, snippets}),
+    )
     this.handleEvent("cm:activate", ({path}) => this.activate(path))
     this.handleEvent("cm:deactivate", () => this.deactivate())
     this.handleEvent("cm:close", ({path}) => this.close(path))
     this.handleEvent("cm:reload", ({path, text}) => this.reload(path, text))
-    this.handleEvent("cm:language", ({path, mode, scope}) => this.setMode(path, {mode, scope}))
+    this.handleEvent("cm:language", ({path, mode, scope, config, snippets}) =>
+      this.setMode(path, {mode, scope, config, snippets}),
+    )
+    this.handleEvent("cm:snippet", ({path, body}) => this.insertSnippet(path, body))
     this.handleEvent("cm:edit", ({path, edits, text}) => this.edit(path, edits, text))
     this.handleEvent("cm:reveal", target => this.reveal(target))
 
@@ -300,11 +316,12 @@ export const CodeEditor = {
     }
   },
 
-  // `highlight`: {mode, scope}; the same again changes nothing, unless `force`.
+  // `highlight`: {mode, scope, config, snippets}; the same again changes nothing,
+  // unless `force`.
   setMode(path, highlight, force = false) {
     if (!this.stateOf(path)) return
     const old = this.modes.get(path)
-    if (!force && old && old.mode === highlight.mode && old.scope === highlight.scope) return
+    if (!force && old && JSON.stringify(old) === JSON.stringify(highlight)) return
     this.modes.set(path, highlight)
     this.updateState(path, {effects: languageCompartment.reconfigure(highlighting(highlight))})
   },
@@ -393,6 +410,14 @@ export const CodeEditor = {
     } else {
       this.pushText("doc_changed", path)
     }
+  },
+
+  // Insert Snippet: over the active file's selection (TM_SELECTED_TEXT).
+  insertSnippet(path, body) {
+    if (path !== this.active) return
+    const {from, to} = this.view.state.selection.main
+    insertSnippet(this.view, body, from, to)
+    this.view.focus()
   },
 
   // Selects `from`-`to` (UTF-8 bytes) or goes to `line` (1-based) in the

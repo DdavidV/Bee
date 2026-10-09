@@ -1327,8 +1327,17 @@ defmodule BeeWeb.EditorLive do
 
   ## Languages
 
-  # How the editor highlights `lang`: a CodeMirror `mode` or a TextMate `scope`.
-  defp highlight(lang), do: Map.merge(%{mode: nil, scope: nil}, Languages.highlight(lang))
+  # How the editor highlights `lang` – a CodeMirror `mode` or a TextMate
+  # `scope` – its language configuration (`config`, or nil) and snippets.
+  defp highlight(lang),
+    do:
+      %{
+        mode: nil,
+        scope: nil,
+        config: Languages.configuration(lang),
+        snippets: Bee.Snippets.editor_snippets(lang)
+      }
+      |> Map.merge(Languages.highlight(lang))
 
   # Language contributions or files.associations changed: re-detect open tabs.
   defp redetect_languages(socket) do

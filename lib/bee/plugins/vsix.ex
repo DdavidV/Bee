@@ -3,10 +3,11 @@ defmodule Bee.Plugins.Vsix do
   Installs a VS Code extension package (`.vsix`, a zip as downloaded from
   the Marketplace or Open VSX) as a Bee plugin in the user's plugins
   folder. Any extension installs; its `plugin.json` gets the parts Bee
-  understands, which for now are themes: file icon themes
-  (`contributes.iconThemes`, see `Bee.IconThemes`) and color themes
-  (`contributes.themes`, see `Bee.ColorThemes`). The rest of it does
-  nothing yet.
+  understands: file icon themes (`contributes.iconThemes`, see
+  `Bee.IconThemes`), color themes (`contributes.themes`, see
+  `Bee.ColorThemes`), languages with their configuration and TextMate
+  grammars (`Bee.Languages`), and snippets (`Bee.Snippets`). The rest of it
+  does nothing yet.
 
   The extension's files (the zip's `extension/` folder) are unpacked into
   `<plugins>/<name>`, `name` being the extension's, and a `plugin.json` is
@@ -125,8 +126,9 @@ defmodule Bee.Plugins.Vsix do
   # known uiTheme and a file). Labels can be "%key%" (package.nls.json).
   defp contributes(package, files) do
     %{
-      "languages" => languages(package),
+      "languages" => languages(package, files),
       "grammars" => grammars(package, files),
+      "snippets" => snippets(package, files),
       "iconThemes" =>
         for(
           %{} = t <- List.wrap(get_in(package, ["contributes", "iconThemes"])),
@@ -143,8 +145,9 @@ defmodule Bee.Plugins.Vsix do
     |> Map.reject(fn {_k, list} -> list == [] end)
   end
 
-  # Languages: their ids and files (configuration, icons… aren't used yet).
-  defp languages(package) do
+  # Languages: their ids, files, and configuration (when the package has
+  # its file); icons… aren't used yet.
+  defp languages(package, files) do
     for %{"id" => id} = l <- List.wrap(get_in(package, ["contributes", "languages"])),
         is_binary(id) and Regex.match?(~r/^[A-Za-z0-9_.+-]+$/, id) do
       %{
@@ -153,6 +156,13 @@ defmodule Bee.Plugins.Vsix do
         "extensions" => Enum.filter(strings(l["extensions"]), &String.starts_with?(&1, ".")),
         "filenames" => strings(l["filenames"]),
         "filenamePatterns" => strings(l["filenamePatterns"]),
+        "configuration" =>
+          with(
+            rel when is_binary(rel) <- l["configuration"],
+            true <- Map.has_key?(files, package_path(rel)),
+            do: rel,
+            else: (_ -> nil)
+          ),
         # A JavaScript regex; kept when Elixir's understands it too.
         "firstLine" =>
           with(
@@ -171,7 +181,7 @@ defmodule Bee.Plugins.Vsix do
     for %{"scopeName" => scope, "path" => path} = g <-
           List.wrap(get_in(package, ["contributes", "grammars"])),
         is_binary(scope) and scope != "" and is_binary(path),
-        Map.has_key?(files, path |> Path.expand("/") |> String.trim_leading("/")) do
+        Map.has_key?(files, package_path(path)) do
       %{
         "scopeName" => scope,
         "path" => path,
@@ -188,6 +198,19 @@ defmodule Bee.Plugins.Vsix do
       |> Map.reject(fn {_k, v} -> v in [nil, [], %{}] end)
     end
   end
+
+  # Snippet files that are in the package.
+  defp snippets(package, files) do
+    for %{"path" => path} = s <- List.wrap(get_in(package, ["contributes", "snippets"])),
+        is_binary(path) and Map.has_key?(files, package_path(path)) do
+      if is_binary(s["language"]) and s["language"] != "",
+        do: %{"language" => s["language"], "path" => path},
+        else: %{"path" => path}
+    end
+  end
+
+  # "./grammar/x.json" → "grammar/x.json", the key of `files`.
+  defp package_path(rel), do: rel |> Path.expand("/") |> String.trim_leading("/")
 
   defp strings(list) when is_list(list), do: Enum.filter(list, &(is_binary(&1) and &1 != ""))
   defp strings(_list), do: []

@@ -384,6 +384,19 @@
         "runtime": "client"
       },
       {
+        "command": "editor.action.insertSnippet",
+        "category": "Snippets",
+        "title": "Insert Snippet",
+        "runtime": "server",
+        "enablement": "resourceScheme == file"
+      },
+      {
+        "command": "bee.insertSnippet",
+        "category": "Snippets",
+        "title": "Insert Snippet (picked)",
+        "runtime": "server"
+      },
+      {
         "command": "workbench.extensions.search",
         "category": "Plugins",
         "title": "Search Open VSX",
@@ -578,6 +591,7 @@
         {"command": "workbench.action.setIconTheme", "when": "false"},
         {"command": "workbench.action.setColorTheme", "when": "false"},
         {"command": "extension.open", "when": "false"},
+        {"command": "bee.insertSnippet", "when": "false"},
         {"command": "workbench.extensions.installExtension", "when": "false"},
         {"command": "workbench.extensions.updateExtension", "when": "false"},
         {"command": "bee.plugins.disable", "when": "false"}
