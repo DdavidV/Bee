@@ -30,6 +30,7 @@ defmodule Bee.Workbench do
     * `{:delete_file, path}`, `{:paste_files, op, paths, dir}` – see
       `Bee.Workspace.Files`
     * search effects, see `Bee.Workbench.Search`
+    * Open VSX effects (searching, installing), see `Bee.Workbench.Marketplace`
 
   Commands (`Bee.Workbench.Actions`) are built from these functions.
   """
@@ -59,7 +60,8 @@ defmodule Bee.Workbench do
             palette: nil,
             can_undo: false,
             can_redo: false,
-            search: nil
+            search: nil,
+            marketplace: nil
 
   @type tab :: %{path: String.t(), dirty: boolean(), lang: String.t()}
   @type terminal :: %{id: integer(), name: String.t()}
@@ -89,13 +91,19 @@ defmodule Bee.Workbench do
     :can_undo,
     :can_redo,
     :search,
+    :marketplace,
     :root
   ]
 
   @doc "The struct's fields (the LiveView keeps them as individual assigns)."
   def fields, do: @fields
 
-  def new(root), do: %__MODULE__{root: root, search: Bee.Workbench.Search.new()}
+  def new(root),
+    do: %__MODULE__{
+      root: root,
+      search: Bee.Workbench.Search.new(),
+      marketplace: Bee.Workbench.Marketplace.new()
+    }
 
   @doc "Normalizes a handler result to `{workbench, effects}`."
   def wrap({%__MODULE__{} = wb, effects}) when is_list(effects), do: {wb, effects}
@@ -548,7 +556,9 @@ defmodule Bee.Workbench do
       "searchRegex" => wb.search != nil and wb.search.regex,
       "inQuickOpen" => wb.palette != nil,
       "menuOpen" => wb.open_menu != nil,
-      "explorerCanPaste" => wb.clipboard != nil
+      "explorerCanPaste" => wb.clipboard != nil,
+      "searchMarketplaceExtensions" =>
+        wb.marketplace != nil and String.trim(wb.marketplace.query) != ""
     })
   end
 end

@@ -3,6 +3,8 @@ defmodule BeeWeb.Workbench.Toolbar do
   Icon buttons for the commands of an icon menu (`editor/title`,
   `view/title`, `view/item/context`), as built by
   `BeeWeb.EditorLive.toolbar/3`: `%{command, label, icon, disabled}`.
+  A command without an icon is a text button (its title), like VS Code's
+  Install button on a marketplace result (`text_class` styles those).
   """
   use BeeWeb, :html
 
@@ -10,6 +12,7 @@ defmodule BeeWeb.Workbench.Toolbar do
   attr :args, :list, default: nil, doc: "arguments for the commands (view items)"
   attr :class, :any, default: nil
   attr :id, :string, default: nil
+  attr :text_class, :any, default: "btn-ghost", doc: "for text buttons"
 
   def toolbar(assigns) do
     ~H"""
@@ -17,7 +20,13 @@ defmodule BeeWeb.Workbench.Toolbar do
       <button
         :for={action <- @actions}
         type="button"
-        class="btn btn-ghost btn-xs btn-square"
+        class={[
+          "btn btn-xs",
+          if(BeeWeb.Icons.exists?(action.icon || ""),
+            do: "btn-ghost btn-square",
+            else: ["px-1 font-normal", @text_class]
+          )
+        ]}
         title={action.label}
         aria-label={action.label}
         disabled={action.disabled}
@@ -27,7 +36,7 @@ defmodule BeeWeb.Workbench.Toolbar do
         phx-value-args={@args && Jason.encode!(@args)}
       >
         <BeeWeb.Icons.named_icon name={action.icon} class="size-4" />
-        <span :if={!BeeWeb.Icons.exists?(action.icon || "")} class="text-xs px-1">
+        <span :if={!BeeWeb.Icons.exists?(action.icon || "")} class="text-xs">
           {action.label}
         </span>
       </button>

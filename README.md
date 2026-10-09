@@ -121,6 +121,8 @@ cargo run --features selftest -- /path/to/repo
 | `BEE_CONFIG_DIR` | Where settings, keybindings, plugins, the token and the secret live (default `~/.config/bee`) |
 | `BEE_PORT` / `PORT` | The browser mode's port (default 4000; a release picks a free one) |
 | `BEE_TOKEN` | A fixed access token instead of the generated one |
+| `BEE_OPEN_VSX_URL` | The Open VSX server the Plugins view searches and installs from (default `https://open-vsx.org`) |
+| `BEE_TARGET_PLATFORM` | Which platform's packages to install from Open VSX, e.g. `linux-arm64` (default: the one Bee runs on) |
 | `BEE_ALLOWED_HOSTS` | Extra host names Bee answers to, comma separated (e.g. for a tunnel) |
 | `BEE_MODE` | `server` (default) or `desktop`; the desktop app sets it |
 | `BEE_RELEASE` | Another release for the desktop app to start (`…/bin/bee`) |

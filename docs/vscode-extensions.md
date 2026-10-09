@@ -20,9 +20,22 @@ contribution points are registered (`Bee.Contributions`):
 | `themes` | `Bee.ColorThemes` | Same; `tokenColors` not applied yet |
 
 **From a `.vsix`** (the "Install from VSIX…" command, `Bee.Plugins.Vsix`)
-Bee installs **file icon themes and color themes** only. It unpacks the package into the
-plugins folder and writes a `plugin.json` for the parts it understands.
-An extension with nothing Bee understands is refused.
+Bee installs any extension: it unpacks the package into the plugins folder
+and writes a `plugin.json` for the parts it understands, which for now are
+**file icon themes and color themes**. The rest of an extension is kept
+but does nothing yet.
+
+**From Open VSX** (the Plugins view's search box, `Bee.Plugins.OpenVsx`)
+Bee searches [Open VSX](https://open-vsx.org) like VS Code's Extensions
+view searches its marketplace: results replace the installed plugins while
+there is a query, a result's details page shows its README, and Install /
+Update download its `.vsix` and install it as above (the plugin remembers
+its Open VSX id). Like VS Code, it installs the package built for the
+platform Bee runs on (`linux-x64`, `darwin-arm64`, …), else the universal
+one, from the latest version that has one; an extension with neither says
+it isn't available for this platform. Open VSX rate limits, so its answers are cached (Cachex),
+the same request in flight is made once, Bee sends at most 60 requests a
+minute, and a `429` stops requests until its `Retry-After`.
 
 No extension code runs: Bee doesn't load an extension's JavaScript or
 provide VS Code's `vscode` API.
@@ -45,7 +58,7 @@ feature.
 | Snippets | `snippets` | Missing | Snippet completion in CodeMirror (`@codemirror/autocomplete` has snippets) |
 | Keymaps | `keybindings` | Mostly there | The commands they bind must exist in Bee under VS Code's ids |
 | Settings | `configuration`, `configurationDefaults` | Mostly there | Read them from a `.vsix`; per-language defaults (`"[python]": {…}`) |
-| Extension packs | `extensionPack`, `extensionDependencies` | Missing | Install a list of extensions, from Open VSX |
+| Extension packs | `extensionPack`, `extensionDependencies` | Missing | Install a list of extensions, from Open VSX (`Bee.Plugins.OpenVsx.install/1` installs one) |
 | JSON schemas | `jsonValidation` | Missing | JSON validation and completion in the editor (Bee has a JSON Schema validator) |
 | UI translations | `localizations` | Missing | Bee's UI strings going through gettext and a loader for VS Code's format |
 | Tasks | `taskDefinitions`, `problemMatchers` | Missing | A tasks system, and problems from their output |

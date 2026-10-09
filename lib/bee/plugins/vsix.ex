@@ -2,15 +2,19 @@ defmodule Bee.Plugins.Vsix do
   @moduledoc """
   Installs a VS Code extension package (`.vsix`, a zip as downloaded from
   the Marketplace or Open VSX) as a Bee plugin in the user's plugins
-  folder – for the parts Bee understands, which for now are themes: file
-  icon themes (`contributes.iconThemes`, see `Bee.IconThemes`) and color
-  themes (`contributes.themes`, see `Bee.ColorThemes`).
+  folder. Any extension installs; its `plugin.json` gets the parts Bee
+  understands, which for now are themes: file icon themes
+  (`contributes.iconThemes`, see `Bee.IconThemes`) and color themes
+  (`contributes.themes`, see `Bee.ColorThemes`). The rest of it does
+  nothing yet.
 
   The extension's files (the zip's `extension/` folder) are unpacked into
   `<plugins>/<name>`, `name` being the extension's, and a `plugin.json` is
-  written for them. A `.vsix.json` marker records where it came from:
-  installing again replaces a plugin installed this way (an update), never
-  a folder of another kind.
+  written for them. A `.vsix.json` marker records where it came from
+  (`openVsx`: its Open VSX id, see `Bee.Plugins.OpenVsx`; `targetPlatform`:
+  which platform's package it is): installing
+  again replaces a plugin installed this way (an update), never a folder
+  of another kind or another Open VSX extension of the same name.
   """
 
   alias Bee.Plugins
@@ -20,17 +24,30 @@ defmodule Bee.Plugins.Vsix do
   @max_entries 50_000
 
   @doc """
-  Installs the `.vsix` at `path`. Returns `{:ok, plugin_name}` or
-  `{:error, message}`.
+  Installs the `.vsix` at `path`. Options: `source`, the Open VSX id it
+  was downloaded as, and `target_platform`, the platform of its package. Returns `{:ok, plugin_name}` or `{:error, message}`.
   """
-  @spec install(Path.t()) :: {:ok, String.t()} | {:error, String.t()}
-  def install(path) do
+  @spec install(Path.t(), keyword()) :: {:ok, String.t()} | {:error, String.t()}
+  def install(path, opts \\ []) do
+    source = opts[:source]
+    origin = %{openVsx: source, targetPlatform: opts[:target_platform]}
+
     with {:ok, files} <- read(path),
          {:ok, package} <- json(files, "package.json"),
-         {:ok, contributes} <- themes(package, files),
+         contributes = themes(package, files),
          {:ok, name} <- plugin_name(package),
-         :ok <- check_target(name) do
-      write(name, files, manifest(name, package, files, contributes))
+         :ok <- check_target(name, source) do
+      write(name, files, manifest(name, package, files, contributes), origin)
+    end
+  end
+
+  @doc "The `.vsix.json` marker of plugin folder `dir` (`%{}` if there is none)."
+  def marker(dir) do
+    with {:ok, text} <- File.read(Path.join(dir, @marker)),
+         {:ok, %{} = marker} <- Jason.decode(text) do
+      marker
+    else
+      _ -> %{}
     end
   end
 
@@ -105,30 +122,23 @@ defmodule Bee.Plugins.Vsix do
 
   # The contributes section of the plugin: the themes, with the fields Bee
   # knows (color themes need a label, a known uiTheme and a file). Labels
-  # can be "%key%" (package.nls.json).
+  # can be "%key%" (package.nls.json). Empty for other extensions.
   defp themes(package, files) do
-    contributes =
-      %{
-        "iconThemes" =>
-          for(
-            %{} = t <- List.wrap(get_in(package, ["contributes", "iconThemes"])),
-            do: t |> Map.take(~w(id label path)) |> localize_label(files)
-          ),
-        "themes" =>
-          for(
-            %{"label" => label, "path" => path, "uiTheme" => ui} = t <-
-              List.wrap(get_in(package, ["contributes", "themes"])),
-            is_binary(label) and is_binary(path) and ui in ~w(vs vs-dark hc-black hc-light),
-            do: t |> Map.take(~w(id label uiTheme path)) |> localize_label(files)
-          )
-      }
-      |> Map.reject(fn {_k, list} -> list == [] end)
-
-    if contributes == %{},
-      do:
-        {:error,
-         "#{package["name"] || "the extension"} contributes no color or file icon themes; Bee can only install themes from VSIX files for now"},
-      else: {:ok, contributes}
+    %{
+      "iconThemes" =>
+        for(
+          %{} = t <- List.wrap(get_in(package, ["contributes", "iconThemes"])),
+          do: t |> Map.take(~w(id label path)) |> localize_label(files)
+        ),
+      "themes" =>
+        for(
+          %{"label" => label, "path" => path, "uiTheme" => ui} = t <-
+            List.wrap(get_in(package, ["contributes", "themes"])),
+          is_binary(label) and is_binary(path) and ui in ~w(vs vs-dark hc-black hc-light),
+          do: t |> Map.take(~w(id label uiTheme path)) |> localize_label(files)
+        )
+    }
+    |> Map.reject(fn {_k, list} -> list == [] end)
   end
 
   # A Bee plugin name (lowercase letters, digits, dashes) from the extension's.
@@ -142,8 +152,9 @@ defmodule Bee.Plugins.Vsix do
     if name == "", do: {:error, "the extension has no name"}, else: {:ok, name}
   end
 
-  defp check_target(name) do
+  defp check_target(name, source) do
     target = Path.join(Plugins.user_dir(), name)
+    installed = marker(target)["openVsx"]
 
     cond do
       match?(%{scope: :builtin}, Plugins.get(name)) ->
@@ -151,6 +162,11 @@ defmodule Bee.Plugins.Vsix do
 
       File.exists?(target) and not File.exists?(Path.join(target, @marker)) ->
         {:error, "#{target} already exists and wasn't installed from a VSIX; uninstall it first"}
+
+      is_binary(source) and is_binary(installed) and
+          String.downcase(source) != String.downcase(installed) ->
+        {:error,
+         "#{installed}, another extension named #{name}, is installed; uninstall it first"}
 
       true ->
         :ok
@@ -189,7 +205,7 @@ defmodule Bee.Plugins.Vsix do
   ## Writing
 
   # Unpacked next to the plugins folder first, then moved in whole.
-  defp write(name, files, manifest) do
+  defp write(name, files, manifest, origin) do
     tmp = Path.join(Bee.Settings.user_dir(), ".installing-#{name}")
     target = Path.join(Plugins.user_dir(), name)
     File.rm_rf!(tmp)
@@ -204,7 +220,10 @@ defmodule Bee.Plugins.Vsix do
 
     File.write!(
       Path.join(tmp, @marker),
-      Jason.encode!(%{name: manifest["name"], version: manifest["version"]}, pretty: true)
+      %{name: manifest["name"], version: manifest["version"]}
+      |> Map.merge(origin)
+      |> Map.reject(fn {_k, v} -> is_nil(v) end)
+      |> Jason.encode!(pretty: true)
     )
 
     File.mkdir_p!(Plugins.user_dir())

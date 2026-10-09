@@ -384,6 +384,31 @@
         "runtime": "client"
       },
       {
+        "command": "workbench.extensions.search",
+        "category": "Plugins",
+        "title": "Search Open VSX",
+        "runtime": "server"
+      },
+      {
+        "command": "workbench.extensions.action.clearExtensionsSearchResults",
+        "category": "Plugins",
+        "title": "Clear Search Results",
+        "icon": "x-mark",
+        "runtime": "server"
+      },
+      {
+        "command": "workbench.extensions.installExtension",
+        "category": "Plugins",
+        "title": "Install",
+        "runtime": "server"
+      },
+      {
+        "command": "workbench.extensions.updateExtension",
+        "category": "Plugins",
+        "title": "Update",
+        "runtime": "server"
+      },
+      {
         "command": "bee.plugins.uninstall",
         "category": "Plugins",
         "title": "Uninstall",
@@ -456,8 +481,9 @@
       "explorer": [{"id": "workbench.explorer.fileView", "name": "Folders"}],
       "search": [{"id": "workbench.view.search", "name": "Search"}],
       "extensions": [
-        {"id": "workbench.extensions.installed", "name": "Installed"},
-        {"id": "workbench.extensions.builtin", "name": "Built-in"}
+        {"id": "workbench.extensions.marketplace", "name": "Open VSX", "when": "searchMarketplaceExtensions"},
+        {"id": "workbench.extensions.installed", "name": "Installed", "when": "!searchMarketplaceExtensions"},
+        {"id": "workbench.extensions.builtin", "name": "Built-in", "when": "!searchMarketplaceExtensions"}
       ],
       "terminal": [{"id": "workbench.panel.terminal", "name": "Terminal"}],
       "console": [{"id": "workbench.panel.console", "name": "Bee Console"}]
@@ -498,12 +524,15 @@
         {"command": "explorer.newFile", "group": "navigation@1", "when": "view == workbench.explorer.fileView"},
         {"command": "explorer.newFolder", "group": "navigation@2", "when": "view == workbench.explorer.fileView"},
         {"command": "workbench.extensions.action.installVSIX", "group": "navigation@1", "when": "view == workbench.extensions.installed"},
-        {"command": "bee.plugins.reload", "group": "navigation@2", "when": "view == workbench.extensions.installed"}
+        {"command": "bee.plugins.reload", "group": "navigation@2", "when": "view == workbench.extensions.installed"},
+        {"command": "workbench.extensions.action.clearExtensionsSearchResults", "group": "navigation@1", "when": "view == workbench.extensions.marketplace"}
       ],
       "view/item/context": [
         {"command": "bee.plugins.disable", "group": "inline@1", "when": "view =~ /^workbench\\.extensions\\./ && viewItem =~ /^plugin\\.enabled\\./"},
         {"command": "bee.plugins.enable", "group": "inline@1", "when": "view =~ /^workbench\\.extensions\\./ && viewItem =~ /^plugin\\.disabled\\./"},
-        {"command": "bee.plugins.uninstall", "group": "inline@2", "when": "view == workbench.extensions.installed && viewItem =~ /\\.user$/"}
+        {"command": "bee.plugins.uninstall", "group": "inline@2", "when": "view == workbench.extensions.installed && viewItem =~ /\\.user$/"},
+        {"command": "workbench.extensions.installExtension", "group": "inline@1", "when": "view == workbench.extensions.marketplace && viewItem == openvsx.notInstalled"},
+        {"command": "workbench.extensions.updateExtension", "group": "inline@1", "when": "view == workbench.extensions.marketplace && viewItem == openvsx.outdated"}
       ],
       "panel/title": [
         {"command": "workbench.action.toggleMaximizedPanel", "group": "navigation@1"},
@@ -549,6 +578,8 @@
         {"command": "workbench.action.setIconTheme", "when": "false"},
         {"command": "workbench.action.setColorTheme", "when": "false"},
         {"command": "extension.open", "when": "false"},
+        {"command": "workbench.extensions.installExtension", "when": "false"},
+        {"command": "workbench.extensions.updateExtension", "when": "false"},
         {"command": "bee.plugins.disable", "when": "false"}
       ],
       "editor/title": [

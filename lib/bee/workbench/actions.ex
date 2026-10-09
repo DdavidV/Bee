@@ -6,7 +6,7 @@ defmodule Bee.Workbench.Actions do
   use Bee.Commands.Command
 
   alias Bee.Workbench
-  alias Bee.Workbench.Search
+  alias Bee.Workbench.{Marketplace, Search}
 
   @command "workbench.action.showCommands"
   def show_commands(wb), do: Workbench.open_palette(wb)
@@ -449,6 +449,31 @@ defmodule Bee.Workbench.Actions do
     do: if(File.dir?(path), do: path, else: Path.dirname(path))
 
   defp folder(wb, _args), do: wb.root
+
+  ## Open VSX (the Plugins view's search, `Bee.Workbench.Marketplace`)
+
+  # VS Code's: shows the Plugins view searching for `query`.
+  @command "workbench.extensions.search"
+  def search_extensions(wb, args) do
+    query = with [q | _] when is_binary(q) <- args, do: q, else: (_ -> "")
+
+    {wb, effects} =
+      wb |> Workbench.reveal_view("extensions") |> Marketplace.update(query) |> Workbench.wrap()
+
+    {wb, effects ++ [{:push, "marketplace:focus", %{}}]}
+  end
+
+  @command "workbench.extensions.action.clearExtensionsSearchResults"
+  def clear_extensions_search(wb), do: Marketplace.clear(wb)
+
+  # From a search result's buttons or its details page, with its id
+  # (publisher.name).
+  @command "workbench.extensions.installExtension"
+  def install_extension(wb, [id | _]) when is_binary(id), do: Marketplace.install(wb, id)
+  def install_extension(wb, _args), do: wb
+
+  @command "workbench.extensions.updateExtension"
+  def update_extension(wb, args), do: install_extension(wb, args)
 
   @command "bee.plugins.reload"
   def reload_plugins(wb), do: {wb, [:reload_plugins]}

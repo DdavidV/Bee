@@ -23,6 +23,10 @@ defmodule Bee.Application do
       Bee.UI,
       {Task.Supervisor, name: Bee.Search.TaskSup},
       Bee.Plugins.Supervisor,
+      # Open VSX: its cache, requests (their tasks) and rate limits.
+      Bee.Plugins.OpenVsx.cache_child_spec(),
+      {Task.Supervisor, name: Bee.Plugins.OpenVsx.TaskSup},
+      Bee.Plugins.OpenVsx,
       BeeWeb.Endpoint,
       # Server mode: the address to open, once the endpoint listens.
       {Task, &Bee.Mode.announce/0}

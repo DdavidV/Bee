@@ -65,6 +65,8 @@
     file_decorations={@file_decorations}
     icon_theme={@icon_theme}
     clipboard={@clipboard}
+    marketplace={@marketplace}
+    marketplace_installed={@marketplace_installed}
   />
 
   <%!-- Editor area --%>
@@ -167,6 +169,8 @@
         <BeeWeb.Workbench.ExtensionEditor.extension_editor
           name={tab.name}
           details={@extension_details[tab.name]}
+          installed={@marketplace_installed}
+          installing={@marketplace.installing}
         />
       </div>
       <div

@@ -19,6 +19,7 @@ defmodule Bee.Plugins.Details do
   def get(plugin) do
     manifest = plugin.manifest || %{}
     vsix? = File.exists?(Path.join(plugin.dir, @marker))
+    marker = if vsix?, do: Bee.Plugins.Vsix.marker(plugin.dir), else: %{}
     package = if vsix?, do: read_json(Path.join(plugin.dir, "package.json")), else: %{}
     info = Map.merge(manifest, package)
 
@@ -32,6 +33,8 @@ defmodule Bee.Plugins.Details do
       errors: plugin.errors,
       dir: plugin.dir,
       source: if(vsix?, do: :vsix, else: :folder),
+      open_vsx: marker["openVsx"],
+      target_platform: marker["targetPlatform"],
       publisher: string(info["publisher"]),
       license: string(info["license"]),
       repository: url(info["repository"]),

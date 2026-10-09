@@ -29,7 +29,8 @@ defmodule BeeWeb.EditorLive do
   alias Bee.Commands.Keybindings
   alias Bee.Editor.Buffer
   alias Bee.Workspace.{FileFinder, Files, RecentFiles}
-  alias Bee.Workbench.{QuickOpen, Search}
+  alias Bee.Plugins.OpenVsx
+  alias Bee.Workbench.{Marketplace, QuickOpen, Search}
 
   @impl true
   def mount(params, _session, socket) do
@@ -141,6 +142,25 @@ defmodule BeeWeb.EditorLive do
   # An activity bar icon was dragged to another place: the containers' new order.
   def handle_event("reorder_activity", %{"order" => order}, socket) when is_list(order),
     do: {:noreply, change(socket, &Workbench.reorder_activity(&1, order))}
+
+  ## Open VSX (the Plugins view's search box, Bee.Workbench.Marketplace)
+
+  def handle_event("marketplace_search", %{"query" => query}, socket) when is_binary(query),
+    do: {:noreply, change(socket, &Marketplace.update(&1, query))}
+
+  def handle_event("marketplace_more", _params, socket),
+    do: {:noreply, change(socket, &Marketplace.more/1)}
+
+  def handle_event("marketplace_retry", _params, socket),
+    do: {:noreply, change(socket, &Marketplace.refresh/1)}
+
+  # An Open VSX extension's details failed to load: again.
+  def handle_event("openvsx_details_retry", %{"id" => id}, socket) when is_binary(id) do
+    {:noreply,
+     socket
+     |> update(:extension_details, &Map.delete(&1, id))
+     |> sync_extension_details()}
+  end
 
   ## Search view
 
@@ -552,6 +572,36 @@ defmodule BeeWeb.EditorLive do
 
   def handle_info(:plugins_changed, socket), do: {:noreply, load_plugins(socket)}
 
+  def handle_info({:marketplace_results, ref, offset, result}, socket),
+    do: {:noreply, change(socket, &Marketplace.results(&1, ref, offset, result))}
+
+  def handle_info({:extension_installed, id, result}, socket) do
+    socket = socket |> change(&Marketplace.installed(&1, id)) |> load_plugins()
+
+    case result do
+      {:ok, name} ->
+        {:noreply, put_flash(socket, :info, "Installed #{id} as the plugin #{name}")}
+
+      {:error, message} ->
+        {:noreply, put_flash(socket, :error, "Can't install #{id}: #{message}")}
+    end
+  end
+
+  def handle_info({:openvsx_details, id, result}, socket) do
+    details =
+      case {socket.assigns.extension_details[id], result} do
+        {nil, _} -> nil
+        {_, {:ok, details}} -> Map.merge(details, %{source: :openvsx, loading: false, error: nil})
+        {old, {:error, message}} -> %{old | loading: false, error: message}
+      end
+
+    {:noreply,
+     if(details,
+       do: update(socket, :extension_details, &Map.put(&1, id, details)),
+       else: socket
+     )}
+  end
+
   # The Bee Console's window() (Bee.Console.Helpers).
   def handle_info({:bee_console, :window, from, ref}, socket) do
     a = socket.assigns
@@ -661,23 +711,40 @@ defmodule BeeWeb.EditorLive do
   end
 
   # The details of the plugins shown in editor tabs (BeeWeb.Workbench.ExtensionEditor),
-  # read when a tab opens and again when plugins change (`reload?`).
+  # read when a tab opens and again when plugins change (`reload?`). Tabs of
+  # Open VSX extensions ("publisher.name", plugin names have no dots) are
+  # fetched once, in a task (`{:openvsx_details, id, result}`).
   defp sync_extension_details(socket, reload? \\ false) do
-    cached = if reload?, do: %{}, else: socket.assigns[:extension_details] || %{}
+    cached = socket.assigns[:extension_details] || %{}
 
     details =
       for %{kind: :extension, name: name} <- socket.assigns.tabs, into: %{} do
-        case Map.fetch(cached, name) do
-          {:ok, details} ->
+        case {String.contains?(name, "."), Map.fetch(cached, name)} do
+          {true, {:ok, details}} ->
             {name, details}
 
-          :error ->
+          {true, :error} ->
+            fetch_openvsx_details(name)
+            {name, %{source: :openvsx, id: name, display_name: name, loading: true, error: nil}}
+
+          {false, {:ok, details}} when not reload? ->
+            {name, details}
+
+          {false, _} ->
             plugin = Enum.find(socket.assigns[:plugins] || [], &(&1.name == name))
             {name, plugin && Bee.Plugins.Details.get(plugin)}
         end
       end
 
     assign(socket, extension_details: details)
+  end
+
+  defp fetch_openvsx_details(id) do
+    window = self()
+
+    Task.Supervisor.start_child(Bee.Plugins.OpenVsx.TaskSup, fn ->
+      send(window, {:openvsx_details, id, OpenVsx.details(id)})
+    end)
   end
 
   @doc false
@@ -853,6 +920,33 @@ defmodule BeeWeb.EditorLive do
   end
 
   defp run_effect({:flash, kind, message}, socket), do: put_flash(socket, kind, message)
+
+  defp run_effect({:marketplace_search, ref, query, offset}, socket) do
+    window = self()
+
+    Task.Supervisor.start_child(Bee.Plugins.OpenVsx.TaskSup, fn ->
+      send(window, {:marketplace_results, ref, offset, OpenVsx.search(query, offset: offset)})
+    end)
+
+    socket
+  end
+
+  defp run_effect({:install_extension, id}, socket) do
+    window = self()
+
+    Task.Supervisor.start_child(Bee.Plugins.OpenVsx.TaskSup, fn ->
+      result =
+        try do
+          OpenVsx.install(id)
+        rescue
+          e -> {:error, Exception.message(e)}
+        end
+
+      send(window, {:extension_installed, id, result})
+    end)
+
+    socket
+  end
 
   defp run_effect({:start_search, opts}, socket) do
     case Bee.Search.start(Map.put(opts, :root, socket.assigns.root), self()) do
@@ -1174,6 +1268,9 @@ defmodule BeeWeb.EditorLive do
           _ when view.id in ["workbench.extensions.installed", "workbench.extensions.builtin"] ->
             BeeWeb.Workbench.PluginsView.contexts()
 
+          _ when view.id == "workbench.extensions.marketplace" ->
+            BeeWeb.Workbench.MarketplaceView.contexts()
+
           _ ->
             []
         end
@@ -1220,7 +1317,8 @@ defmodule BeeWeb.EditorLive do
     |> assign(
       plugins: Plugins.list(socket.assigns.root),
       plugin_errors: Plugins.errors(socket.assigns.root),
-      browser_plugins: Plugins.browser_modules(socket.assigns.root)
+      browser_plugins: Plugins.browser_modules(socket.assigns.root),
+      marketplace_installed: OpenVsx.installed()
     )
     |> sync_extension_details(true)
   end

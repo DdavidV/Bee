@@ -6,7 +6,8 @@ defmodule BeeWeb.Workbench.Sidebar do
   the summed badges of its plugin views. Its icons can be dragged into
   another order (the `ActivityBar` hook, `reorder_activity`). The sidebar shows the container's
   title, then its views: Bee's own (Explorer, Plugins) rendered by their
-  components (Explorer, Search, Plugins), plugins' views by
+  components (Explorer, Search, Plugins, Open VSX – with its search box
+  above the Plugins container's views), plugins' views by
   `BeeWeb.Workbench.ContributedView`. With a
   single view its `view/title` buttons sit in the container's header,
   otherwise each view gets a header of its own.
@@ -16,7 +17,7 @@ defmodule BeeWeb.Workbench.Sidebar do
   """
   use BeeWeb, :html
 
-  alias BeeWeb.Workbench.{ContributedView, PluginsView, SearchView, Toolbar}
+  alias BeeWeb.Workbench.{ContributedView, MarketplaceView, PluginsView, SearchView, Toolbar}
 
   @explorer "workbench.explorer.fileView"
   # Bee's Plugins views: the plugins of these scopes.
@@ -25,6 +26,7 @@ defmodule BeeWeb.Workbench.Sidebar do
     "workbench.extensions.builtin" => [:builtin]
   }
   @search "workbench.view.search"
+  @marketplace "workbench.extensions.marketplace"
 
   attr :containers, :list, required: true, doc: "with :badge"
   attr :sidebar_view, :string, required: true
@@ -89,6 +91,8 @@ defmodule BeeWeb.Workbench.Sidebar do
   attr :file_decorations, :map, required: true
   attr :icon_theme, :any, required: true
   attr :clipboard, :any, default: nil, doc: "the Explorer's cut or copied files"
+  attr :marketplace, :map, required: true, doc: "Bee.Workbench.Marketplace"
+  attr :marketplace_installed, :map, required: true, doc: "Bee.Plugins.OpenVsx.installed/0"
 
   def sidebar(assigns) do
     assigns =
@@ -97,7 +101,8 @@ defmodule BeeWeb.Workbench.Sidebar do
         single: match?([_], assigns.views),
         explorer_id: @explorer,
         plugin_views: Map.keys(@plugins),
-        search_id: @search
+        search_id: @search,
+        marketplace_id: @marketplace
       )
 
     assigns = assign(assigns, panes: panes(assigns))
@@ -117,6 +122,11 @@ defmodule BeeWeb.Workbench.Sidebar do
         <span id="sidebar-title" class="flex-1 truncate opacity-70">{@container.title}</span>
         <Toolbar.toolbar :if={@single} actions={hd(@views).title_actions} class="normal-case" />
       </div>
+
+      <MarketplaceView.search_box
+        :if={@container && @container.id == "extensions"}
+        marketplace={@marketplace}
+      />
 
       <div class={["flex-1 min-h-0 overflow-auto", !@explorer_shown && "hidden"]}>
         <.live_component
@@ -185,8 +195,14 @@ defmodule BeeWeb.Workbench.Sidebar do
             user_dir={Bee.Plugins.user_dir()}
             item_actions={pane.item_actions}
           />
+          <MarketplaceView.marketplace_view
+            :if={pane.view.id == @marketplace_id}
+            marketplace={@marketplace}
+            installed={@marketplace_installed}
+            item_actions={pane.item_actions}
+          />
           <ContributedView.contributed_view
-            :if={pane.view.id not in [@explorer_id, @search_id | @plugin_views]}
+            :if={pane.view.id not in [@explorer_id, @search_id, @marketplace_id | @plugin_views]}
             view={pane.view}
             content={@view_contents[pane.view.id]}
             input={Map.get(@view_inputs, pane.view.id, "")}
@@ -222,11 +238,18 @@ defmodule BeeWeb.Workbench.Sidebar do
             grow: if(open?, do: Map.get(assigns.view_sizes, entry.view.id, default), else: 0),
             sash: open? and open_above?,
             var: "--pane-" <> String.replace(entry.view.id, ~r/[^A-Za-z0-9_-]/, "_"),
-            # Plugins views count their plugins, like VS Code's.
+            # Plugins views count their plugins, like VS Code's; Open VSX its results.
             count:
-              if(Map.has_key?(@plugins, entry.view.id),
-                do: length(plugins_in(assigns.plugins, entry.view.id))
-              )
+              cond do
+                Map.has_key?(@plugins, entry.view.id) ->
+                  length(plugins_in(assigns.plugins, entry.view.id))
+
+                entry.view.id == @marketplace and assigns.marketplace.total > 0 ->
+                  assigns.marketplace.total
+
+                true ->
+                  nil
+              end
           })
 
         {pane, open_above? or open?}

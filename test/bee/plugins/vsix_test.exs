@@ -134,7 +134,7 @@ defmodule Bee.Plugins.VsixTest do
     assert File.read!(Path.join(dir, "mine.txt")) == "mine"
   end
 
-  test "refuses what isn't an icon theme extension", %{tmp: tmp} do
+  test "installs any extension: what Bee doesn't understand is left out", %{tmp: tmp} do
     no_themes = put_in(@package, ["contributes"], %{"commands" => []})
 
     files =
@@ -145,9 +145,16 @@ defmodule Bee.Plugins.VsixTest do
         {"extension/package.json", Jason.encode!(no_themes)}
       )
 
-    assert {:error, message} = Vsix.install(vsix(tmp, files))
-    assert message =~ "contributes no color or file icon themes"
+    assert {:ok, "cool-icons"} = Vsix.install(vsix(tmp, files))
+    assert %{scope: :user, errors: []} = Plugins.get("cool-icons")
 
+    manifest =
+      Jason.decode!(File.read!(Path.join([Plugins.user_dir(), "cool-icons", "plugin.json"])))
+
+    assert manifest["contributes"] == %{}
+  end
+
+  test "refuses what isn't an extension", %{tmp: tmp} do
     assert {:error, message} = Vsix.install(vsix(tmp, [{"extension/readme.md", "hi"}]))
     assert message =~ "no extension/package.json"
 

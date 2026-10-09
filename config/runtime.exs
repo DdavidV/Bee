@@ -9,6 +9,16 @@ mode =
 
 config :bee, :mode, mode
 
+# Where extensions are searched and installed from (the Plugins view).
+if url = System.get_env("BEE_OPEN_VSX_URL") do
+  config :bee, Bee.Plugins.OpenVsx, base_url: url
+end
+
+# Which platform's packages to install (default: the one Bee runs on).
+if platform = System.get_env("BEE_TARGET_PLATFORM") do
+  config :bee, Bee.Plugins.OpenVsx, target_platform: platform
+end
+
 port =
   System.get_env("BEE_PORT") || System.get_env("PORT") ||
     if(config_env() == :prod, do: "0", else: "4000")
