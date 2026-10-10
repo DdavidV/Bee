@@ -31,6 +31,19 @@ defmodule Bee.Plugins.Manager do
   A host that crashes is restarted, up to three times a minute. When a
   plugin's folder changes on disk it is reloaded (debounced).
 
+  The code of a VS Code extension (a plugin's `extension` part) starts on
+  the same occasions, in the workspace's Node.js host
+  (`Bee.Extensions.Host`, started with the first one): `extensions`, by
+  root, has its status there (`:activating`, `:active`, `:failed`), its
+  errors, and `warnings` (API it used that Bee doesn't have). When Node
+  exits, the extensions that ran in it start again in a new one, up to
+  three times a minute. `extensions.disabledCode` names extensions whose
+  code doesn't run; code that is language tooling (see
+  `Bee.Plugins.VSCode.Manifest`) only runs for those named in
+  `extensions.enabledCode`. An extension that needs others
+  (`extensionDependencies`) runs when they are installed and their code
+  runs, after theirs.
+
   The plugin table lives in ETS for reads; changes broadcast
   `:plugins_changed` on the `"plugins"` topic.
   """
@@ -38,12 +51,15 @@ defmodule Bee.Plugins.Manager do
   require Logger
 
   alias Bee.Contributions
+  alias Bee.Extensions
   alias Bee.Plugins.Host
   alias Bee.Plugins.VSCode.Manifest
 
   @table Bee.Plugins
   @topic "plugins"
   @max_crashes 3
+  # Warnings kept per extension and workspace.
+  @max_warnings 50
   @crash_window_ms 60_000
   @debounce_ms 300
 
@@ -57,12 +73,23 @@ defmodule Bee.Plugins.Manager do
   @impl true
   def init(_opts) do
     :ets.new(@table, [:named_table, :protected, read_concurrency: true])
+    Extensions.Host.create_commands_table()
     File.mkdir_p(Bee.Plugins.user_dir())
     Phoenix.PubSub.subscribe(Bee.PubSub, "fs")
     Bee.Settings.subscribe()
     Bee.Editor.Buffer.subscribe()
 
-    s = %{plugins: %{}, hosts: %{}, roots: %{}, timers: %{}, config: config()}
+    s = %{
+      plugins: %{},
+      hosts: %{},
+      roots: %{},
+      timers: %{},
+      config: config(),
+      # The Node.js hosts: root => %{pid, ref}; ref => root; their exits.
+      node_hosts: %{},
+      node_refs: %{},
+      node_crashes: %{}
+    }
 
     # After a restart of the plugin supervisor: the workspaces already open.
     s =
@@ -94,13 +121,20 @@ defmodule Bee.Plugins.Manager do
     end
   end
 
-  # Something of the plugin is needed in workspace `root` (one of its views was shown).
-  def handle_call({:activate, name, root}, _from, s) do
-    case usable(s, name, root) do
-      {:ok, %{server?: true} = plugin} -> {:reply, :ok, elem(ensure_active(s, plugin, root), 0)}
-      _ -> {:reply, :ok, s}
+  # A command of the plugin's extension code (declared, or one it registered).
+  def handle_call({:execute_extension, name, id, ctx}, _from, s) do
+    with {:ok, plugin} <- usable(s, name, ctx.root),
+         {s, pid} when is_pid(pid) <- ensure_extension(s, plugin, ctx.root) do
+      Extensions.Host.execute(pid, name, id, %{ctx | plugin: name, dir: plugin.dir})
+      {:reply, :ok, s}
+    else
+      {:error, _message} = error -> {:reply, error, s}
+      {s, nil} -> {:reply, {:error, extension_problem(s, name, ctx.root)}, s}
     end
   end
+
+  # Something of the plugin is needed in workspace `root` (one of its views was shown).
+  def handle_call({:activate, name, root}, _from, s), do: {:reply, :ok, start_in(s, name, root)}
 
   def handle_call({:request, name, method, params, ctx, ref}, _from, s) do
     case usable(s, name, ctx.root) do
@@ -128,6 +162,27 @@ defmodule Bee.Plugins.Manager do
   def handle_cast({:plugin_activated, name, root}, s),
     do: {:noreply, update_host(s, name, root, &%{&1 | status: :active})}
 
+  def handle_cast({:extension_activated, name, root}, s),
+    do: {:noreply, update_extension(s, name, root, &%{&1 | status: :active})}
+
+  def handle_cast({:extension_failed, name, root, message}, s) do
+    Logger.warning("Bee: extension #{name} failed to activate: #{message}")
+
+    {:noreply,
+     update_extension(s, name, root, fn extension ->
+       %{extension | status: :failed, errors: [extension_error(s, name, message)]}
+     end)}
+  end
+
+  def handle_cast({:extension_warning, name, root, message}, s) do
+    {:noreply,
+     update_extension(s, name, root, fn extension ->
+       if message in extension.warnings or length(extension.warnings) >= @max_warnings,
+         do: extension,
+         else: %{extension | warnings: extension.warnings ++ [message]}
+     end)}
+  end
+
   def handle_cast({:workspace_opened, root, pid}, s) do
     if Map.has_key?(s.roots, root) do
       {:noreply, s}
@@ -147,9 +202,16 @@ defmodule Bee.Plugins.Manager do
         {:noreply, host_down(%{s | hosts: hosts}, name, root, reason)}
 
       {nil, _} ->
-        case Enum.find(s.roots, fn {_root, r} -> r == ref end) do
-          {root, _} -> {:noreply, workspace_closed(s, root)}
-          nil -> {:noreply, s}
+        cond do
+          root = s.node_refs[ref] ->
+            {:noreply, node_host_down(s, root, ref, reason)}
+
+          match?({_root, _}, Enum.find(s.roots, fn {_root, r} -> r == ref end)) ->
+            {root, _} = Enum.find(s.roots, fn {_root, r} -> r == ref end)
+            {:noreply, workspace_closed(s, root)}
+
+          true ->
+            {:noreply, s}
         end
     end
   end
@@ -202,7 +264,10 @@ defmodule Bee.Plugins.Manager do
   defp config,
     do:
       {Bee.Settings.get_user("plugins.disabled"),
-       Bee.Settings.get_user("plugins.workspace.enabled")}
+       Bee.Settings.get_user("plugins.workspace.enabled"),
+       Bee.Settings.get_user("extensions.disabledCode"),
+       Bee.Settings.get_user("extensions.nodePath"),
+       Bee.Settings.get_user("extensions.enabledCode")}
 
   # Adds plugins found on disk that aren't loaded yet, drops vanished or
   # disabled ones. Loaded plugins are kept as they are (see reload).
@@ -234,7 +299,7 @@ defmodule Bee.Plugins.Manager do
   end
 
   defp discover(s) do
-    {disabled, workspace?} = config()
+    {disabled, workspace?, _no_code, _node, _code} = config()
 
     builtin =
       if Application.get_env(:bee, :builtin_plugins, true),
@@ -320,6 +385,10 @@ defmodule Bee.Plugins.Manager do
       # What Bee left out of a VS Code extension, and why.
       warnings: [],
       server?: false,
+      # Code of a VS Code extension, for the Node.js host.
+      extension?: false,
+      # Its extension code in each workspace: %{root => %{status, errors, warnings}}.
+      extensions: %{},
       browser: nil,
       activation_events: [],
       # Its server part in each workspace: %{root => %{status, errors, crashes}}.
@@ -339,6 +408,7 @@ defmodule Bee.Plugins.Manager do
           version: manifest["version"],
           manifest: manifest,
           server?: manifest["server"] != nil,
+          extension?: manifest["extension"] != nil,
           activation_events: Map.get(manifest, "activationEvents", []),
           status: if(manifest["name"] in disabled, do: :disabled, else: :inactive)
       }
@@ -409,10 +479,17 @@ defmodule Bee.Plugins.Manager do
 
       plugin ->
         s = stop_hosts(s, name, Map.keys(plugin.hosts))
+
+        for root <- Map.keys(plugin.extensions),
+            %{pid: pid} <- [s.node_hosts[root]],
+            do: Extensions.Host.deactivate(pid, name)
+
         Bee.Plugins.Modules.drop(name)
         Contributions.unregister({:plugin, name})
         Bee.UI.forget(name)
-        %{s | plugins: Map.delete(s.plugins, name)}
+        s = %{s | plugins: Map.delete(s.plugins, name)}
+        # A Node.js host nothing runs in any more stops.
+        Enum.reduce(Map.keys(plugin.extensions), s, &stop_idle_node_host(&2, &1))
     end
   end
 
@@ -508,6 +585,7 @@ defmodule Bee.Plugins.Manager do
         s -> stop_hosts(s, name, [root])
       end
 
+    s = stop_node_host(s, root)
     Bee.UI.forget_workspace(root)
     # Without its workspace plugins.
     rescan(%{s | roots: Map.delete(s.roots, root)})
@@ -529,17 +607,239 @@ defmodule Bee.Plugins.Manager do
       match?(%{status: :failed}, plugin.hosts[root]) ->
         {:error, "plugin #{name} failed to activate (see problems)"}
 
+      match?(%{status: :failed}, plugin.extensions[root]) ->
+        {:error, extension_problem(s, name, root)}
+
       true ->
         {:ok, plugin}
     end
   end
 
-  # Starts plugin `name`'s server part in workspace `root`, if it has one and may.
+  # Starts plugin `name`'s code in workspace `root`, if it has any and
+  # may: its server part, its extension code.
   defp start_in(s, name, root) do
     case usable(s, name, root) do
-      {:ok, %{server?: true} = plugin} -> elem(ensure_active(s, plugin, root), 0)
-      _ -> s
+      {:ok, plugin} ->
+        s = if plugin.server?, do: elem(ensure_active(s, plugin, root), 0), else: s
+        if plugin.extension?, do: elem(ensure_extension(s, plugin, root), 0), else: s
+
+      _ ->
+        s
     end
+  end
+
+  ## Extension code (Bee.Extensions.Host)
+
+  # `{s, host_pid}` with the plugin's extension code active (or activating)
+  # in workspace `root`; `{s, nil}` when it can't run there (see its errors).
+  defp ensure_extension(s, %{extension?: false} = _plugin, _root), do: {s, nil}
+
+  defp ensure_extension(s, %{name: name} = plugin, root) do
+    cond do
+      # Switched off (by the user, or as language tooling): not a problem
+      # of the plugin's.
+      code_off(s, plugin) != nil ->
+        {s, nil}
+
+      match?(%{status: status} when status in [:activating, :active], plugin.extensions[root]) and
+          s.node_hosts[root] != nil ->
+        {s, s.node_hosts[root].pid}
+
+      true ->
+        # What it needs first (their code is asked for by its own).
+        s =
+          for dependency <- dependencies(s, plugin), reduce: s do
+            s -> elem(ensure_extension(s, dependency, root), 0)
+          end
+
+        case ensure_node_host(s, root) do
+          {:ok, s, pid} ->
+            Extensions.Host.activate(pid, plugin)
+            {put_extension(s, name, root, :activating, nil), pid}
+
+          {:error, message} ->
+            {put_extension(s, name, root, :failed, message), nil}
+        end
+    end
+  end
+
+  defp ensure_node_host(s, root) do
+    case s.node_hosts[root] do
+      %{pid: pid} ->
+        {:ok, s, pid}
+
+      nil ->
+        case DynamicSupervisor.start_child(Bee.Extensions.HostSup, {Extensions.Host, root}) do
+          {:ok, pid} ->
+            ref = Process.monitor(pid)
+
+            {:ok,
+             %{
+               s
+               | node_hosts: Map.put(s.node_hosts, root, %{pid: pid, ref: ref}),
+                 node_refs: Map.put(s.node_refs, ref, root)
+             }, pid}
+
+          {:error, {:shutdown, :no_node}} ->
+            {:error,
+             "its code needs Node.js, which wasn't found: install it, or set extensions.nodePath"}
+
+          {:error, reason} ->
+            {:error, "the extension host didn't start: #{inspect(reason)}"}
+        end
+    end
+  end
+
+  defp stop_node_host(s, root) do
+    case Map.pop(s.node_hosts, root) do
+      {nil, _} ->
+        s
+
+      {%{pid: pid, ref: ref}, node_hosts} ->
+        Process.demonitor(ref, [:flush])
+        DynamicSupervisor.terminate_child(Bee.Extensions.HostSup, pid)
+
+        %{
+          s
+          | node_hosts: node_hosts,
+            node_refs: Map.delete(s.node_refs, ref),
+            node_crashes: Map.delete(s.node_crashes, root)
+        }
+    end
+  end
+
+  defp stop_idle_node_host(s, root) do
+    running? =
+      Enum.any?(Map.values(s.plugins), fn plugin ->
+        match?(%{status: status} when status in [:activating, :active], plugin.extensions[root])
+      end)
+
+    if running?, do: s, else: stop_node_host(s, root)
+  end
+
+  # Node exited (or its host crashed): the extensions that ran in it start
+  # again in a new one, unless that keeps happening.
+  defp node_host_down(s, root, ref, reason) do
+    s = %{
+      s
+      | node_hosts: Map.delete(s.node_hosts, root),
+        node_refs: Map.delete(s.node_refs, ref)
+    }
+
+    now = System.monotonic_time(:millisecond)
+    crashes = [now | Enum.filter(s.node_crashes[root] || [], &(now - &1 < @crash_window_ms))]
+    s = %{s | node_crashes: Map.put(s.node_crashes, root, crashes)}
+    Logger.error("Bee: the extension host of #{root} stopped: #{inspect(reason)}")
+
+    running =
+      for {name, plugin} <- s.plugins,
+          match?(
+            %{status: status} when status in [:activating, :active],
+            plugin.extensions[root]
+          ),
+          do: name
+
+    again? = length(crashes) <= @max_crashes and Map.has_key?(s.roots, root)
+
+    Enum.reduce(running, s, fn name, s ->
+      if again? do
+        s
+        |> update_plugin(name, &%{&1 | extensions: Map.delete(&1.extensions, root)})
+        |> start_in(name, root)
+      else
+        put_extension(
+          s,
+          name,
+          root,
+          :failed,
+          "the extension host stopped #{length(crashes)} times in a minute, last: #{inspect(reason)}"
+        )
+      end
+    end)
+  end
+
+  defp put_extension(s, name, root, status, error) do
+    update_plugin(s, name, fn plugin ->
+      warnings = get_in(plugin.extensions, [root, :warnings]) || []
+      errors = if error, do: [extension_error(s, name, error)], else: []
+      put_in(plugin.extensions[root], %{status: status, errors: errors, warnings: warnings})
+    end)
+  end
+
+  defp update_extension(s, name, root, fun) do
+    update_plugin(s, name, fn plugin ->
+      case plugin.extensions[root] do
+        nil -> plugin
+        extension -> put_in(plugin.extensions[root], fun.(extension))
+      end
+    end)
+  end
+
+  defp extension_error(s, name, message) do
+    case s.plugins[name] do
+      nil -> %{path: name, message: "#{name}: #{message}"}
+      plugin -> problem(plugin, message)
+    end
+  end
+
+  defp extension_problem(s, name, root) do
+    case get_in(s.plugins, [name, :extensions, root, :errors]) do
+      [%{message: message} | _] -> message
+      _ -> (s.plugins[name] && code_off(s, s.plugins[name])) || "extension #{name} isn't running"
+    end
+  end
+
+  # Why the plugin's extension code doesn't run, or nil when it may.
+  # (`seen`: the plugins whose needs led here.)
+  defp code_off(s, %{name: name} = plugin, seen \\ []) do
+    {_disabled, _workspace?, no_code, _node, code} = s.config
+
+    cond do
+      name in List.wrap(no_code) ->
+        "#{name}'s code is switched off (extensions.disabledCode)"
+
+      get_in(plugin.manifest, ["extension", "languageTooling"]) == true and
+          name not in List.wrap(code) ->
+        "#{name}'s code isn't run: it is language tooling, which Bee has no API for " <>
+          "(extensions.enabledCode runs it anyway)"
+
+      true ->
+        missing_dependency(s, plugin, seen)
+    end
+  end
+
+  # The plugins with the code the plugin's extension needs.
+  defp dependencies(s, plugin) do
+    for id <- get_in(plugin.manifest, ["extension", "dependencies"]) || [],
+        dependency = extension_by_id(s, id),
+        dependency != nil and dependency.name != plugin.name,
+        do: dependency
+  end
+
+  defp extension_by_id(s, id) do
+    Enum.find(Map.values(s.plugins), fn plugin ->
+      plugin.status == :inactive and plugin.extension? and
+        String.downcase(get_in(plugin.manifest, ["extension", "id"]) || "") == String.downcase(id)
+    end)
+  end
+
+  # An extension it needs that isn't there, or whose code doesn't run: its
+  # own code would fail on it (extensions don't check).
+  defp missing_dependency(s, %{name: name} = plugin, seen) do
+    Enum.find_value(get_in(plugin.manifest, ["extension", "dependencies"]) || [], fn id ->
+      case extension_by_id(s, id) do
+        nil ->
+          "#{name}'s code isn't run: it needs the extension #{id}, which isn't installed"
+
+        %{name: ^name} ->
+          nil
+
+        dependency ->
+          if dependency.name not in seen and
+               code_off(s, dependency, [name | seen]) != nil,
+             do: "#{name}'s code isn't run: it needs the code of #{id}, which Bee doesn't run"
+      end
+    end)
   end
 
   defp ensure_active(s, %{name: name} = plugin, root) do

@@ -71,6 +71,25 @@
       "default": [],
       "description": "Names of installed plugins not to load."
     },
+    "extensions.nodePath": {
+      "type": "string",
+      "default": "node",
+      "description": "The Node.js executable that runs the code of VS Code extensions: a name on the PATH, or a path."
+    },
+    "extensions.disabledCode": {
+      "type": "array",
+      "items": {"type": "string"},
+      "uniqueItems": true,
+      "default": [],
+      "description": "Names of installed VS Code extensions whose code isn't run: their themes, grammars, settings… stay, their commands don't work."
+    },
+    "extensions.enabledCode": {
+      "type": "array",
+      "items": {"type": "string"},
+      "uniqueItems": true,
+      "default": [],
+      "description": "Names of installed VS Code extensions whose code runs although it is language tooling (a language server, debugger, linter or formatter client), which Bee has no API for and doesn't run otherwise."
+    },
     "plugins.workspace.enabled": {
       "type": "boolean",
       "default": false,

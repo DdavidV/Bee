@@ -97,7 +97,12 @@ defmodule Bee.Plugins.Details do
   end
 
   defp runs(plugin) do
-    case [plugin.server? && "server", plugin.browser && "browser"] |> Enum.filter(& &1) do
+    case [
+           plugin.server? && "server",
+           plugin.browser && "browser",
+           plugin.extension? && "extension host (Node.js)"
+         ]
+         |> Enum.filter(& &1) do
       [] -> "contributions only"
       kinds -> Enum.join(kinds, " + ")
     end

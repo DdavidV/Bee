@@ -4,6 +4,8 @@ defmodule Bee.Plugins.Supervisor do
 
     * `Bee.Plugins.TaskSup` – tasks running plugin callbacks (with timeouts)
     * `Bee.Plugins.HostSup` – one `Bee.Plugins.Host` per active plugin and workspace
+    * `Bee.Extensions.HostSup` – one `Bee.Extensions.Host` (Node.js) per
+      workspace with an active VS Code extension
     * `Bee.Plugins.Modules` – plugins' loaded code, shared by their hosts
     * `Bee.Plugins.Manager` – discovery, activation, crash handling
 
@@ -19,6 +21,7 @@ defmodule Bee.Plugins.Supervisor do
     children = [
       {Task.Supervisor, name: Bee.Plugins.TaskSup},
       {DynamicSupervisor, name: Bee.Plugins.HostSup, strategy: :one_for_one},
+      {DynamicSupervisor, name: Bee.Extensions.HostSup, strategy: :one_for_one},
       Bee.Plugins.Modules,
       Bee.Plugins.Manager
     ]

@@ -5,7 +5,13 @@
 export const Palette = {
   mounted() {
     this.previous = document.activeElement
-    this.el.querySelector("input")?.focus()
+    // The cursor after what it opens with (">" for commands): typing adds
+    // to it, as in VS Code.
+    const input = this.el.querySelector("input")
+    if (input) {
+      input.focus()
+      input.setSelectionRange(input.value.length, input.value.length)
+    }
     // Bee sets the query (Quick Open's ">" for commands): LiveView leaves a
     // focused input's value alone, so it is set here.
     this.handleEvent("palette:query", ({query}) => {

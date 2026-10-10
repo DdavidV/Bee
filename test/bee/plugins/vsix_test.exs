@@ -130,6 +130,33 @@ defmodule Bee.Plugins.VsixTest do
     assert %{base: :light} = Bee.ColorThemes.theme("Owl Light")
   end
 
+  test "keeps a script's or program's executable bit", %{tmp: tmp} do
+    path = Path.join(tmp, "tools.vsix")
+    package = Jason.encode!(%{"name" => "tools", "version" => "1.0.0"})
+
+    # Zipped from files: their modes are in the archive, as vsce writes them.
+    source = Path.join(tmp, "src/extension")
+    File.mkdir_p!(Path.join(source, "bin"))
+    File.write!(Path.join(source, "package.json"), package)
+    File.write!(Path.join(source, "bin/server.sh"), "#!/bin/sh\n")
+    File.chmod!(Path.join(source, "bin/server.sh"), 0o755)
+    File.write!(Path.join(source, "readme.txt"), "hi")
+    File.chmod!(Path.join(source, "readme.txt"), 0o644)
+
+    {:ok, _} =
+      :zip.create(
+        String.to_charlist(path),
+        [~c"extension/package.json", ~c"extension/bin/server.sh", ~c"extension/readme.txt"],
+        cwd: String.to_charlist(Path.join(tmp, "src"))
+      )
+
+    assert {:ok, "tools"} = Vsix.install(path)
+    dir = Path.join(Plugins.user_dir(), "tools")
+    executable? = fn rel -> Bitwise.band(File.stat!(Path.join(dir, rel)).mode, 0o111) != 0 end
+    assert executable?.("bin/server.sh")
+    refute executable?.("readme.txt")
+  end
+
   test "never replaces a plugin it didn't install", %{tmp: tmp} do
     dir = Path.join(Plugins.user_dir(), "cool-icons")
     File.mkdir_p!(dir)

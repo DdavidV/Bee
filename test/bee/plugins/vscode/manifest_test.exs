@@ -181,7 +181,7 @@ defmodule Bee.Plugins.VSCode.ManifestTest do
       assert {:ok, _data} = Bee.Contributions.normalize({:plugin, "hello"}, manifest, dir: dir)
 
       assert manifest["displayName"] == "Hello Extension"
-      assert manifest["extension"] == %{"main" => "./extension.js"}
+      assert manifest["extension"] == %{"main" => "./extension.js", "id" => "bee-tests.hello"}
 
       assert manifest["activationEvents"] == [
                "onCommand:hello.sayHello",
@@ -314,6 +314,50 @@ defmodule Bee.Plugins.VSCode.ManifestTest do
     end
   end
 
+  test "an extension with code starts with a file of a language it contributes", %{dir: dir} do
+    package = %{
+      "name" => "lang",
+      "main" => "./main.js",
+      "activationEvents" => ["onLanguage:a", "workspaceContains:a.toml"],
+      "contributes" => %{"languages" => [%{"id" => "a"}, %{"id" => "b"}]}
+    }
+
+    assert {:ok, manifest, []} = Manifest.from_package(package, dir)
+
+    assert manifest["activationEvents"] ==
+             ["onLanguage:a", "workspaceContains:a.toml", "onLanguage:b"]
+
+    # Without code there is nothing to start.
+    assert {:ok, manifest, []} = Manifest.from_package(Map.delete(package, "main"), dir)
+    assert manifest["activationEvents"] == ["onLanguage:a", "workspaceContains:a.toml"]
+  end
+
+  test "code that is language tooling is marked: Bee doesn't run it unasked", %{dir: dir} do
+    tooling = [
+      %{"categories" => ["Programming Languages", "Linters"]},
+      %{"contributes" => %{"debuggers" => [%{"type" => "x"}]}},
+      %{"dependencies" => %{"vscode-languageclient" => "^9.0.0"}}
+    ]
+
+    for extra <- tooling do
+      package = Map.merge(%{"name" => "ls", "main" => "./main.js"}, extra)
+      assert {:ok, manifest, [warning]} = Manifest.from_package(package, dir)
+      assert manifest["extension"] == %{"main" => "./main.js", "languageTooling" => true}
+      assert warning =~ "its code isn't run: it is language tooling"
+      assert warning =~ "extensions.enabledCode"
+      assert :ok = Bee.JSON.Schema.validate("manifest", "#", manifest)
+
+      # Nothing to mark without code.
+      assert {:ok, manifest, []} = Manifest.from_package(Map.delete(package, "main"), dir)
+      refute Map.has_key?(manifest, "extension")
+    end
+
+    package = %{"name" => "x", "main" => "./main.js", "categories" => ["Other", "Themes"]}
+
+    assert {:ok, %{"extension" => %{"main" => "./main.js"}}, []} =
+             Manifest.from_package(package, dir)
+  end
+
   test "a bee section adds a server and a browser part", %{dir: dir} do
     package = %{
       "name" => "hybrid",
@@ -328,6 +372,23 @@ defmodule Bee.Plugins.VSCode.ManifestTest do
     assert {:ok, manifest, []} = Manifest.from_package(package, dir)
     assert manifest["extension"] == %{"main" => "./out/extension.js"}
     assert manifest["server"] == %{"module" => "Hybrid"}
+
+    # Its id and what it needs, for extensions that depend on each other.
+    package =
+      Map.merge(package, %{
+        "publisher" => "Someone",
+        "extensionDependencies" => ["redhat.vscode-yaml", 1]
+      })
+
+    assert {:ok, manifest, []} = Manifest.from_package(package, dir)
+
+    assert manifest["extension"] == %{
+             "main" => "./out/extension.js",
+             "id" => "Someone.hybrid",
+             "dependencies" => ["redhat.vscode-yaml"]
+           }
+
+    assert :ok = Bee.JSON.Schema.validate("manifest", "#", manifest)
     assert manifest["browser"] == "bee/browser.js"
     refute Map.has_key?(manifest, "other")
     assert :ok = Bee.JSON.Schema.validate("manifest", "#", manifest)

@@ -18,7 +18,7 @@ defmodule Bee.Workbench do
     * `{:exec_client, command}` – run a client-side command in the browser
     * `{:run_plugin_command, command}` – run a plugin's server command
     * `{:run_extension_command, command, args}` – run a command of a VS
-      Code extension's code
+      Code extension's code (`Bee.Extensions.Host`)
     * `:reload_plugins`
     * `{:set_plugin_enabled, name, enabled?}` – see `Bee.Plugins.set_enabled/2`
     * `{:update_setting, key, value}` – write it to the user settings file
@@ -476,13 +476,17 @@ defmodule Bee.Workbench do
     if was_open?, do: {wb, [{:push, "palette:query", %{query: query}}]}, else: wb
   end
 
-  def open_quick_pick(wb, %{items: items, command: command} = spec) do
+  # A pick (or, below, a text) runs `command` with it – or, with `reply:
+  # {pid, ref}` and no command, is sent there: `{:bee_answer, ref, value}`,
+  # `nil` when the palette closes without one (BeeWeb.EditorLive).
+  def open_quick_pick(wb, %{items: items} = spec) do
     palette = %{
       mode: :pick,
       query: "",
       index: Map.get(spec, :index, 0),
       items: items,
-      command: command,
+      command: Map.get(spec, :command),
+      reply: Map.get(spec, :reply),
       arguments: Map.get(spec, :arguments, []),
       placeholder: Map.get(spec, :placeholder, ""),
       preview: Map.get(spec, :preview)
@@ -491,12 +495,13 @@ defmodule Bee.Workbench do
     %{wb | palette: palette, open_menu: nil}
   end
 
-  def open_input_box(wb, %{command: command} = spec) do
+  def open_input_box(wb, spec) do
     palette = %{
       mode: :input,
       query: Map.get(spec, :value, ""),
       index: 0,
-      command: command,
+      command: Map.get(spec, :command),
+      reply: Map.get(spec, :reply),
       arguments: Map.get(spec, :arguments, []),
       prompt: Map.get(spec, :prompt, ""),
       placeholder: Map.get(spec, :placeholder, "")

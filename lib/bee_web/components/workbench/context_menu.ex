@@ -81,6 +81,7 @@ defmodule BeeWeb.Workbench.ContextMenu do
         phx-click={click(item, @menu)}
         phx-value-command={item.command}
         phx-value-args={Jason.encode!(@menu.args)}
+        phx-value-resource="true"
       >
         <span class="flex-1 whitespace-nowrap">{item.label}</span>
         <span :if={item.shortcut} class="opacity-60 pl-6">{item.shortcut}</span>

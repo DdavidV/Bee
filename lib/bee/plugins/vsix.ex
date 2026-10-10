@@ -30,11 +30,12 @@ defmodule Bee.Plugins.Vsix do
     source = opts[:source]
     origin = %{openVsx: source, targetPlatform: opts[:target_platform]}
 
-    with {:ok, files} <- read(path),
+    with {:ok, files, executables} <- read(path),
          {:ok, package} <- json(files, "package.json"),
          {:ok, name} <- Manifest.plugin_name(package),
          :ok <- check_target(name, source) do
-      write(name, files, Map.merge(%{name: name, version: package["version"]}, origin))
+      marker = Map.merge(%{name: name, version: package["version"]}, origin)
+      write(name, files, executables, marker)
     end
   end
 
@@ -50,7 +51,9 @@ defmodule Bee.Plugins.Vsix do
 
   ## Reading the package
 
-  # The files under extension/, by their path inside it.
+  # The files under extension/, by their path inside it, and which of them
+  # are executable (an extension's scripts and programs, e.g. a language
+  # server it starts).
   defp read(path) do
     zip = String.to_charlist(path)
 
@@ -64,7 +67,15 @@ defmodule Bee.Plugins.Vsix do
             into: %{},
             do: {rel, data}
 
-      {:ok, files}
+      executables =
+        for {:zip_file, name, info, _, _, _} <- entries,
+            {:ok, rel} <- [entry_path(to_string(name))],
+            mode = elem(info, 7),
+            is_integer(mode) and Bitwise.band(mode, 0o111) != 0,
+            into: MapSet.new(),
+            do: rel
+
+      {:ok, files, executables}
     else
       {:error, :einval} -> {:error, "not a VSIX (zip) file"}
       {:error, message} when is_binary(message) -> {:error, message}
@@ -141,7 +152,7 @@ defmodule Bee.Plugins.Vsix do
   ## Writing
 
   # Unpacked next to the plugins folder first, then moved in whole.
-  defp write(name, files, marker) do
+  defp write(name, files, executables, marker) do
     tmp = Path.join(Bee.Settings.user_dir(), ".installing-#{name}")
     target = Path.join(Plugins.user_dir(), name)
     File.rm_rf!(tmp)
@@ -150,6 +161,7 @@ defmodule Bee.Plugins.Vsix do
       file = Path.join(tmp, rel)
       File.mkdir_p!(Path.dirname(file))
       File.write!(file, data)
+      if rel in executables, do: File.chmod!(file, 0o755)
     end
 
     File.write!(

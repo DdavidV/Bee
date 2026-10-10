@@ -1,6 +1,7 @@
 defmodule BeeWeb.ExtensionsTest do
   # A VS Code extension's commands, menus, keybindings and settings in the
-  # window (the hello fixture, test/fixtures/extensions/hello).
+  # window (the hello fixture, test/fixtures/extensions/hello). Its commands
+  # run in the extension host (the tests tagged :node).
   use BeeWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
@@ -20,6 +21,7 @@ defmodule BeeWeb.ExtensionsTest do
     on_exit(fn ->
       File.rm_rf!(Bee.Plugins.user_dir())
       Bee.Plugins.reload()
+      File.rm_rf!(Path.join(Bee.Settings.user_dir(), "extension-state"))
       File.rm(Bee.Settings.user_path())
       Bee.Settings.reload()
       File.rm_rf!(root)
@@ -50,6 +52,20 @@ defmodule BeeWeb.ExtensionsTest do
       "args" => json_data(view, selector, "data-menu-args"),
       "context" => context
     })
+  end
+
+  # The extension host answers asynchronously.
+  defp eventually(fun, tries \\ 100) do
+    cond do
+      fun.() -> :ok
+      tries == 0 -> flunk("condition not met")
+      true -> Process.sleep(30) && eventually(fun, tries - 1)
+    end
+  end
+
+  defp run(view, command, args \\ nil) do
+    params = if args, do: %{"command" => command, "args" => args}, else: %{"command" => command}
+    render_hook(view, "run_command", params)
   end
 
   defp attribute(html, name),
@@ -93,11 +109,14 @@ defmodule BeeWeb.ExtensionsTest do
     refute html =~ "Shout Selection"
   end
 
-  test "running one says what it needs: Bee doesn't run extension code yet", %{conn: conn} do
+  @tag :node
+  test "running one runs the extension's code", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/")
-    html = render_hook(view, "run_command", %{"command" => "hello.sayHello"})
-    assert html =~ "Hello: Say Hello is a command of the hello extension"
-    assert html =~ "extension host"
+    assert %{status: :inactive} = Bee.Plugins.get("hello", Bee.Workspace.root())
+
+    run(view, "hello.sayHello")
+    eventually(fn -> render(view) =~ "Hello from the hello extension" end)
+    assert %{status: :active, errors: []} = Bee.Plugins.get("hello", Bee.Workspace.root())
   end
 
   test "the editor's right-click menu: Bee's items, the extension's, its submenu", %{conn: conn} do
@@ -139,10 +158,47 @@ defmodule BeeWeb.ExtensionsTest do
     right_click(view, "#editor-area", %{"editorHasSelection" => true})
     assert "hello.shout" in menu(view)
 
-    # An item of a submenu runs like any other, with the file as its argument.
-    html = view |> element("#context-menu [data-command='hello.pick']") |> render_click()
-    assert html =~ "Hello: Pick a Greeting is a command of the hello extension"
+    # An item of a submenu runs like any other.
+    view |> element("#context-menu [data-command='hello.pick']") |> render_click()
     refute has_element?(view, "#context-menu")
+  end
+
+  @tag :node
+  test "an extension's quick pick is asked in the palette, its answer goes back", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+    run(view, "hello.pick")
+    eventually(fn -> has_element?(view, "#palette-items [role=option]", "Howdy") end)
+    assert view |> element("#palette-input") |> render() =~ "Pick a greeting"
+
+    view |> element("#palette-items [role=option]", "Howdy") |> render_click()
+    refute has_element?(view, "#palette")
+
+    # The extension writes the pick to the user's settings…
+    eventually(fn -> Bee.Settings.get("hello.greeting") == "Howdy" end)
+    # …and reads it back.
+    run(view, "hello.sayHello")
+    eventually(fn -> render(view) =~ "Howdy from the hello extension" end)
+
+    # Escape: the extension gets no pick, and changes nothing.
+    run(view, "hello.pick")
+    eventually(fn -> has_element?(view, "#palette-items [role=option]", "Hi") end)
+    view |> element("#palette-input") |> render_keydown(%{"key" => "Escape"})
+    refute has_element?(view, "#palette")
+    run(view, "hello.sayHello")
+    eventually(fn -> render(view) =~ "Howdy from the hello extension" end)
+  end
+
+  @tag :node
+  test "a file's right-click menu gives the extension its Uri", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    right_click(view, "#explorer button[phx-value-path='notes.txt']", %{
+      "explorerResourceIsFolder" => false
+    })
+
+    view |> element("#context-menu [data-command='hello.reveal']") |> render_click()
+    path = Path.join(Bee.Workspace.root(), "notes.txt")
+    eventually(fn -> render(view) =~ "Hello, #{path}" end)
   end
 
   test "the Explorer's right-click menu and the editor's buttons", %{conn: conn} do
@@ -204,15 +260,19 @@ defmodule BeeWeb.ExtensionsTest do
 
     # A key for one of Bee's commands.
     assert Enum.any?(of.("workbench.action.togglePanel"), &(&1["key"] == ["ctrl+alt+`"]))
+  end
+
+  @tag :node
+  test "a keybinding's arguments reach the command, which edits the open file", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+    open_file(view, "notes.txt")
+    path = Path.join(Bee.Workspace.root(), "notes.txt")
+    render_hook(view, "selection_changed", %{"path" => path, "ranges" => [[5, 5]]})
 
     # What the Keybindings hook pushes for a binding with arguments.
-    html =
-      render_hook(view, "run_command", %{
-        "command" => "hello.insert",
-        "args" => [%{"text" => "inserted"}]
-      })
-
-    assert html =~ "Hello: Insert Text is a command of the hello extension"
+    run(view, "hello.insert", [%{"text" => "inserted "}])
+    assert_push_event(view, "cm:edit", %{path: ^path, text: "some inserted notes\n"}, 3_000)
+    assert Bee.Editor.Buffer.get(path).text == "some inserted notes\n"
   end
 
   test "its settings: defaults, validation, and defaults for other settings" do

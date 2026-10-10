@@ -9,6 +9,12 @@ desktop app.
 - Git
 - Linux or macOS (Windows support is planned)
 
+To run the code of VS Code extensions (optional: their themes, grammars,
+keybindings and settings work without it):
+
+- [Node.js](https://nodejs.org) 20+, on the `PATH` or named by the
+  `extensions.nodePath` setting
+
 For the desktop app, also:
 
 - [Rust](https://rustup.rs)

@@ -75,14 +75,21 @@ defmodule Bee.Plugins do
     end
   end
 
+  # Its code there: the server part's status and the extension code's
+  # (failed if either failed, else activating if either is, else active).
   defp in_workspace(%{status: :inactive} = plugin, root) do
-    case plugin.hosts[root] do
-      %{status: status, errors: errors} when status != :inactive ->
-        %{plugin | status: status, errors: plugin.errors ++ errors}
+    parts = Enum.reject([plugin.hosts[root], plugin.extensions[root]], &is_nil/1)
+    statuses = for %{status: status} <- parts, status != :inactive, do: status
 
-      _ ->
-        plugin
-    end
+    status =
+      Enum.find([:failed, :activating, :active], :inactive, &(&1 in statuses))
+
+    %{
+      plugin
+      | status: status,
+        errors: plugin.errors ++ Enum.flat_map(parts, & &1.errors),
+        warnings: plugin.warnings ++ Enum.flat_map(parts, &Map.get(&1, :warnings, []))
+    }
   end
 
   defp in_workspace(plugin, _root), do: plugin
@@ -137,6 +144,15 @@ defmodule Bee.Plugins do
   """
   @spec execute(String.t(), String.t(), Context.t()) :: :ok | {:error, String.t()}
   def execute(name, id, %Context{} = ctx), do: GenServer.call(Manager, {:execute, name, id, ctx})
+
+  @doc """
+  Runs command `id` of plugin `name`'s extension code (a VS Code
+  extension's, see `Bee.Extensions.Host`) in the workspace of `ctx.root`,
+  activating it there if needed. Returns at once.
+  """
+  @spec execute_extension(String.t(), String.t(), Context.t()) :: :ok | {:error, String.t()}
+  def execute_extension(name, id, %Context{} = ctx),
+    do: GenServer.call(Manager, {:execute_extension, name, id, ctx})
 
   @doc """
   View `view_id` is shown in a window of workspace `root`: starts the plugin

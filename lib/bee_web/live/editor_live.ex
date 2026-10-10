@@ -13,8 +13,9 @@ defmodule BeeWeb.EditorLive do
   their `use Bee.Commands.Command` handler here, plugin server commands are
   handed to `Bee.Plugins` (the plugin answers with `{:bee_api, request}`
   messages, see `Bee.API`), client ones are sent to the browser as
-  `bee:exec`, and those of a VS Code extension's code need the extension
-  host. The `when` context (`Bee.Workbench.context/2`) is evaluated
+  `bee:exec`, and those of a VS Code extension's code run in the
+  workspace's extension host (`Bee.Extensions.Host`), which is told this
+  window's active editor and asks its questions here (`{:ask, …}`). The `when` context (`Bee.Workbench.context/2`) is evaluated
   here for menus and the palette, and sent to the browser (`data-context`)
   for keybindings.
 
@@ -115,7 +116,8 @@ defmodule BeeWeb.EditorLive do
          |> Workbench.close_palette()
          |> Workbench.close_context_menu())
      )
-     |> run_command(id, decode_args(params["args"]))}
+     # From a right-click menu, the arguments are the files clicked.
+     |> run_command(id, decode_args(params["args"]), params["resource"] == "true")}
   end
 
   ## Context menus (ContextMenus hook): the element right-clicked names the
@@ -369,12 +371,8 @@ defmodule BeeWeb.EditorLive do
   end
 
   # Enter in the input submits the form.
-  def handle_event("palette_run", _params, %{assigns: %{palette: %{mode: :input} = p}} = socket) do
-    {:noreply,
-     socket
-     |> change(&Workbench.close_palette/1)
-     |> run_command(p.command, p.arguments ++ [p.query])}
-  end
+  def handle_event("palette_run", _params, %{assigns: %{palette: %{mode: :input} = p}} = socket),
+    do: {:noreply, palette_answer(socket, p, p.query)}
 
   def handle_event("palette_run", _params, %{assigns: %{palette: %{index: index}}} = socket) do
     case Enum.at(palette_items(socket.assigns), index) do
@@ -480,7 +478,9 @@ defmodule BeeWeb.EditorLive do
   # Selections of the active editor, UTF-8 byte offsets (for plugin commands).
   def handle_event("selection_changed", %{"path" => path, "ranges" => ranges}, socket) do
     ranges = for [from, to] <- ranges, is_integer(from), is_integer(to), do: {from, to}
-    {:noreply, assign(socket, selection: {path, ranges})}
+    socket = assign(socket, selection: {path, ranges})
+    if path == socket.assigns.active, do: tell_extension_host(socket)
+    {:noreply, socket}
   end
 
   ## Terminal
@@ -767,7 +767,8 @@ defmodule BeeWeb.EditorLive do
 
   # Applies `fun` (a Workbench function or command handler) and its effects.
   defp change(socket, fun) do
-    {wb, effects} = Workbench.wrap(fun.(workbench(socket)))
+    before = workbench(socket)
+    {wb, effects} = Workbench.wrap(fun.(before))
 
     socket
     |> put_workbench(wb)
@@ -775,6 +776,35 @@ defmodule BeeWeb.EditorLive do
     |> sync_quick_open()
     |> sync_theme()
     |> sync_extension_details()
+    |> sync_asked(before)
+    |> sync_active_editor(before)
+  end
+
+  # A question asked through the palette (`reply`) that closed, or made way
+  # for something else: answered with nothing. (After an answer, that is a
+  # second one, which nobody waits for.)
+  defp sync_asked(socket, %{palette: %{reply: {pid, ref}}}) do
+    case socket.assigns.palette do
+      %{reply: {^pid, ^ref}} -> :ok
+      _ -> send(pid, {:bee_answer, ref, nil})
+    end
+
+    socket
+  end
+
+  defp sync_asked(socket, _before), do: socket
+
+  # Another file is shown: what VS Code extensions see as the active editor.
+  defp sync_active_editor(socket, before) do
+    if Workbench.active_file(before) != Workbench.active_file(workbench(socket)),
+      do: tell_extension_host(socket)
+
+    socket
+  end
+
+  defp tell_extension_host(socket) do
+    ctx = plugin_context(socket.assigns)
+    Bee.Extensions.Host.active_editor(ctx.root, self(), ctx.active_editor, ctx.selections)
   end
 
   # The details of the plugins shown in editor tabs (BeeWeb.Workbench.ExtensionEditor),
@@ -918,17 +948,24 @@ defmodule BeeWeb.EditorLive do
     end
   end
 
-  # A command of a VS Code extension's code: Bee doesn't run that yet.
+  # A command of a VS Code extension's code, run by the workspace's
+  # extension host. Files (a right-click menu's arguments, the editor
+  # buttons' file) go as `{"$uri": path}`: the extension gets a vscode.Uri.
   defp run_effect(
-         {:run_extension_command, %{handler: {:extension, name}} = command, _args},
+         {:run_extension_command, %{handler: {:extension, name}, id: id}, args, resources?},
          socket
        ) do
-    put_flash(
-      socket,
-      :error,
-      "#{CommandRegistry.label(command)} is a command of the #{name} extension's code, " <>
-        "which Bee can't run yet: it needs the extension host"
-    )
+    ctx = plugin_context(socket.assigns)
+
+    args =
+      if resources?,
+        do: Enum.map(args, &if(is_binary(&1), do: %{"$uri" => &1}, else: &1)),
+        else: args
+
+    case Plugins.execute_extension(name, id, %{ctx | args: args}) do
+      :ok -> socket
+      {:error, message} -> put_flash(socket, :error, message)
+    end
   end
 
   defp run_effect(:reload_plugins, socket) do
@@ -1147,10 +1184,18 @@ defmodule BeeWeb.EditorLive do
 
   # `args` reach plugin and client commands, and Bee's own server commands
   # whose handler takes them.
-  defp run_command(socket, id, args \\ []) do
+  defp run_command(socket, id, args \\ [], resources? \\ false) do
     case Enum.find(socket.assigns.commands, &(&1.id == id)) do
       nil ->
-        put_flash(socket, :error, "Command '#{id}' not found")
+        # One a VS Code extension registered without declaring it.
+        case Bee.Extensions.Host.command(socket.assigns.root, id) do
+          nil ->
+            put_flash(socket, :error, "Command '#{id}' not found")
+
+          name ->
+            command = %{id: id, handler: {:extension, name}}
+            run_effect({:run_extension_command, command, args, resources?}, socket)
+        end
 
       command ->
         cond do
@@ -1164,7 +1209,7 @@ defmodule BeeWeb.EditorLive do
             run_effect({:run_plugin_command, command, args}, socket)
 
           match?({:extension, _}, command.handler) ->
-            run_effect({:run_extension_command, command, args}, socket)
+            run_effect({:run_extension_command, command, args, resources?}, socket)
 
           true ->
             change(socket, &CommandRegistry.run_handler(command.handler, &1, args))
@@ -1241,6 +1286,18 @@ defmodule BeeWeb.EditorLive do
     # The box may have focus, where LiveView leaves its value alone.
     |> push_event("view:input", %{view: view, value: value})
   end
+
+  # A question of the extension host's (Bee.Extensions.Host): asked in the
+  # palette, answered with `{:bee_answer, ref, value}` (see palette_answer/3).
+  defp plugin_request(socket, {:ask, ref, pid, :pick, spec}),
+    do: change(socket, &Workbench.open_quick_pick(&1, Map.put(spec, :reply, {pid, ref})))
+
+  defp plugin_request(socket, {:ask, ref, pid, :input, spec}),
+    do: change(socket, &Workbench.open_input_box(&1, Map.put(spec, :reply, {pid, ref})))
+
+  # Answered in another window.
+  defp plugin_request(%{assigns: %{palette: %{reply: {_pid, ref}}}} = socket, {:ask_done, ref}),
+    do: change(socket, &Workbench.close_palette/1)
 
   defp plugin_request(socket, {:input_box, spec}),
     do: change(socket, &Workbench.open_input_box(&1, spec))
@@ -1873,10 +1930,19 @@ defmodule BeeWeb.EditorLive do
     end
   end
 
-  defp palette_choose(%{assigns: %{palette: palette}} = socket, item) do
+  defp palette_choose(%{assigns: %{palette: palette}} = socket, item),
+    do: palette_answer(socket, palette, item.value)
+
+  # What was picked or typed: to who asked (`reply`), or to the palette's command.
+  defp palette_answer(socket, %{reply: {pid, ref}}, value) do
+    send(pid, {:bee_answer, ref, value})
+    change(socket, &Workbench.close_palette/1)
+  end
+
+  defp palette_answer(socket, palette, value) do
     socket
     |> change(&Workbench.close_palette/1)
-    |> run_command(palette.command, palette.arguments ++ [item.value])
+    |> run_command(palette.command, palette.arguments ++ [value])
   end
 
   # Every query character appears in order ("tgpan" matches "Toggle Panel").
