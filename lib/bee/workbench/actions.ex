@@ -141,6 +141,13 @@ defmodule Bee.Workbench.Actions do
   @command "bee.console.open"
   def open_console(wb), do: Workbench.show_panel(wb, "console")
 
+  # What extensions write for the user (Bee.Output), the panel's Output section.
+  @command "workbench.action.output.toggleOutput"
+  def show_output(wb), do: Workbench.show_panel(wb, "output")
+
+  @command "workbench.output.action.clearOutput"
+  def clear_output(wb), do: {wb, [:clear_output]}
+
   @command "bee.console.clear"
   def clear_console(%{console: nil} = wb), do: wb
   def clear_console(wb), do: {wb, [{:clear_console, wb.console}]}

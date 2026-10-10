@@ -39,6 +39,7 @@ defmodule Bee.Extensions.HostTest do
       on_exit(fn ->
         File.rm_rf!(Plugins.user_dir())
         Plugins.reload()
+        Bee.Output.forget_workspace(root)
         File.rm_rf!(Path.join(Bee.Settings.user_dir(), "extension-state"))
         File.rm(Bee.Settings.user_path())
         Bee.Settings.reload()
@@ -188,6 +189,43 @@ defmodule Bee.Extensions.HostTest do
       assert_receive {:bee_api, {:show_message, :info, "Ahoy from the hello extension"}}, 5_000
     end
 
+    test "output channels, what extensions print, and their failures are the workspace's output",
+         %{
+           root: root
+         } do
+      Bee.Output.subscribe(root)
+
+      run(root, "hello.output")
+      assert_receive {:output, :channels}, 5_000
+      assert_receive {:output, :appended, "Hello", "first line\n"}, 5_000
+      # channel.show(): the window shows it.
+      assert_receive {:bee_api, {:show_output, "Hello"}}, 5_000
+
+      run(root, "hello.output", args: ["second", false])
+      eventually(fn -> Bee.Output.get(root, "Hello") == "first line\nsecond\n" end)
+      refute_receive {:bee_api, {:show_output, _}}, 100
+
+      # A log channel: lines with their time and level. Printed text, and a
+      # command's failure with where it was raised: the host's channel.
+      run(root, "hello.log")
+      run(root, "hello.broken")
+      host = Bee.Output.host_channel()
+
+      eventually(fn ->
+        Bee.Output.get(root, "Hello Log") =~
+          ~r/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d+ \[info\] started \{"port":1\}\n.* \[error\] Error: boom\n\s+at /s and
+          Bee.Output.get(root, host) =~ "printed by hello\n" and
+          Bee.Output.get(root, host) =~
+            ~r/command hello\.broken failed: Error: broken on purpose\n\s+at .*extension\.js/
+      end)
+
+      assert Bee.Output.channels(root) == ["Extension Host", "Hello", "Hello Log"]
+
+      Bee.Output.clear(root, "Hello")
+      assert_receive {:output, :cleared, "Hello"}
+      assert Bee.Output.get(root, "Hello") == ""
+    end
+
     test "API Bee doesn't have does nothing, and is listed", %{root: root} do
       run(root, "hello.unsupported")
       assert_receive {:bee_api, {:show_message, :info, "still running"}}, 5_000
@@ -195,7 +233,7 @@ defmodule Bee.Extensions.HostTest do
       eventually(fn ->
         warnings = Plugins.get("hello", root).warnings
 
-        "uses vscode.languages.registerHoverProvider, which Bee doesn't have" in warnings and
+        "uses vscode.debug.registerDebugAdapterDescriptorFactory, which Bee doesn't have" in warnings and
           "uses vscode.TreeItem, which Bee doesn't have" in warnings
       end)
 
@@ -250,27 +288,6 @@ defmodule Bee.Extensions.HostTest do
       assert %{status: :failed, errors: [%{message: ^message}]} = Plugins.get("hello", root)
       assert Bee.Commands.Registry.command("hello.sayHello")
       assert Bee.Settings.get("hello.volume") == 7
-    end
-
-    test "language tooling: its code only runs when asked to", %{root: root} do
-      # The hello extension, saying it is a linter.
-      file = Path.join([Plugins.user_dir(), "hello", "package.json"])
-      package = file |> File.read!() |> Jason.decode!() |> Map.put("categories", ["Linters"])
-      File.write!(file, Jason.encode!(package))
-      File.write!(Path.join(root, ".hello"), "")
-      Plugins.reload("hello")
-
-      # Not started by its activation events, nor by a command.
-      Process.sleep(200)
-      assert %{status: :inactive, errors: []} = Plugins.get("hello", root)
-      assert Host.whereis(root) == nil
-      assert {:error, message} = run(root, "hello.sayHello")
-      assert message =~ "language tooling"
-      assert Enum.any?(Plugins.get("hello").warnings, &(&1 =~ "its code isn't run"))
-
-      :ok = Bee.Settings.update(:user, "extensions.enabledCode", fn _ -> ["hello"] end)
-      assert :ok = run(root, "hello.sayHello")
-      assert_receive {:bee_api, {:show_message, :info, "Hello from the hello extension"}}, 5_000
     end
 
     test "an extension that needs another runs when that one is there, after it", %{root: root} do

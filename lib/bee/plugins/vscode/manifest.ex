@@ -14,9 +14,7 @@ defmodule Bee.Plugins.VSCode.Manifest do
 
   The extension's code (`main`) becomes the plugin's `extension` part: its
   commands are `"runtime": "extension"` ones, registered by that code when
-  the extension host runs it. Code that is language tooling (a client of
-  a language server, debugger, linter or formatter) is marked
-  `languageTooling`: Bee doesn't run it unless asked to.
+  the extension host runs it.
 
   Unlike a plugin's own `plugin.json`, where a mistake rejects the plugin,
   this is lenient: an entry Bee can't use (a missing file, a field it
@@ -66,18 +64,6 @@ defmodule Bee.Plugins.VSCode.Manifest do
 
       main = string(package["main"])
       {contributes, warnings} = contributes(package, dir, nls, main != nil)
-      tooling? = main != nil and language_tooling?(package)
-
-      warnings =
-        if tooling?,
-          do:
-            warnings ++
-              [
-                "its code isn't run: it is language tooling (a language server, debugger, " <>
-                  "linter or formatter client), which Bee has no API for. To run it anyway, " <>
-                  "name it in the extensions.enabledCode setting"
-              ],
-          else: warnings
 
       manifest =
         %{
@@ -85,7 +71,7 @@ defmodule Bee.Plugins.VSCode.Manifest do
           "displayName" => localized(package["displayName"], nls) || package["name"],
           "description" => localized(package["description"], nls),
           "version" => string(package["version"]),
-          "extension" => if(main, do: extension(package, main, tooling?)),
+          "extension" => if(main, do: extension(package, main)),
           "activationEvents" => activation_events(package, contributes, main),
           "contributes" => Map.merge(contributes, bee_contributes(package))
         }
@@ -124,35 +110,16 @@ defmodule Bee.Plugins.VSCode.Manifest do
 
   # The extension's code: its entry file, its VS Code id and the ids of
   # the extensions it needs (its code uses theirs).
-  defp extension(package, main, tooling?) do
+  defp extension(package, main) do
     %{
       "main" => main,
       "id" =>
         if(string(package["publisher"]) && string(package["name"]),
           do: "#{package["publisher"]}.#{package["name"]}"
         ),
-      "dependencies" => strings(package["extensionDependencies"]),
-      "languageTooling" => tooling? || nil
+      "dependencies" => strings(package["extensionDependencies"])
     }
     |> Map.reject(fn {_k, v} -> v in [nil, []] end)
-  end
-
-  # Whether the extension's code is a client of a language server, debugger,
-  # linter or formatter: what it says of itself (its categories, its
-  # debuggers, the language client library among its dependencies). Such
-  # code does nothing in Bee, which has no API for it, and at worst starts
-  # a server nobody listens to.
-  @tooling_categories ~w(Debuggers Linters Formatters Testing)
-
-  defp language_tooling?(package) do
-    dependencies =
-      for key <- ~w(dependencies devDependencies),
-          {name, _version} <- map(package[key]),
-          do: name
-
-    Enum.any?(strings(package["categories"]), &(&1 in @tooling_categories)) or
-      List.wrap(get_in(package, ["contributes", "debuggers"])) != [] or
-      Enum.any?(dependencies, &String.starts_with?(&1, "vscode-languageclient"))
   end
 
   # Bee's own parts; the manifest schema checks them.

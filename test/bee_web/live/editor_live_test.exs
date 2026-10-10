@@ -455,7 +455,7 @@ defmodule BeeWeb.EditorLiveTest do
       open_panel(view)
       assert has_element?(view, "#panel-sections > :first-child[data-section='terminal']")
 
-      render_hook(view, "reorder_panel", %{"order" => ["console", "terminal"]})
+      render_hook(view, "reorder_panel", %{"order" => ["console", "output", "terminal"]})
       assert has_element?(view, "#panel-sections > :first-child[data-section='console']")
       assert has_element?(view, "#panel-sections > :last-child[data-section='terminal']")
     end

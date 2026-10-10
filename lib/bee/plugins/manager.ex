@@ -38,9 +38,7 @@ defmodule Bee.Plugins.Manager do
   errors, and `warnings` (API it used that Bee doesn't have). When Node
   exits, the extensions that ran in it start again in a new one, up to
   three times a minute. `extensions.disabledCode` names extensions whose
-  code doesn't run; code that is language tooling (see
-  `Bee.Plugins.VSCode.Manifest`) only runs for those named in
-  `extensions.enabledCode`. An extension that needs others
+  code doesn't run. An extension that needs others
   (`extensionDependencies`) runs when they are installed and their code
   runs, after theirs.
 
@@ -266,8 +264,7 @@ defmodule Bee.Plugins.Manager do
       {Bee.Settings.get_user("plugins.disabled"),
        Bee.Settings.get_user("plugins.workspace.enabled"),
        Bee.Settings.get_user("extensions.disabledCode"),
-       Bee.Settings.get_user("extensions.nodePath"),
-       Bee.Settings.get_user("extensions.enabledCode")}
+       Bee.Settings.get_user("extensions.nodePath")}
 
   # Adds plugins found on disk that aren't loaded yet, drops vanished or
   # disabled ones. Loaded plugins are kept as they are (see reload).
@@ -299,7 +296,7 @@ defmodule Bee.Plugins.Manager do
   end
 
   defp discover(s) do
-    {disabled, workspace?, _no_code, _node, _code} = config()
+    {disabled, workspace?, _no_code, _node} = config()
 
     builtin =
       if Application.get_env(:bee, :builtin_plugins, true),
@@ -419,7 +416,11 @@ defmodule Bee.Plugins.Manager do
     end
   end
 
-  defp read_manifest(:vscode, dir, _path), do: Manifest.read(dir)
+  defp read_manifest(:vscode, dir, _path) do
+    # (One installed by a Bee that lost its files' modes.)
+    Bee.Plugins.Vsix.repair_modes(dir)
+    Manifest.read(dir)
+  end
 
   defp read_manifest(:bee, _dir, path) do
     with {:ok, text} <- File.read(path),
@@ -589,6 +590,7 @@ defmodule Bee.Plugins.Manager do
 
     s = stop_node_host(s, root)
     Bee.UI.forget_workspace(root)
+    Bee.Output.forget_workspace(root)
     # Without its workspace plugins.
     rescan(%{s | roots: Map.delete(s.roots, root)})
   end
@@ -638,8 +640,8 @@ defmodule Bee.Plugins.Manager do
 
   defp ensure_extension(s, %{name: name} = plugin, root) do
     cond do
-      # Switched off (by the user, or as language tooling): not a problem
-      # of the plugin's.
+      # Switched off by the user, or lacking an extension it needs: not a
+      # problem of the plugin's.
       code_off(s, plugin) != nil ->
         {s, nil}
 
@@ -794,16 +796,11 @@ defmodule Bee.Plugins.Manager do
   # Why the plugin's extension code doesn't run, or nil when it may.
   # (`seen`: the plugins whose needs led here.)
   defp code_off(s, %{name: name} = plugin, seen \\ []) do
-    {_disabled, _workspace?, no_code, _node, code} = s.config
+    {_disabled, _workspace?, no_code, _node} = s.config
 
     cond do
       name in List.wrap(no_code) ->
         "#{name}'s code is switched off (extensions.disabledCode)"
-
-      get_in(plugin.manifest, ["extension", "languageTooling"]) == true and
-          name not in List.wrap(code) ->
-        "#{name}'s code isn't run: it is language tooling, which Bee has no API for " <>
-          "(extensions.enabledCode runs it anyway)"
 
       true ->
         missing_dependency(s, plugin, seen)

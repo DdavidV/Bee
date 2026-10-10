@@ -250,6 +250,19 @@
         "runtime": "server"
       },
       {
+        "command": "workbench.action.output.toggleOutput",
+        "category": "View",
+        "title": "Show Output",
+        "runtime": "server"
+      },
+      {
+        "command": "workbench.output.action.clearOutput",
+        "category": "View",
+        "title": "Clear Output",
+        "icon": "trash",
+        "runtime": "server"
+      },
+      {
         "command": "bee.console.open",
         "category": "Developer",
         "title": "Open Bee Console",
@@ -507,7 +520,8 @@
       ],
       "panel": [
         {"id": "terminal", "title": "Terminal", "icon": "command-line"},
-        {"id": "console", "title": "Bee Console", "icon": "code-bracket"}
+        {"id": "console", "title": "Bee Console", "icon": "code-bracket"},
+        {"id": "output", "title": "Output", "icon": "queue-list"}
       ]
     },
 
@@ -520,7 +534,8 @@
         {"id": "workbench.extensions.builtin", "name": "Built-in", "when": "!searchMarketplaceExtensions"}
       ],
       "terminal": [{"id": "workbench.panel.terminal", "name": "Terminal"}],
-      "console": [{"id": "workbench.panel.console", "name": "Bee Console"}]
+      "console": [{"id": "workbench.panel.console", "name": "Bee Console"}],
+      "output": [{"id": "workbench.panel.output", "name": "Output"}]
     },
 
     "menubar": [
@@ -558,6 +573,7 @@
         {"command": "workbench.action.terminal.new", "group": "navigation@1", "when": "view == workbench.panel.terminal"},
         {"command": "workbench.action.terminal.kill", "group": "navigation@2", "when": "view == workbench.panel.terminal"},
         {"command": "bee.console.clear", "group": "navigation@1", "when": "view == workbench.panel.console"},
+        {"command": "workbench.output.action.clearOutput", "group": "navigation@1", "when": "view == workbench.panel.output"},
         {"command": "search.action.refreshSearchResults", "group": "navigation@1", "when": "view == workbench.view.search"},
         {"command": "search.action.clearSearchResults", "group": "navigation@2", "when": "view == workbench.view.search"},
         {"command": "search.action.collapseSearchResults", "group": "navigation@3", "when": "view == workbench.view.search"},
@@ -642,7 +658,8 @@
       "menubar/terminal": [
         {"command": "workbench.action.terminal.new", "group": "1_terminal@1"},
         {"command": "workbench.action.terminal.kill", "group": "1_terminal@2"},
-        {"command": "bee.console.open", "group": "2_console@1"}
+        {"command": "bee.console.open", "group": "2_console@1"},
+        {"command": "workbench.action.output.toggleOutput", "group": "2_console@2"}
       ]
     }
   }

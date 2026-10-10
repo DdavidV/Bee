@@ -57,8 +57,7 @@
       "properties": {
         "main": {"type": "string", "minLength": 1, "description": "The extension's entry file, relative to the plugin."},
         "id": {"type": "string", "minLength": 1, "description": "The extension's VS Code id, publisher.name: what other extensions depend on."},
-        "dependencies": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "Ids (publisher.name) of the extensions its code needs (extensionDependencies): it runs when they are installed and their code runs, after theirs."},
-        "languageTooling": {"type": "boolean", "description": "The code is a client of a language server, debugger, linter or formatter: Bee has no API for those, and doesn't run it unless the extension is named in the extensions.enabledCode setting."}
+        "dependencies": {"type": "array", "items": {"type": "string", "minLength": 1}, "description": "Ids (publisher.name) of the extensions its code needs (extensionDependencies): it runs when they are installed and their code runs, after theirs."}
       }
     },
     "activationEvents": {

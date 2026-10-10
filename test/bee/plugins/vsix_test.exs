@@ -157,6 +157,34 @@ defmodule Bee.Plugins.VsixTest do
     refute executable?.("readme.txt")
   end
 
+  test "an install that lost its files' modes is repaired when it loads, once", %{tmp: tmp} do
+    assert {:ok, "cool-icons"} = Vsix.install(vsix(tmp, theme_files()))
+    dir = Path.join(Plugins.user_dir(), "cool-icons")
+    marker = Path.join(dir, ".vsix.json")
+    assert %{"modes" => true} = Vsix.marker(dir)
+
+    # As an older Bee left it: no modes, a script and a program as plain files.
+    File.write!(marker, ~s({"name": "cool-icons", "version": "1.2.3"}))
+    File.mkdir_p!(Path.join(dir, "bin"))
+    File.write!(Path.join(dir, "bin/run.sh"), "#!/bin/sh\necho hi\n")
+    File.write!(Path.join(dir, "bin/tool"), <<0x7F, "ELF", 0, 0, 0>>)
+    File.write!(Path.join(dir, "bin/notes.txt"), "#not a script\n")
+    executable? = fn rel -> Bitwise.band(File.stat!(Path.join(dir, rel)).mode, 0o111) != 0 end
+    refute executable?.("bin/run.sh")
+
+    Plugins.reload("cool-icons")
+    assert executable?.("bin/run.sh")
+    assert executable?.("bin/tool")
+    refute executable?.("bin/notes.txt")
+    refute executable?.("theme.json")
+    assert %{"modes" => true, "version" => "1.2.3"} = Vsix.marker(dir)
+
+    # Once: what the user changes afterwards stays.
+    File.chmod!(Path.join(dir, "bin/run.sh"), 0o644)
+    Plugins.reload("cool-icons")
+    refute executable?.("bin/run.sh")
+  end
+
   test "never replaces a plugin it didn't install", %{tmp: tmp} do
     dir = Path.join(Plugins.user_dir(), "cool-icons")
     File.mkdir_p!(dir)

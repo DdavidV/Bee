@@ -37,6 +37,7 @@ import {SearchInput} from "./hooks/search_input"
 import {MarketplaceInput} from "./hooks/marketplace_input"
 import {ActivityBar, PanelSections, TerminalList} from "./hooks/sortable"
 import {ContextMenu, ContextMenus} from "./hooks/context_menu"
+import {Output} from "./hooks/output"
 import {ExplorerInput} from "./hooks/explorer_input"
 import {PaneSash, Sash} from "./hooks/sash"
 import {VsixInstall} from "./hooks/vsix_install"
@@ -53,7 +54,7 @@ const liveSocket = new LiveSocket("/live", Socket, {
   ...transport,
   // A function: evaluated on every (re)connect, so the saved layout is current.
   params: () => ({_csrf_token: csrfToken, layout: loadLayout()}),
-  hooks: {...colocatedHooks, ActivityBar, CodeEditor, ContextMenu, ContextMenus, ExplorerInput, Keybindings, Markdown, MarketplaceInput, Palette, PaneSash, PanelSections, Tabs, TerminalList, Plugins, Sash, SearchInput, Terminal, ViewInput, VsixInstall},
+  hooks: {...colocatedHooks, ActivityBar, CodeEditor, ContextMenu, ContextMenus, ExplorerInput, Keybindings, Markdown, MarketplaceInput, Output, Palette, PaneSash, PanelSections, Tabs, TerminalList, Plugins, Sash, SearchInput, Terminal, ViewInput, VsixInstall},
 })
 
 // Show progress bar on live navigation and form submits

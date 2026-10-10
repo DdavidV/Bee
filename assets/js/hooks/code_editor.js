@@ -199,6 +199,11 @@ export const CodeEditor = {
     )
     this.handleEvent("cm:snippet", ({path, body}) => this.insertSnippet(path, body))
     this.handleEvent("cm:diagnostics", d => this.setDiagnostics(d))
+    this.handleEvent("cm:language_diagnostics", d => this.setLanguageDiagnostics(d))
+    // A file's problems, by who found them: path -> CodeMirror diagnostics
+    // (JSON validation), path -> [{from: {line, character}, to, …}] (extensions).
+    this.jsonDiagnostics = new Map()
+    this.languageDiagnostics = new Map()
     this.handleEvent("cm:edit", ({path, edits, text}) => this.edit(path, edits, text))
     this.handleEvent("cm:reveal", target => this.reveal(target))
 
@@ -375,6 +380,9 @@ export const CodeEditor = {
     this.view.focus()
     this.selectionChanged()
     this.historyChanged()
+    // Problems that came before the file did.
+    this.jsonDiagnostics.delete(path)
+    this.applyDiagnostics(path)
   },
 
   activate(path) {
@@ -404,6 +412,8 @@ export const CodeEditor = {
     this.pending.delete(path)
     this.states.delete(path)
     this.modes.delete(path)
+    this.jsonDiagnostics.delete(path)
+    this.languageDiagnostics.delete(path)
     if (path === this.active) {
       this.active = null
       this.view.setState(EditorState.create())
@@ -458,7 +468,42 @@ export const CodeEditor = {
     const list = diagnostics
       .filter(d => offsets.has(d.from) && offsets.has(d.to))
       .map(d => ({from: offsets.get(d.from), to: offsets.get(d.to), severity: d.severity, message: d.message, source: "JSON"}))
-    this.updateState(path, setDiagnostics(state, list))
+    this.jsonDiagnostics.set(path, list)
+    this.applyDiagnostics(path)
+  },
+
+  // A file's problems found by extensions' language features (Bee.Diagnostics):
+  // line and character positions, as language servers count them.
+  setLanguageDiagnostics({path, diagnostics}) {
+    this.languageDiagnostics.set(path, diagnostics)
+    this.applyDiagnostics(path)
+  },
+
+  // Underlines a file's problems of both kinds, with their message on hover.
+  applyDiagnostics(path) {
+    const state = this.stateOf(path)
+    if (!state) return
+    const doc = state.doc
+    const offset = ({line, character}) => {
+      if (line >= doc.lines) return doc.length
+      const at = doc.line(line + 1)
+      return Math.min(at.from + character, at.to)
+    }
+    const language = (this.languageDiagnostics.get(path) || []).map(d => {
+      const from = offset(d.from)
+      let to = Math.max(from, offset(d.to))
+      // Nothing to underline: the word there, or the next character.
+      if (to === from) to = state.wordAt(from)?.to ?? Math.min(from + 1, doc.lineAt(from).to)
+      return {
+        from,
+        to: Math.max(to, from),
+        severity: d.severity,
+        message: d.message,
+        source: [d.source, d.code && `(${d.code})`].filter(Boolean).join(" ") || undefined,
+      }
+    })
+    const all = [...(this.jsonDiagnostics.get(path) || []), ...language].sort((a, b) => a.from - b.from)
+    this.updateState(path, setDiagnostics(state, all))
   },
 
   // Completion or hover from a JSON file's schemas (editor/json_assist.js):

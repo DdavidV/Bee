@@ -256,6 +256,8 @@
       socket={@socket}
       live={@live}
       root={@root}
+      output_channels={@output_channels}
+      output_channel={@output_channel}
     />
   </main>
 
@@ -267,7 +269,11 @@
       :if={(problems = problems(assigns)) != []}
       id="problems"
       class="flex items-center gap-1 cursor-pointer hover:underline"
-      title={Enum.map_join(problems, "\n", &"#{Path.basename(&1.path)}: #{&1.message}")}
+      title={
+        problems
+        |> Enum.take(25)
+        |> Enum.map_join("\n", &"#{Path.basename(&1.path)}: #{&1.message}")
+      }
       phx-click="open_problem"
       phx-value-path={hd(problems).path}
     >

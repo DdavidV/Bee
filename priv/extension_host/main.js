@@ -18,8 +18,10 @@
 const Module = require("node:module")
 const path = require("node:path")
 const {randomUUID} = require("node:crypto")
+const fs = require("node:fs")
 const {Documents} = require("./documents")
-const {Disposable, EventEmitter, Uri} = require("./types")
+const {Languages} = require("./languages")
+const {Disposable, EventEmitter, Uri, TabInputText} = require("./types")
 const {createApi, createContext, TextEditor} = require("./vscode")
 
 // ---- Transport
@@ -87,6 +89,11 @@ const host = {
   onConfiguration: new EventEmitter(),
   onActiveEditor: new EventEmitter(),
   onSelection: new EventEmitter(),
+  // Files of the workspace changing on disk: {path, kind} (for file watchers).
+  onFile: new EventEmitter(),
+  // Tabs opened, closed or changed: {opened, closed, changed}.
+  onTabs: new EventEmitter(),
+  watchers: 0,
 
   notify(method, params) {
     send({method, params})
@@ -128,6 +135,13 @@ const host = {
     return host.request("applyEdit", {path: document.fileName, edits}).then(Boolean)
   },
 
+  // A file system watcher came or went: Bee sends file changes while there are any.
+  watching(change) {
+    const before = host.watchers
+    host.watchers += change
+    if ((before === 0) !== (host.watchers === 0)) host.notify("watchFiles", {on: host.watchers > 0})
+  },
+
   // An API Bee doesn't have was used: told once per extension and name.
   unsupported(extension, name) {
     if (extension.unsupported.has(name)) return
@@ -155,6 +169,13 @@ const host = {
     }
   },
 }
+
+host.languages = new Languages(host)
+
+// The documents are the tabs (vscode.window.tabGroups).
+const tabOf = document => ({label: path.basename(document.fileName), input: new TabInputText(document.uri)})
+host.documents.onOpen.event(document => host.onTabs.fire({opened: [tabOf(document)], closed: [], changed: []}))
+host.documents.onClose.event(document => host.onTabs.fire({opened: [], closed: [tabOf(document)], changed: []}))
 
 // `require("vscode")`: the API of the extension the requiring file belongs to.
 const fallback = {name: "", id: "bee.unknown", dir: "", unsupported: new Set(), subscriptions: []}
@@ -283,6 +304,7 @@ const dispose = async extension => {
       log("error", `dispose failed: ${e && e.message}`, extension.name)
     }
   }
+  host.languages.forget(extension)
   // Commands it didn't put in its subscriptions.
   for (const [id, entry] of [...host.commands]) {
     if (entry.extension !== extension) continue
@@ -319,6 +341,17 @@ const notifications = {
   documentClosed: ({path: file}) => {
     if (host.activeEditor && host.activeEditor.document.fileName === file) setActiveEditor(undefined)
     host.documents.close(file)
+  },
+  // A file of the workspace changed on disk: created (just now), deleted or changed.
+  fileChanged: ({path: file}) => {
+    let kind = "changed"
+    try {
+      const stat = fs.statSync(file)
+      if (Date.now() - stat.birthtimeMs < 2000) kind = "created"
+    } catch (_e) {
+      kind = "deleted"
+    }
+    host.onFile.fire({path: file, kind})
   },
   activeEditor: ({editor, document}) => {
     if (document) host.documents.put(document)

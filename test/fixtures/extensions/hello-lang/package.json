@@ -1,0 +1,16 @@
+{
+  "name": "hello-lang",
+  "displayName": "Hello Language",
+  "description": "Bee's test language extension: language features for .hl files, registered with vscode.languages like a language client does.",
+  "version": "0.1.0",
+  "publisher": "bee-tests",
+  "engines": {"vscode": "^1.100.0"},
+  "main": "./extension.js",
+  "contributes": {
+    "languages": [{"id": "hellolang", "aliases": ["Hello Language"], "extensions": [".hl"]}],
+    "commands": [
+      {"command": "helloLang.fixAll", "title": "Fix All BADs", "category": "Hello Language"},
+      {"command": "helloLang.report", "title": "Report", "category": "Hello Language"}
+    ]
+  }
+}

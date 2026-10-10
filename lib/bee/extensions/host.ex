@@ -20,10 +20,16 @@ defmodule Bee.Extensions.Host do
     * the active editor and its selections – of the window that last ran a
       command or reported its editor (`active_editor/4`)
 
+    * files changing on disk – while an extension watches files
+      (`createFileSystemWatcher`), the workspace's `{:fs_changed, path}`
+
   and it carries out what they ask: messages, quick picks and input boxes
   in a window (answered with `{:bee_answer, ref, value}`, see `ask/5`),
   edits of open files, settings, context keys, status bar items, Bee's own
-  commands. Offsets are UTF-16 code units on Node's side, UTF-8 bytes on
+  commands. The diagnostics their language features find go to
+  `Bee.Diagnostics`, edits of several files (`workspace.applyEdit`) to the
+  open buffers and to disk. What they write to output channels, and what
+  they print, is the workspace's `Bee.Output`. Offsets are UTF-16 code units on Node's side, UTF-8 bytes on
   Bee's (`to_utf16/2`, `to_bytes/2`).
 
   The manager is told `{:extension_activated, name, root}`,
@@ -120,6 +126,39 @@ defmodule Bee.Extensions.Host do
     div(byte_size(:unicode.characters_to_binary(prefix, :utf8, {:utf16, :little})), 2)
   end
 
+  @doc """
+  A `%{"line" => l, "character" => c}` position (zero-based, UTF-16 units)
+  in `text` as a UTF-8 byte offset; past a line's end: its end.
+  """
+  def position_to_bytes(text, %{"line" => line, "character" => character})
+      when is_integer(line) and is_integer(character) do
+    {start, line_text} = line_at(text, max(line, 0), 0)
+    start + to_bytes(line_text, character)
+  end
+
+  # `{byte offset of its start, its text without the line break}`.
+  defp line_at(text, 0, start) do
+    line =
+      case :binary.match(text, "\n") do
+        {index, 1} -> binary_part(text, 0, index)
+        :nomatch -> text
+      end
+
+    {start, String.trim_trailing(line, "\r")}
+  end
+
+  defp line_at(text, n, start) do
+    case :binary.match(text, "\n") do
+      {index, 1} ->
+        rest = binary_part(text, index + 1, byte_size(text) - index - 1)
+        line_at(rest, n - 1, start + index + 1)
+
+      # Past the last line: its end.
+      :nomatch ->
+        {start + byte_size(text), ""}
+    end
+  end
+
   @doc "UTF-16 offset `offset` into `text` as a UTF-8 byte one."
   def to_bytes(text, offset) do
     utf16 = :unicode.characters_to_binary(text, :utf8, {:utf16, :little})
@@ -175,6 +214,8 @@ defmodule Bee.Extensions.Host do
           asks: %{},
           # What Node has of each open document (a hash of its text).
           documents: %{},
+          # Whether an extension watches files (we send their changes then).
+          watching?: false,
           log: :queue.new()
         }
 
@@ -226,6 +267,7 @@ defmodule Bee.Extensions.Host do
       {extension, extensions} ->
         Enum.each(extension.deferred, & &1.({:error, "the extension was deactivated"}))
         forget_commands(s.root, name)
+        Bee.Diagnostics.clear(s.root, name <> "/")
         {:noreply, request(%{s | extensions: extensions}, "deactivate", %{name: name}, :ignore)}
     end
   end
@@ -352,11 +394,20 @@ defmodule Bee.Extensions.Host do
       else: {:noreply, s}
   end
 
+  # A file changed on disk, for the extensions' file system watchers. Not
+  # what the workspace hides (build output…), which changes a lot.
+  def handle_info({:fs_changed, path}, %{watching?: true} = s) do
+    if inside?(path, s.root) and not excluded?(path, s.root),
+      do: {:noreply, notify(s, "fileChanged", %{path: path})},
+      else: {:noreply, s}
+  end
+
   def handle_info(_message, s), do: {:noreply, s}
 
   @impl true
   def terminate(_reason, s) do
     for {name, _} <- s.extensions, do: forget_commands(s.root, name)
+    Bee.Diagnostics.clear(s.root)
 
     if s.port do
       # Closing its stdin ends Node; one that hangs is killed.
@@ -419,6 +470,13 @@ defmodule Bee.Extensions.Host do
       {extension, extensions} ->
         Enum.each(extension.deferred, & &1.({:error, "#{name} failed to activate: #{message}"}))
         forget_commands(s.root, name)
+
+        Bee.Output.append_line(
+          s.root,
+          Bee.Output.host_channel(),
+          "#{name} failed to activate: #{message}"
+        )
+
         manager({:extension_failed, name, s.root, message})
         %{s | extensions: extensions}
     end
@@ -475,6 +533,13 @@ defmodule Bee.Extensions.Host do
   defp answered({:execute, id, window}, %{"error" => error}, s) do
     message = "#{command_label(id)}: #{error_message(error)}"
     Logger.warning("Bee: extension command #{message}")
+
+    Bee.Output.append_line(
+      s.root,
+      Bee.Output.host_channel(),
+      "command #{id} failed: #{error["stack"] || error_message(error)}"
+    )
+
     Bee.API.show_message(context(s, window), :error, message)
     s
   end
@@ -561,6 +626,32 @@ defmodule Bee.Extensions.Host do
     Bee.API.open_file(context(s), path, opts)
     reply(s, id, nil)
   end
+
+  # Edits of several files (a rename, a quick fix), and files to create,
+  # delete or rename: all of them, or `false`.
+  defp handle_request("applyWorkspaceEdit", params, id, s) do
+    files = List.wrap(params["files"])
+    operations = List.wrap(params["operations"])
+
+    with :ok <- Enum.reduce_while(operations, :ok, &continue(file_operation(&1), &2)),
+         {:ok, s} <-
+           Enum.reduce_while(files, {:ok, s}, fn file, {:ok, s} ->
+             case edit_file(s, file) do
+               {:ok, s} -> {:cont, {:ok, s}}
+               error -> {:halt, error}
+             end
+           end) do
+      reply(s, id, true)
+    else
+      _ -> reply(s, id, false)
+    end
+  end
+
+  defp handle_request("findFiles", _params, id, s),
+    do: reply(s, id, Bee.Workspace.files(s.root))
+
+  defp handle_request("getLanguages", _params, id, s),
+    do: reply(s, id, Enum.map(Bee.Languages.all(), & &1.id))
 
   defp handle_request("getCommands", _params, id, s),
     do: reply(s, id, Enum.map(Bee.Commands.Registry.commands(), & &1.id))
@@ -653,6 +744,26 @@ defmodule Bee.Extensions.Host do
     s
   end
 
+  # A diagnostic collection's diagnostics of a file (none: cleared).
+  defp handle_notification("diagnostics", %{"owner" => owner, "path" => path} = params, s) do
+    Bee.Diagnostics.put(s.root, owner, path, List.wrap(params["diagnostics"]))
+    s
+  end
+
+  # An extension watches files, or none does any more.
+  defp handle_notification("watchFiles", %{"on" => on?}, s) do
+    cond do
+      on? and not s.watching? -> Bee.Workspace.subscribe()
+      not on? and s.watching? -> Phoenix.PubSub.unsubscribe(Bee.PubSub, "fs")
+      true -> :ok
+    end
+
+    %{s | watching?: on? == true}
+  end
+
+  # Which language features extensions provide: used from L2 on.
+  defp handle_notification("providers", _params, s), do: s
+
   defp handle_notification("setStatus", %{"text" => text}, s) do
     Bee.API.set_status(context(s), text)
     s
@@ -666,8 +777,27 @@ defmodule Bee.Extensions.Host do
     s
   end
 
+  # An output channel of an extension's (window.createOutputChannel).
+  defp handle_notification("output", %{"channel" => channel, "text" => text}, s)
+       when is_binary(channel) and is_binary(text) do
+    Bee.Output.append(s.root, channel, text)
+    s
+  end
+
+  defp handle_notification("outputClear", %{"channel" => channel}, s) when is_binary(channel) do
+    Bee.Output.clear(s.root, channel)
+    s
+  end
+
+  # channel.show(): the panel's Output section, on that channel.
+  defp handle_notification("outputShow", %{"channel" => channel}, s) when is_binary(channel) do
+    to_window(s, {:show_output, channel})
+    s
+  end
+
   defp handle_notification("log", %{"text" => text} = params, s) do
     line = if params["extension"], do: "#{params["extension"]}: #{text}", else: text
+    Bee.Output.append_line(s.root, Bee.Output.host_channel(), line)
 
     case params["level"] do
       "error" -> Logger.warning("Bee extension: #{line}")
@@ -768,6 +898,78 @@ defmodule Bee.Extensions.Host do
   end
 
   defp inside?(path, dir), do: String.starts_with?(path, dir <> "/")
+
+  defp excluded?(path, root) do
+    relative = Path.relative_to(path, root)
+
+    Enum.any?(Bee.Settings.excluded_globs(root), &Bee.Workspace.Glob.match?(&1, relative)) or
+      Enum.any?(Path.split(relative), &(&1 in ~w(.git _build deps node_modules .elixir_ls)))
+  end
+
+  ## Workspace edits
+
+  defp continue(:ok, _acc), do: {:cont, :ok}
+  defp continue(error, _acc), do: {:halt, error}
+
+  # The edits of one file ([{from, to, text}], positions): in its open
+  # buffer (every editor showing it gets them, undoable), or on disk.
+  defp edit_file(s, %{"path" => path, "edits" => edits}) do
+    with text when is_binary(text) <- Bee.API.text(path) || "",
+         edits =
+           for(
+             %{"from" => from, "to" => to, "text" => insert} <- edits,
+             do: {position_to_bytes(text, from), position_to_bytes(text, to), insert}
+           ) do
+      case Bee.API.edit(path, edits) do
+        :ok ->
+          {:ok, sync_document(s, path, Bee.API.text(path))}
+
+        {:error, :not_open} ->
+          with {:ok, changed} <- Buffer.apply_edits(text, edits),
+               :ok <- File.mkdir_p(Path.dirname(path)),
+               :ok <- File.write(path, changed),
+               do: {:ok, s}
+
+        error ->
+          error
+      end
+    end
+  end
+
+  defp edit_file(_s, _file), do: {:error, :invalid}
+
+  defp file_operation(%{"kind" => "create", "path" => path} = op) do
+    cond do
+      not File.exists?(path) or op["overwrite"] ->
+        with :ok <- File.mkdir_p(Path.dirname(path)), do: File.write(path, "")
+
+      op["ignoreIfExists"] ->
+        :ok
+
+      true ->
+        {:error, :eexist}
+    end
+  end
+
+  defp file_operation(%{"kind" => "delete", "path" => path} = op) do
+    cond do
+      not File.exists?(path) -> if(op["ignoreIfNotExists"], do: :ok, else: {:error, :enoent})
+      File.dir?(path) and op["recursive"] -> with({:ok, _} <- File.rm_rf(path), do: :ok)
+      File.dir?(path) -> File.rmdir(path)
+      true -> File.rm(path)
+    end
+  end
+
+  defp file_operation(%{"kind" => "rename", "path" => path, "newPath" => new} = op)
+       when is_binary(new) do
+    cond do
+      File.exists?(new) and op["ignoreIfExists"] -> :ok
+      File.exists?(new) and not op["overwrite"] -> {:error, :eexist}
+      true -> with(:ok <- File.mkdir_p(Path.dirname(new)), do: File.rename(path, new))
+    end
+  end
+
+  defp file_operation(_other), do: {:error, :invalid}
 
   ## The port
 

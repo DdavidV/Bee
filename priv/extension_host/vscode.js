@@ -4,7 +4,9 @@
 //
 // Implemented: commands, messages / quick picks / input boxes, the active
 // editor and open documents (read, edit), configuration, status bar items,
-// output channels, setContext, the extension context with its state.
+// output channels, setContext, the extension context with its state, and
+// `languages` (languages.js): providers, diagnostics, and what a language
+// client needs of the workspace (file watchers, workspace edits).
 // Anything else exists as a stand-in that does nothing: the extension keeps
 // running, and Bee lists what it used on the plugin's details page.
 "use strict"
@@ -15,7 +17,10 @@ const types = require("./types")
 const {TextDocument} = require("./documents")
 const {Disposable, EventEmitter, Position, Range, Selection, Uri} = types
 
-const VERSION = "1.95.0"
+const convert = require("./convert")
+const glob = require("./glob")
+
+const VERSION = "1.105.0"
 
 // A stand-in for API Bee doesn't have: callable, constructible, with any
 // member; using it is reported once per name.
@@ -249,6 +254,40 @@ const createApi = (host, ext) => {
     onDidChangeActiveTextEditor: host.onActiveEditor.event,
     onDidChangeTextEditorSelection: host.onSelection.event,
     onDidChangeVisibleTextEditors: new EventEmitter().event,
+    // The open files as one group of tabs (language clients look through
+    // them for the documents to ask diagnostics for).
+    tabGroups: {
+      get all() {
+        const group = {isActive: true, viewColumn: types.ViewColumn.One, tabs: []}
+        const active = host.activeEditor && host.activeEditor.document
+        group.tabs = host.documents.all().map(document => ({
+          label: path.basename(document.fileName),
+          input: new types.TabInputText(document.uri),
+          isActive: document === active,
+          isDirty: document.isDirty,
+          isPinned: false,
+          isPreview: false,
+          group,
+        }))
+        group.activeTab = group.tabs.find(tab => tab.isActive)
+        return [group]
+      },
+      get activeTabGroup() {
+        return this.all[0]
+      },
+      onDidChangeTabs: host.onTabs.event,
+      onDidChangeTabGroups: new EventEmitter().event,
+      close: async () => false,
+    },
+    terminals: [],
+    onDidOpenTerminal: new EventEmitter().event,
+    onDidCloseTerminal: new EventEmitter().event,
+    onDidChangeActiveTerminal: new EventEmitter().event,
+    onDidChangeTextEditorVisibleRanges: new EventEmitter().event,
+    onDidChangeTextEditorOptions: new EventEmitter().event,
+    onDidChangeActiveColorTheme: new EventEmitter().event,
+    activeColorTheme: {kind: types.ColorThemeKind.Dark},
+    activeTerminal: undefined,
     onDidChangeWindowState: new EventEmitter().event,
     state: {focused: true, active: true},
     showInformationMessage: showMessage("info"),
@@ -330,32 +369,37 @@ const createApi = (host, ext) => {
         },
       })
     },
-    createOutputChannel: name => {
-      const line = text => host.notify("log", {extension: ext.name, level: "info", text: `[${name}] ${text}`})
-      let pending = ""
-      const channel = {
-        name,
-        append(text) {
-          pending += text
-          const lines = pending.split("\n")
-          pending = lines.pop()
-          lines.forEach(line)
-        },
-        appendLine(text) {
-          channel.append(text + "\n")
-        },
+    // Text for the user to read, in the panel's Output section. With
+    // {log: true} (or a language id as the second argument: ignored) a
+    // LogOutputChannel: lines with their time and level.
+    createOutputChannel: (name, options) => {
+      const channel = String(name)
+      const write = text => host.notify("output", {extension: ext.name, channel, text: String(text)})
+      const output = {
+        name: channel,
+        append: write,
+        appendLine: text => write(String(text) + "\n"),
         replace(text) {
-          channel.append(text)
+          host.notify("outputClear", {channel})
+          write(text)
         },
-        clear() {},
-        show() {},
+        clear: () => host.notify("outputClear", {channel}),
+        show: () => host.notify("outputShow", {channel}),
         hide() {},
         dispose() {},
       }
-      for (const level of ["trace", "debug", "info", "warn", "error"]) channel[level] = (...args) => channel.appendLine(args.join(" "))
-      channel.logLevel = types.LogLevel.Info
-      channel.onDidChangeLogLevel = new EventEmitter().event
-      return channel
+      if (options && typeof options === "object" && options.log) {
+        const line = level => (...args) => {
+          const text = args.map(arg => (typeof arg === "string" ? arg : arg instanceof Error ? arg.stack || arg.message : JSON.stringify(arg))).join(" ")
+          output.appendLine(`${new Date().toISOString().replace("T", " ").replace("Z", "")} [${level}] ${text}`)
+        }
+        Object.assign(output, {
+          trace: line("trace"), debug: line("debug"), info: line("info"), warn: line("warning"), error: line("error"),
+          logLevel: types.LogLevel.Info,
+          onDidChangeLogLevel: new EventEmitter().event,
+        })
+      }
+      return output
     },
     withProgress: (_options, task) =>
       Promise.resolve(task({report() {}}, new types.CancellationTokenSource().token)),
@@ -390,6 +434,54 @@ const createApi = (host, ext) => {
     onDidSaveTextDocument: host.documents.onSave.event,
     onDidChangeWorkspaceFolders: new EventEmitter().event,
     onDidGrantWorkspaceTrust: new EventEmitter().event,
+    onWillSaveTextDocument: new EventEmitter().event,
+    onDidCreateFiles: new EventEmitter().event,
+    onDidRenameFiles: new EventEmitter().event,
+    onDidDeleteFiles: new EventEmitter().event,
+    onWillCreateFiles: new EventEmitter().event,
+    onWillRenameFiles: new EventEmitter().event,
+    onWillDeleteFiles: new EventEmitter().event,
+    notebookDocuments: [],
+    onDidOpenNotebookDocument: new EventEmitter().event,
+    onDidCloseNotebookDocument: new EventEmitter().event,
+    onDidChangeNotebookDocument: new EventEmitter().event,
+    onDidSaveNotebookDocument: new EventEmitter().event,
+    // Edits of several files at once (a rename, a quick fix): true once
+    // Bee applied them all.
+    applyEdit: async edit => Boolean(await host.request("applyWorkspaceEdit", convert.workspaceEdit(edit))),
+    // Files of the workspace changing on disk, as Bee's own watcher sees them.
+    createFileSystemWatcher: (pattern, ignoreCreate = false, ignoreChange = false, ignoreDelete = false) => {
+      const created = new EventEmitter()
+      const changed = new EventEmitter()
+      const deleted = new EventEmitter()
+      const subscription = host.onFile.event(({path: file, kind}) => {
+        if (!glob.matches(pattern, file, host.root)) return
+        const emitter = kind === "created" ? !ignoreCreate && created : kind === "deleted" ? !ignoreDelete && deleted : !ignoreChange && changed
+        if (emitter) emitter.fire(Uri.file(file))
+      })
+      host.watching(+1)
+      return {
+        ignoreCreateEvents: ignoreCreate,
+        ignoreChangeEvents: ignoreChange,
+        ignoreDeleteEvents: ignoreDelete,
+        onDidCreate: created.event,
+        onDidChange: changed.event,
+        onDidDelete: deleted.event,
+        dispose() {
+          subscription.dispose()
+          host.watching(-1)
+        },
+      }
+    },
+    findFiles: async (include, exclude, maxResults) => {
+      const files = await host.request("findFiles", {})
+      const found = files
+        .map(relative => path.join(host.root, relative))
+        .filter(file => glob.matches(include, file, host.root) && !(exclude && glob.matches(exclude, file, host.root)))
+      return (maxResults ? found.slice(0, maxResults) : found).map(file => Uri.file(file))
+    },
+    registerTextDocumentContentProvider: () => new Disposable(() => {}),
+    registerFileSystemProvider: () => new Disposable(() => {}),
     // An open document, or the file as it is on disk.
     openTextDocument: async target => {
       const file = typeof target === "string" ? target : target.fsPath
@@ -446,6 +538,7 @@ const createApi = (host, ext) => {
     window: withStubs(host, ext, "window", window),
     workspace: withStubs(host, ext, "workspace", workspace),
     env: withStubs(host, ext, "env", env),
+    languages: withStubs(host, ext, "languages", host.languages.api(ext)),
     extensions: withStubs(host, ext, "extensions", extensions),
   }
   // The rest of VS Code's API by name, as stand-ins: a bundled extension
@@ -455,37 +548,22 @@ const createApi = (host, ext) => {
   return withStubs(host, ext, "", api)
 }
 
-// Namespaces, classes and enums of the vscode module Bee doesn't implement.
+// Namespaces, classes and enums of the vscode module Bee doesn't implement
+// (the language types are real: types.js).
 const UNSUPPORTED = `
-  languages debug tasks scm tests notebooks authentication comments l10n chat lm
-  TreeItem TreeItemCollapsibleState TreeItemCheckboxState TreeDataProvider
-  CompletionItem CompletionItemKind CompletionItemTag CompletionList CompletionTriggerKind
-  Hover Location LocationLink Diagnostic DiagnosticRelatedInformation DiagnosticTag
-  CodeAction CodeActionKind CodeActionTriggerKind CodeLens DocumentLink DocumentHighlight
-  DocumentHighlightKind DocumentSymbol SymbolInformation SymbolKind SymbolTag
-  SignatureHelp SignatureInformation ParameterInformation SignatureHelpTriggerKind
-  SnippetString TextEdit WorkspaceEdit SnippetTextEdit FoldingRange FoldingRangeKind SelectionRange
-  CallHierarchyItem CallHierarchyIncomingCall CallHierarchyOutgoingCall TypeHierarchyItem
-  SemanticTokens SemanticTokensBuilder SemanticTokensLegend SemanticTokensEdit SemanticTokensEdits
-  InlayHint InlayHintKind InlayHintLabelPart InlineCompletionItem InlineCompletionList
-  InlineCompletionTriggerKind InlineValueText InlineValueVariableLookup InlineValueEvaluatableExpression
-  Color ColorInformation ColorPresentation EvaluatableExpression LinkedEditingRanges
-  DocumentDropEdit DocumentPasteEdit DataTransfer DataTransferItem
+  debug tasks scm tests notebooks authentication comments l10n chat lm
+  TreeItem TreeDataProvider DataTransfer DataTransferItem DocumentDropEdit DocumentPasteEdit
   DebugAdapterExecutable DebugAdapterServer DebugAdapterNamedPipeServer DebugAdapterInlineImplementation
-  DebugConfigurationProviderTriggerKind Breakpoint SourceBreakpoint FunctionBreakpoint DebugConsoleMode
-  Task TaskGroup TaskScope TaskRevealKind TaskPanelKind ShellExecution ProcessExecution CustomExecution
-  ShellQuoting TerminalLink TerminalProfile TerminalLocation TerminalExitReason
-  FileSystemError FileChangeType FilePermission RelativePattern QuickPickItemKind QuickInputButtons
-  TextEditorCursorStyle TextEditorLineNumbersStyle TextEditorSelectionChangeKind
-  TextDocumentChangeReason TextDocumentSaveReason DecorationRangeBehavior OverviewRulerLane
-  FileDecoration TabInputText TabInputTextDiff TabInputCustom TabInputWebview TabInputNotebook
-  NotebookCellKind NotebookCellData NotebookData NotebookRange NotebookCellOutput NotebookCellOutputItem
-  NotebookCellStatusBarItem NotebookEditorRevealType TestRunProfileKind TestMessage TestTag TestRunRequest
-  CommentMode CommentThreadCollapsibleState CommentThreadState SourceControlInputBoxValidationType
-  LanguageStatusSeverity InputBoxValidationSeverity EnvironmentVariableMutatorType
+  Breakpoint SourceBreakpoint FunctionBreakpoint
+  Task TaskGroup ShellExecution ProcessExecution CustomExecution
+  TerminalLink TerminalProfile TerminalExitReason
+  FilePermission QuickInputButtons FileDecoration
+  NotebookCellData NotebookData NotebookRange NotebookCellOutput NotebookCellOutputItem
+  NotebookCellStatusBarItem NotebookEditorRevealType TestMessage TestTag TestRunRequest
+  CommentThreadState SourceControlInputBoxValidationType EnvironmentVariableMutatorType
   LanguageModelChatMessage LanguageModelChatMessageRole LanguageModelError TelemetryTrustedValue
   ChatResultFeedbackKind ChatRequestTurn ChatResponseTurn McpStdioServerDefinition McpHttpServerDefinition
-  PortAutoForwardAction ExtensionRuntime StandardTokenType SyntaxTokenType CancellationError
+  PortAutoForwardAction ExtensionRuntime
 `.split(/\s+/).filter(Boolean)
 
 // "$(sync~spin) Syncing" → "Syncing": Bee's status bar shows the text.

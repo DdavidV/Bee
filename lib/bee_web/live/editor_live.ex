@@ -49,6 +49,8 @@ defmodule BeeWeb.EditorLive do
       Plugins.subscribe()
       Bee.API.subscribe_window(root)
       Bee.UI.subscribe(root)
+      Bee.Diagnostics.subscribe(root)
+      Bee.Output.subscribe(root)
     end
 
     {:ok,
@@ -69,6 +71,8 @@ defmodule BeeWeb.EditorLive do
      |> load_plugins()
      |> assign(grammars: Languages.grammars())
      |> assign(diagnostics: %{}, json_jobs: %{})
+     |> assign(language_problems: language_problems(root), language_problems_timer: nil)
+     |> load_output_channels()
      |> allow_upload(:vsix,
        accept: :any,
        max_entries: 1,
@@ -483,6 +487,14 @@ defmodule BeeWeb.EditorLive do
     {:noreply, socket}
   end
 
+  ## Output (Bee.Output): the panel's Output section shows one channel.
+
+  # Its text element is there (the Output hook): the channel's text so far.
+  def handle_event("output_ready", _params, socket), do: {:noreply, push_output(socket)}
+
+  def handle_event("output_channel", %{"channel" => channel}, socket),
+    do: {:noreply, socket |> assign(output_channel: channel) |> push_output()}
+
   ## Terminal
 
   def handle_event("activate_terminal", %{"id" => id}, socket),
@@ -614,6 +626,51 @@ defmodule BeeWeb.EditorLive do
   end
 
   def handle_info(:plugins_changed, socket), do: {:noreply, load_plugins(socket)}
+
+  # Extensions' language features found (or cleared) problems in a file:
+  # its editor underlines them; the count follows a moment later (they
+  # come in bursts, a file at a time).
+  def handle_info({:diagnostics_changed, path}, socket) do
+    socket =
+      if Workbench.open?(workbench(socket), path),
+        do: push_language_diagnostics(socket, path),
+        else: socket
+
+    timer =
+      socket.assigns.language_problems_timer ||
+        Process.send_after(self(), :language_problems, 150)
+
+    {:noreply, assign(socket, language_problems_timer: timer)}
+  end
+
+  # Extensions wrote to an output channel (Bee.Output): the shown one's
+  # text goes to its element as it comes.
+  def handle_info({:output, :appended, channel, text}, socket) do
+    if channel == socket.assigns.output_channel and socket.assigns.panel_open,
+      do: {:noreply, push_event(socket, "output:append", %{channel: channel, text: text})},
+      else: {:noreply, socket}
+  end
+
+  def handle_info({:output, :cleared, channel}, socket) do
+    if channel == socket.assigns.output_channel,
+      do: {:noreply, push_output(socket)},
+      else: {:noreply, socket}
+  end
+
+  def handle_info({:output, :channels}, socket) do
+    before = socket.assigns.output_channel
+    socket = load_output_channels(socket)
+    # The first channel there is, is shown.
+    {:noreply, if(before == nil, do: push_output(socket), else: socket)}
+  end
+
+  def handle_info(:language_problems, socket) do
+    {:noreply,
+     assign(socket,
+       language_problems: language_problems(socket.assigns.root),
+       language_problems_timer: nil
+     )}
+  end
 
   def handle_info({:json_diagnostics, path, size, diagnostics}, socket) do
     {next, jobs} = Map.pop(socket.assigns.json_jobs, path)
@@ -908,6 +965,13 @@ defmodule BeeWeb.EditorLive do
     end
   end
 
+  defp run_effect(:clear_output, socket) do
+    if channel = socket.assigns.output_channel,
+      do: Bee.Output.clear(socket.assigns.root, channel)
+
+    socket
+  end
+
   defp run_effect({:clear_console, id}, socket) do
     Terminal.input(id, <<12>>)
     socket
@@ -1128,6 +1192,7 @@ defmodule BeeWeb.EditorLive do
         Map.merge(%{path: path, text: buffer.text, lang: lang}, highlight(lang))
       )
       |> validate_json(path, buffer.text)
+      |> push_language_diagnostics(path)
     else
       {:error, reason} ->
         message = "Cannot open #{display_path(socket.assigns.root, path)}: #{inspect(reason)}"
@@ -1298,6 +1363,15 @@ defmodule BeeWeb.EditorLive do
   # Answered in another window.
   defp plugin_request(%{assigns: %{palette: %{reply: {_pid, ref}}}} = socket, {:ask_done, ref}),
     do: change(socket, &Workbench.close_palette/1)
+
+  # An extension shows one of its output channels (channel.show()).
+  defp plugin_request(socket, {:show_output, channel}) do
+    socket
+    |> assign(output_channel: channel)
+    |> load_output_channels()
+    |> change(&Workbench.show_panel(&1, "output"))
+    |> push_output()
+  end
 
   defp plugin_request(socket, {:open_live_editor, spec}),
     do: change(socket, &Workbench.open_live_editor(&1, spec))
@@ -2024,7 +2098,48 @@ defmodule BeeWeb.EditorLive do
   defp problems(assigns),
     do:
       assigns.settings_errors ++
-        assigns.keybinding_errors ++ assigns.plugin_errors ++ diagnostic_problems(assigns)
+        assigns.keybinding_errors ++
+        assigns.plugin_errors ++ diagnostic_problems(assigns) ++ assigns.language_problems
+
+  # The errors and warnings extensions' language features found in the
+  # workspace's files (Bee.Diagnostics), errors first: `[%{path, message}]`.
+  defp language_problems(root) do
+    for(
+      {path, diagnostics} <- Bee.Diagnostics.all(root),
+      %{severity: severity} = d when severity in [:error, :warning] <- diagnostics,
+      do: {severity, path, d}
+    )
+    |> Enum.sort_by(fn {severity, path, d} -> {severity != :error, path, d.from.line} end)
+    |> Enum.map(fn {_severity, path, d} ->
+      %{path: path, message: "line #{d.from.line + 1}: #{first_line(d.message)}"}
+    end)
+  end
+
+  defp first_line(message), do: message |> String.split("\n", parts: 2) |> hd()
+
+  # The channels there are; the one shown stays, else the first is.
+  defp load_output_channels(socket) do
+    channels = Bee.Output.channels(socket.assigns.root)
+    shown = socket.assigns[:output_channel]
+    shown = if shown in channels, do: shown, else: List.first(channels)
+    assign(socket, output_channels: channels, output_channel: shown)
+  end
+
+  # The shown channel's whole text, for the Output hook.
+  defp push_output(socket) do
+    channel = socket.assigns.output_channel
+    text = if channel, do: Bee.Output.get(socket.assigns.root, channel), else: ""
+    push_event(socket, "output:set", %{channel: channel, text: text})
+  end
+
+  # What the editor underlines in `path`.
+  defp push_language_diagnostics(socket, path) do
+    diagnostics =
+      for d <- Bee.Diagnostics.for_file(socket.assigns.root, path),
+          do: Map.take(d, [:from, :to, :severity, :message, :source, :code])
+
+    push_event(socket, "cm:language_diagnostics", %{path: path, diagnostics: diagnostics})
+  end
 
   defp diagnostic_problems(assigns) do
     for {path, diagnostics} <- Enum.sort(assigns[:diagnostics] || %{}),

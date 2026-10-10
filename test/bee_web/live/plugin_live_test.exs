@@ -62,8 +62,8 @@ defmodule BeeWeb.PluginLiveTest do
     # Not loaded yet: its code starts with the plugin.
     assert :error = Plugins.live_module(plugin, "TodosLive.ListLive")
 
-    :ok = Plugins.activate("todos-live", Bee.Workspace.root())
     {:ok, _} = Bee.Workspace.open(Bee.Workspace.root())
+    :ok = Plugins.activate("todos-live", Bee.Workspace.root())
     eventually(fn -> Plugins.get("todos-live", Bee.Workspace.root()).status == :active end)
 
     assert {:ok, TodosLive.ListLive} = Plugins.live_module(plugin, "TodosLive.ListLive")

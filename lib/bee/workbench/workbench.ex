@@ -13,6 +13,7 @@ defmodule Bee.Workbench do
     * `:new_terminal` – start a `Bee.Terminal`, then `terminal_started/3`
     * `:start_console` – start the window's `Bee.Console`, then `console_started/2`
     * `{:stop_terminal, id}` – stop it (`{:forget_terminal, id}` when it already exited)
+    * `:clear_output` – empty the Output section's channel (`Bee.Output`)
     * `:panel_hidden` – the panel's xterm views (terminals, console) were unmounted
     * `{:panel_shown, id}` – panel section `id` is shown (a plugin's starts)
     * `{:exec_client, command}` – run a client-side command in the browser

@@ -81,14 +81,7 @@
       "items": {"type": "string"},
       "uniqueItems": true,
       "default": [],
-      "description": "Names of installed VS Code extensions whose code isn't run: their themes, grammars, settings… stay, their commands don't work."
-    },
-    "extensions.enabledCode": {
-      "type": "array",
-      "items": {"type": "string"},
-      "uniqueItems": true,
-      "default": [],
-      "description": "Names of installed VS Code extensions whose code runs although it is language tooling (a language server, debugger, linter or formatter client), which Bee has no API for and doesn't run otherwise."
+      "description": "Names of installed VS Code extensions whose code isn't run: their themes, grammars, settings… stay; their commands and language features don't work."
     },
     "plugins.workspace.enabled": {
       "type": "boolean",

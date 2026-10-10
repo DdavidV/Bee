@@ -44,6 +44,8 @@ defmodule BeeWeb.Workbench.Panel do
   attr :socket, :any, required: true, doc: "the window's socket, for plugins' LiveViews"
   attr :live, :map, required: true, doc: "plugins' LiveViews (BeeWeb.EditorLive.load_live/1)"
   attr :root, :string, required: true
+  attr :output_channels, :list, default: [], doc: "Bee.Output's channels"
+  attr :output_channel, :string, default: nil, doc: "the one shown"
 
   def panel(assigns) do
     assigns =
@@ -128,6 +130,8 @@ defmodule BeeWeb.Workbench.Panel do
             socket={@socket}
             live={@live}
             root={@root}
+            output_channels={@output_channels}
+            output_channel={@output_channel}
             terminals={@terminals}
             active_term={@active_term}
             console={@console}
@@ -219,6 +223,46 @@ defmodule BeeWeb.Workbench.Panel do
         class={@term_inset}
       >
       </div>
+    </div>
+    """
+  end
+
+  # What extensions write for the user (Bee.Output): one channel at a time,
+  # picked on the left. Its text is the Output hook's: sent whole when the
+  # channel is shown, then as it comes.
+  defp view_body(%{view: %{id: "workbench.panel.output"}} = assigns) do
+    ~H"""
+    <div id="output" class="flex-1 min-w-0 flex flex-col text-xs">
+      <form
+        id="output-channels"
+        phx-change="output_channel"
+        class="shrink-0 flex items-center gap-2 px-3 py-1 border-b border-panel-border"
+      >
+        <select
+          name="channel"
+          id="output-channel"
+          aria-label="Output channel"
+          class="select select-xs w-64 max-w-full"
+          disabled={@output_channels == []}
+        >
+          <option :if={@output_channels == []} value="">No output yet</option>
+          <option
+            :for={channel <- @output_channels}
+            value={channel}
+            selected={channel == @output_channel}
+          >
+            {channel}
+          </option>
+        </select>
+      </form>
+      <pre
+        id="output-text"
+        phx-hook="Output"
+        phx-update="ignore"
+        data-channel={@output_channel}
+        tabindex="0"
+        class="flex-1 min-h-0 overflow-auto px-3 py-1 font-mono leading-snug whitespace-pre-wrap break-words select-text"
+      ></pre>
     </div>
     """
   end

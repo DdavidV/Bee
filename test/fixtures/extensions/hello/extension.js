@@ -62,12 +62,24 @@ function activate(context) {
     }),
     vscode.commands.registerCommand("hello.bee", () => vscode.commands.executeCommand("workbench.action.togglePanel")),
     vscode.commands.registerCommand("hello.unsupported", () => {
-      const provider = vscode.languages.registerHoverProvider("plaintext", {provideHover: () => null})
-      context.subscriptions.push(provider)
+      const factory = vscode.debug.registerDebugAdapterDescriptorFactory("hello", {createDebugAdapterDescriptor: () => null})
+      context.subscriptions.push(factory)
       // As a bundled extension sees the module: a copy of its own properties.
       const bundled = Object.assign({}, vscode)
       new bundled.TreeItem("x", bundled.TreeItemCollapsibleState.None)
       return vscode.window.showInformationMessage("still running")
+    }),
+    // Output channels: plain text, and a log with times and levels.
+    vscode.commands.registerCommand("hello.output", (text = "first line", show = true) => {
+      context.output ??= vscode.window.createOutputChannel("Hello")
+      context.output.appendLine(text)
+      if (show) context.output.show()
+    }),
+    vscode.commands.registerCommand("hello.log", () => {
+      const log = vscode.window.createOutputChannel("Hello Log", {log: true})
+      log.info("started", {port: 1})
+      log.error(new Error("boom"))
+      console.log("printed by hello")
     }),
     vscode.commands.registerCommand("hello.crash", () => process.exit(3)),
     vscode.workspace.onDidChangeConfiguration(event => {

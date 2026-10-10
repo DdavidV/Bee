@@ -16,6 +16,7 @@ defmodule BeeWeb.ExtensionsTest do
     File.write!(Path.join(root, "mix.exs"), "defmodule M do\nend\n")
 
     File.rm_rf!(Bee.Plugins.user_dir())
+    Bee.Output.forget_workspace(root)
     Bee.Test.Extensions.install("hello")
 
     on_exit(fn ->
@@ -306,6 +307,115 @@ defmodule BeeWeb.ExtensionsTest do
     Bee.Settings.reload()
     assert Bee.Settings.get("editor.tabSize") == 2
     assert Bee.Settings.get("hello.greeting") == nil
+  end
+
+  @tag :node
+  test "a language extension's diagnostics: underlined in the editor, counted", %{conn: conn} do
+    root = Bee.Workspace.root()
+    path = Path.join(root, "a.hl")
+    File.write!(path, "ok\nthis is BAD\n# TODO later\n")
+    Bee.Test.Extensions.install("hello-lang")
+
+    {:ok, view, _html} = live(conn, ~p"/")
+    refute has_element?(view, "#problems")
+    open_file(view, "a.hl")
+
+    # Found by the extension once the file is open: sent to its editor.
+    assert_push_event(
+      view,
+      "cm:language_diagnostics",
+      %{path: ^path, diagnostics: [_ | _] = diagnostics},
+      5_000
+    )
+
+    assert [
+             %{
+               from: %{line: 1, character: 8},
+               to: %{line: 1, character: 11},
+               severity: :error,
+               message: "BAD is bad" <> _,
+               source: "hello",
+               code: "H001"
+             },
+             %{from: %{line: 2, character: 2}, severity: :warning, message: "something to do"}
+           ] = diagnostics
+
+    # The status bar counts them (errors first), a moment later.
+    eventually(fn -> has_element?(view, "#problems", "2 problems") end)
+    title = view |> element("#problems") |> render()
+    assert title =~ "a.hl: line 2: BAD is bad"
+    assert title =~ "a.hl: line 3: something to do"
+
+    # Fixed in the editor: gone.
+    render_hook(view, "doc_changed", %{"path" => path, "text" => "all GOOD\n"})
+    assert_push_event(view, "cm:language_diagnostics", %{path: ^path, diagnostics: []}, 5_000)
+    eventually(fn -> not has_element?(view, "#problems") end)
+
+    # A file opened later gets what is known of it at once.
+    render_hook(view, "doc_changed", %{"path" => path, "text" => "BAD\n"})
+    eventually(fn -> has_element?(view, "#problems", "1 problem") end)
+    {:ok, other, _html} = live(conn, ~p"/")
+    open_file(other, "a.hl")
+
+    assert_push_event(
+      other,
+      "cm:language_diagnostics",
+      %{diagnostics: [%{severity: :error}]},
+      5_000
+    )
+  end
+
+  @tag :node
+  test "the panel's Output section shows what extensions write, a channel at a time", %{
+    conn: conn
+  } do
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    # Nothing yet.
+    run(view, "workbench.action.output.toggleOutput")
+    assert has_element?(view, "#panel-body-output #output-channel[disabled]", "No output yet")
+    render_hook(view, "output_ready", %{})
+    assert_push_event(view, "output:set", %{channel: nil, text: ""})
+    run(view, "workbench.action.closePanel")
+
+    # (hello.output isn't in its package.json: registered once its code runs.)
+    run(view, "hello.sayHello")
+    eventually(fn -> render(view) =~ "from the hello extension" end)
+
+    # channel.show() of an extension opens the section on its channel.
+    run(view, "hello.output")
+    assert_push_event(view, "output:set", %{channel: "Hello", text: "first line\n"}, 5_000)
+
+    assert has_element?(
+             view,
+             "#panel-body-output:not(.invisible) #output-text[data-channel='Hello']"
+           )
+
+    assert has_element?(view, "#output-channel option[selected]", "Hello")
+
+    # What comes then is added to it.
+    run(view, "hello.output", ["second", false])
+    assert_push_event(view, "output:append", %{channel: "Hello", text: "second\n"}, 5_000)
+
+    # Another channel: picked, its text so far is sent; the other's isn't any more.
+    run(view, "hello.log")
+    eventually(fn -> has_element?(view, "#output-channel option", "Hello Log") end)
+    view |> element("#output-channels") |> render_change(%{"channel" => "Extension Host"})
+
+    assert_push_event(view, "output:set", %{channel: "Extension Host", text: "printed by hello\n"})
+
+    run(view, "hello.output", ["third", false])
+    refute_push_event(view, "output:append", %{text: "third\n"}, 300)
+
+    # Clear Output (the section's button) empties the shown channel.
+    view |> element("#output-channels") |> render_change(%{"channel" => "Hello"})
+
+    assert_push_event(view, "output:set", %{channel: "Hello", text: "first line\nsecond\nthird\n"})
+
+    assert has_element?(view, "#panel button[data-command='workbench.output.action.clearOutput']")
+    run(view, "workbench.output.action.clearOutput")
+    assert_push_event(view, "output:set", %{channel: "Hello", text: ""}, 2_000)
+    assert Bee.Output.get(Bee.Workspace.root(), "Hello Log") != ""
   end
 
   test "its details page lists commands, settings and what isn't used", %{conn: conn} do

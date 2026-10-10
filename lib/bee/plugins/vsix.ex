@@ -34,7 +34,7 @@ defmodule Bee.Plugins.Vsix do
          {:ok, package} <- json(files, "package.json"),
          {:ok, name} <- Manifest.plugin_name(package),
          :ok <- check_target(name, source) do
-      marker = Map.merge(%{name: name, version: package["version"]}, origin)
+      marker = Map.merge(%{name: name, version: package["version"], modes: true}, origin)
       write(name, files, executables, marker)
     end
   end
@@ -46,6 +46,48 @@ defmodule Bee.Plugins.Vsix do
       marker
     else
       _ -> %{}
+    end
+  end
+
+  @doc """
+  Makes the scripts and programs of the extension in `dir` executable
+  again, once: an install by a Bee that didn't keep file modes (its marker
+  has no `modes`) left them plain files, which an extension can't run (a
+  language server's launch script, say). What starts like a script (`#!`)
+  or a program (ELF, Mach-O) is one.
+  """
+  def repair_modes(dir) do
+    with %{} = marker when not is_map_key(marker, "modes") and marker != %{} <- marker(dir) do
+      for file <- Path.wildcard(Path.join(dir, "**"), match_dot: true),
+          File.regular?(file),
+          executable_content?(file),
+          do: File.chmod(file, 0o755)
+
+      File.write(
+        Path.join(dir, @marker),
+        Jason.encode!(Map.put(marker, "modes", true), pretty: true)
+      )
+    end
+
+    :ok
+  rescue
+    _ -> :ok
+  end
+
+  @magic [
+    "#!",
+    <<0x7F, "ELF">>,
+    <<0xFE, 0xED, 0xFA, 0xCE>>,
+    <<0xFE, 0xED, 0xFA, 0xCF>>,
+    <<0xCE, 0xFA, 0xED, 0xFE>>,
+    <<0xCF, 0xFA, 0xED, 0xFE>>,
+    <<0xCA, 0xFE, 0xBA, 0xBE>>
+  ]
+
+  defp executable_content?(file) do
+    case File.open(file, [:read, :binary], &IO.binread(&1, 4)) do
+      {:ok, head} when is_binary(head) -> String.starts_with?(head, @magic)
+      _ -> false
     end
   end
 
