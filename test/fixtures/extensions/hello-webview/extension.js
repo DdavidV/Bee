@@ -50,12 +50,14 @@ function page(webview, extensionUri, heading) {
     fetch("${outside}").then(r => r.status, () => "failed").then(status => {
       document.getElementById("outside").textContent = "outside: " + status
     })
-    // What a page must not reach: Bee's page, its cookies.
+    // What a page must not reach: Bee's page, its cookies, its storage.
     let reach = "none"
     try { reach = String(window.parent.document.title) } catch (e) { reach = "blocked" }
     let cookie = "blocked"
     try { cookie = "[" + document.cookie + "]" } catch (e) {}
-    api.postMessage({type: "loaded", reach, cookie})
+    let storage = "blocked"
+    try { storage = "[" + Object.keys(localStorage).join(",") + "]" } catch (e) {}
+    api.postMessage({type: "loaded", reach, cookie, storage, origin: location.origin})
   </script>
 </body>
 </html>`
@@ -71,7 +73,7 @@ function activate(context) {
       })
       panel.webview.html = page(panel.webview, context.extensionUri, "first")
       panel.webview.onDidReceiveMessage(message => {
-        if (message.type === "loaded") console.log(`webview loaded: parent ${message.reach}, cookie ${message.cookie}`)
+        if (message.type === "loaded") console.log(`webview loaded: parent ${message.reach}, cookie ${message.cookie}, storage ${message.storage}, origin ${message.origin}`)
         if (message.type !== "ping") return
         panel.title = `Pong ${message.n}`
         panel.webview.postMessage({type: "pong", n: message.n})
@@ -92,6 +94,37 @@ function activate(context) {
     vscode.commands.registerCommand("helloWebview.plain", () => {
       const plain = vscode.window.createWebviewPanel("helloPlain", "Plain", vscode.ViewColumn.One)
       plain.webview.html = '<p id="plain">no scripts <script>document.getElementById("plain").textContent = "scripts ran"</script></p>'
+    }),
+    // A page that embeds a local server of the extension's (as previews
+    // do): the frame inside reports whether it has an origin of its own
+    // and can talk to its server; the panel's title says what it found.
+    vscode.commands.registerCommand("helloWebview.nested", async () => {
+      const http = require("node:http")
+      const server = http.createServer((request, response) => {
+        if (request.url === "/ping") return response.end("pong")
+        response.setHeader("content-type", "text/html")
+        response.end(`<p id="inner">inner</p><script>
+          fetch("/ping").then(r => r.text(), () => "failed").then(answer => {
+            document.getElementById("inner").textContent = "inner " + answer
+            parent.postMessage({nested: true, origin: self.origin, answer}, "*")
+          })
+        </script>`)
+      })
+      await new Promise(resolve => server.listen(0, "127.0.0.1", resolve))
+      const url = await vscode.env.asExternalUri(vscode.Uri.parse(`http://127.0.0.1:${server.address().port}/`))
+      const nested = vscode.window.createWebviewPanel("helloNested", "Nested", vscode.ViewColumn.One, {enableScripts: true})
+      nested.webview.onDidReceiveMessage(message => {
+        nested.title = `Nested: ${message.answer} from ${message.origin === url.toString().replace(/\/$/, "") ? "its own origin" : message.origin}`
+      })
+      nested.onDidDispose(() => server.close())
+      nested.webview.html = `<html><body style="margin:0">
+        <iframe id="nested" src="${url}" style="border:0;width:100%;height:200px"></iframe>
+        <script>
+          const api = acquireVsCodeApi()
+          window.addEventListener("message", event => {
+            if (event.data && event.data.nested) api.postMessage(event.data)
+          })
+        </script></body></html>`
     }),
     vscode.commands.registerCommand("helloWebview.external", async () => {
       const uri = await vscode.env.asExternalUri(vscode.Uri.parse("https://example.com/from-extension"))

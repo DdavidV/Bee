@@ -223,8 +223,21 @@ defmodule Bee.Plugins.OpenVsx do
   Installs (or updates) extension `id`: its latest version's `.vsix`, as a
   plugin of the user (`Bee.Plugins.Vsix`). `{:ok, plugin_name}` or
   `{:error, message}`.
+
+  The extensions it needs come with it, if they aren't installed: its
+  `extensionDependencies` (its code isn't run without them) and the
+  members of its `extensionPack`, and theirs. One of those failing doesn't
+  undo the others (it is logged, and the extension's page says what it
+  lacks).
   """
   def install(id) do
+    with {:ok, name} <- install_one(id) do
+      install_needed(name, MapSet.new([String.downcase(to_string(id))]))
+      {:ok, name}
+    end
+  end
+
+  defp install_one(id) do
     with {:ok, ext} <- extension(id, fresh: true),
          {:ok, path} <- download(ext) do
       try do
@@ -233,6 +246,53 @@ defmodule Bee.Plugins.OpenVsx do
         File.rm(path)
       end
     end
+  end
+
+  # What the extension just installed as plugin `name` names in its
+  # package.json, `seen` being the ids already dealt with.
+  defp install_needed(name, seen) do
+    Enum.reduce(needed(name), seen, fn id, seen ->
+      key = String.downcase(id)
+
+      cond do
+        key in seen ->
+          seen
+
+        have?(key) ->
+          MapSet.put(seen, key)
+
+        true ->
+          seen = MapSet.put(seen, key)
+
+          case install_one(id) do
+            {:ok, dependency} ->
+              install_needed(dependency, seen)
+
+            {:error, message} ->
+              Logger.warning("Bee: #{name} needs #{id}, which can't be installed: #{message}")
+              seen
+          end
+      end
+    end)
+  end
+
+  defp needed(name) do
+    with {:ok, text} <- File.read(Path.join([Bee.Plugins.user_dir(), name, "package.json"])),
+         {:ok, %{} = package} <- Bee.JSON.JSONC.decode(text) do
+      for key <- ["extensionDependencies", "extensionPack"],
+          id <- List.wrap(package[key]),
+          is_binary(id),
+          uniq: true,
+          do: id
+    else
+      _ -> []
+    end
+  end
+
+  # Installed already: from Open VSX, or from a VSIX file.
+  defp have?(key) do
+    Map.has_key?(installed(), key) or
+      Enum.any?(Bee.Plugins.list(), &(Vsix.extension_id(&1.dir) == key))
   end
 
   @doc """

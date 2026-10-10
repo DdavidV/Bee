@@ -130,4 +130,33 @@ defmodule Desktop.BridgeTest do
     frame(bridge, %{t: "msg", sid: "nope", data: "x", bin: false})
     assert %{status: 200} = get(bridge, 9, "bee://localhost/favicon.ico")
   end
+
+  test "a webview panel's page: by the shell's other address, with an origin of its own", %{
+    bridge: bridge
+  } do
+    panel = Bee.Webviews.open("/bridge", "1", %{title: "One", scripts?: true})
+    Bee.Webviews.update("/bridge", "1", %{html: "<p>hi</p>"})
+    on_exit(fn -> Bee.Webviews.clear("/bridge") end)
+
+    csp = fn res ->
+      for [name, value] <- res.headers, name == "content-security-policy", do: value
+    end
+
+    # beeview://: the page keeps that origin – not Bee's page's.
+    res = get(bridge, 1, "beeview://localhost/webview/#{panel.token}/")
+    assert res.status == 200
+    assert res.body =~ "<p>hi</p>"
+    assert [policy] = csp.(res)
+    assert policy =~ "allow-same-origin"
+    # (Windows' webview has the scheme as a host name.)
+    assert %{status: 200} = get(bridge, 2, "http://beeview.localhost/webview/#{panel.token}/")
+    # Nothing else of Bee's is there.
+    assert %{status: 404} = get(bridge, 3, "beeview://localhost/")
+
+    # By Bee's own address a webview page never has Bee's origin.
+    res = get(bridge, 4, "bee://localhost/webview/#{panel.token}/")
+    assert res.status == 200
+    assert [policy] = csp.(res)
+    refute policy =~ "allow-same-origin"
+  end
 end

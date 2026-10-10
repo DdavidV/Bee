@@ -45,12 +45,27 @@ defmodule Bee.Plugins.Details do
       icon: icon(plugin, info["icon"]),
       readme: readme(plugin.dir),
       runs: runs(plugin),
+      missing_dependencies: missing_dependencies(manifest),
       activation_events: plugin.activation_events,
       color_themes: Enum.map(List.wrap(get_in(manifest, ["contributes", "themes"])), &theme_id/1),
       icon_themes:
         Enum.map(List.wrap(get_in(manifest, ["contributes", "iconThemes"])), & &1["id"]),
       features: features(manifest["contributes"] || %{})
     }
+  end
+
+  # The extensions its code needs (`extensionDependencies`) that aren't
+  # installed: its own code isn't run without them.
+  defp missing_dependencies(manifest) do
+    installed =
+      for plugin <- Bee.Plugins.list(),
+          id = Bee.Plugins.Vsix.extension_id(plugin.dir),
+          into: MapSet.new(),
+          do: id
+
+    for id <- List.wrap(get_in(manifest, ["extension", "dependencies"])),
+        is_binary(id) and String.downcase(id) not in installed,
+        do: id
   end
 
   defp read_json(path) do

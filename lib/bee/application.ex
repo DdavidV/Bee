@@ -34,6 +34,8 @@ defmodule Bee.Application do
       Bee.JSONValidation.Schemas,
       {Task.Supervisor, name: Bee.JSONValidation.TaskSup},
       BeeWeb.Endpoint,
+      # The pages of webview panels, on a port (an origin) of their own.
+      BeeWeb.WebviewServer,
       # Server mode: the address to open, once the endpoint listens.
       {Task, &Bee.Mode.announce/0}
     ]

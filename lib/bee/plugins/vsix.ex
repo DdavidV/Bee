@@ -39,6 +39,20 @@ defmodule Bee.Plugins.Vsix do
     end
   end
 
+  @doc """
+  The id of the VS Code extension in plugin folder `dir`, as others name
+  it (`publisher.name` of its package.json, lower case), or nil.
+  """
+  def extension_id(dir) do
+    with {:ok, text} <- File.read(Path.join(dir, "package.json")),
+         {:ok, %{"publisher" => publisher, "name" => name}} <- Bee.JSON.JSONC.decode(text),
+         true <- is_binary(publisher) and is_binary(name) do
+      String.downcase("#{publisher}.#{name}")
+    else
+      _ -> nil
+    end
+  end
+
   @doc "The `.vsix.json` marker of plugin folder `dir` (`%{}` if there is none)."
   def marker(dir) do
     with {:ok, text} <- File.read(Path.join(dir, @marker)),

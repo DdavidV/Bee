@@ -161,6 +161,44 @@ defmodule Bee.Extensions.WebviewTest do
       Webviews.dispose("/wv", "1")
       assert response(get(conn, "/webview/#{panel.token}/"), 404)
     end
+
+    test "the webview server gives a page its own origin, to local hosts only" do
+      panel = Webviews.open("/wv", "1", %{title: "One", scripts?: true})
+      Webviews.update("/wv", "1", %{html: "<p>hi</p>"})
+
+      get = fn host, path ->
+        Plug.Test.conn(:get, path)
+        |> Map.put(:host, host)
+        |> BeeWeb.WebviewServer.Plug.call([])
+      end
+
+      conn = get.("127.0.0.1", "/webview/#{panel.token}/")
+      assert conn.status == 200
+      assert conn.resp_body =~ "<p>hi</p>"
+
+      assert Plug.Conn.get_resp_header(conn, "content-security-policy") == [
+               "sandbox allow-scripts allow-forms allow-modals allow-popups allow-downloads allow-same-origin"
+             ]
+
+      # Nothing else of Bee's; not for a name pointed at this machine.
+      assert get.("127.0.0.1", "/").status == 404
+      assert get.("127.0.0.1", "/plugins/x/y").status == 404
+      assert get.("evil.example", "/webview/#{panel.token}/").status == 404
+
+      # It listens, on this machine, and windows here are told where.
+      port = BeeWeb.WebviewServer.port()
+      assert is_integer(port)
+      assert BeeWeb.WebviewServer.origin("localhost") == "http://127.0.0.1:#{port}"
+      assert BeeWeb.WebviewServer.origin("bee.example.com") == nil
+      {:ok, socket} = :gen_tcp.connect(~c"127.0.0.1", port, [:binary, active: false])
+
+      :ok =
+        :gen_tcp.send(socket, "GET /webview/#{panel.token}/ HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n")
+
+      {:ok, answer} = :gen_tcp.recv(socket, 0, 2_000)
+      assert answer =~ "200 OK"
+      :gen_tcp.close(socket)
+    end
   end
 
   describe "with the hello-webview extension" do

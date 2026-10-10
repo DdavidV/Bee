@@ -312,6 +312,27 @@ defmodule BeeWeb.Workbench.ExtensionEditor do
           </button>
         </div>
 
+        <%!-- An extension its code needs isn't there: installed from here. --%>
+        <div
+          :for={id <- @details.missing_dependencies}
+          id={"extension-#{@details.name}-needs-#{id}"}
+          class="mt-4 flex items-center gap-3 text-sm"
+        >
+          <span class="text-warning">
+            Its code isn't run: it needs the extension {id}, which isn't installed.
+          </span>
+          <button :if={id in @installing} type="button" class="btn btn-sm btn-primary" disabled>
+            Installing…
+          </button>
+          <.action
+            :if={id not in @installing}
+            label={"Install #{id}"}
+            command="workbench.extensions.installExtension"
+            name={id}
+            primary
+          />
+        </div>
+
         <details :if={@details.warnings != []} class="mt-4 text-sm">
           <summary class="cursor-pointer text-warning">
             {length(@details.warnings)} part(s) of this extension aren't used

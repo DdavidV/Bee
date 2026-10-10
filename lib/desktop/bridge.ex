@@ -114,13 +114,22 @@ defmodule Desktop.Bridge do
 
   defp handle_frame(%{"t" => "req", "id" => id, "win" => win, "method" => m, "url" => url} = f, s) do
     bridge = self()
-    headers = with_cookies(f["headers"] || [], s, win)
+    # A webview panel's page asks by the shell's other address
+    # (BeeWeb.WebviewServer): only such pages are served there, and without
+    # the window's cookies.
+    webview? = BeeWeb.WebviewServer.desktop_url?(url)
+
+    {plug, headers} =
+      if webview?,
+        do: {BeeWeb.WebviewServer.Plug, f["headers"] || []},
+        else: {s.endpoint, with_cookies(f["headers"] || [], s, win)}
+
     body = Base.decode64!(f["body"] || "")
 
     Task.start(fn ->
       response =
         try do
-          Conn.request(s.endpoint, m, url, headers, body)
+          Conn.request(plug, m, url, headers, body)
         rescue
           e -> {500, [{"content-type", "text/plain"}], Exception.message(e)}
         end

@@ -11,7 +11,9 @@
 //! window.
 //!
 //! - The window's requests (`bee://localhost/…`, `http://bee.localhost/…` on
-//!   Windows) become `req` frames; Bee's `res` frames answer them.
+//!   Windows) become `req` frames; Bee's `res` frames answer them. So do
+//!   those of webview panels' frames (`beeview://localhost/…`), which have
+//!   an origin of their own that way.
 //! - LiveView's socket frames come from the page through the `bridge_*`
 //!   commands (window.__bridge, src/bridge.js) and go back over a Channel.
 //!
@@ -587,6 +589,14 @@ fn main() {
             let bee = ctx.app_handle().state::<Arc<Bee>>().inner().clone();
             let win = ctx.webview_label().to_string();
             // Answered on a thread of its own: Bee serves requests concurrently.
+            thread::spawn(move || responder.respond(bee.request(&win, request)));
+        })
+        // The pages of extensions' webview panels, in frames of the window:
+        // another scheme, so another origin than Bee's own page. Bee tells
+        // them apart by the address (BeeWeb.WebviewServer).
+        .register_asynchronous_uri_scheme_protocol("beeview", |ctx, request, responder| {
+            let bee = ctx.app_handle().state::<Arc<Bee>>().inner().clone();
+            let win = ctx.webview_label().to_string();
             thread::spawn(move || responder.respond(bee.request(&win, request)));
         })
         .setup(move |app| {

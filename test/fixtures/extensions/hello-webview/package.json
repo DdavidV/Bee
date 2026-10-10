@@ -13,6 +13,7 @@
       {"command": "helloWebview.update", "title": "Update Panel", "category": "Hello Webview"},
       {"command": "helloWebview.close", "title": "Close Panel", "category": "Hello Webview"},
       {"command": "helloWebview.plain", "title": "Open Plain Panel", "category": "Hello Webview"},
+      {"command": "helloWebview.nested", "title": "Open Nested Panel", "category": "Hello Webview"},
       {"command": "helloWebview.external", "title": "Open Example", "category": "Hello Webview"}
     ]
   }

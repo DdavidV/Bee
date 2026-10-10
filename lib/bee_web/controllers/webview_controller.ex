@@ -9,11 +9,16 @@ defmodule BeeWeb.WebviewController do
       (`webview.asWebviewUri`), if it is under the panel's
       `localResourceRoots`
 
-  `token` is the panel's, unguessable: the frame is sandboxed without
-  `allow-same-origin`, so that the extension's page is apart from Bee's –
-  it has no cookie to show, and can't reach Bee's page. Every answer says
-  so again (`Content-Security-Policy: sandbox`), for a page opened on its
-  own.
+  `token` is the panel's, unguessable (the frame has no session to show).
+
+  The extension's page must stay apart from Bee's. Normally it is served
+  by `BeeWeb.WebviewServer`, on a port of its own: another origin, which
+  the browser keeps from Bee's page while the page has what an origin
+  gives (storage, and frames inside it that work). Served by Bee's own
+  endpoint – a window that can't reach that port – its frame is sandboxed
+  without `allow-same-origin` instead: no origin at all. Every answer says
+  which (`Content-Security-Policy: sandbox`), also for a page opened on
+  its own; the endpoint never lets a webview page have Bee's origin.
 
   Bee's part of the page, before anything of the extension's (also before
   a Content-Security-Policy of its own, which would stop it):
@@ -44,7 +49,7 @@ defmodule BeeWeb.WebviewController do
         |> headers(panel)
         |> put_resp_content_type("text/html")
         |> put_resp_header("cache-control", "no-store")
-        |> send_resp(200, page(root, panel))
+        |> send_page(page(root, panel))
 
       {{_root, panel}, ["file" | parts]} ->
         case Bee.Webviews.resource(panel, "/" <> Path.join(parts)) do
@@ -66,17 +71,36 @@ defmodule BeeWeb.WebviewController do
     end
   end
 
-  defp headers(conn, panel) do
+  # In chunks: what is put into Bee's own pages as they are sent (the
+  # development live reloader) leaves it alone.
+  defp send_page(conn, html) do
+    conn = send_chunked(conn, 200)
+    {:ok, conn} = chunk(conn, html)
     conn
-    |> put_resp_header("content-security-policy", "sandbox " <> sandbox(panel))
+  end
+
+  defp headers(conn, panel) do
+    own_origin? = conn.private[:bee_webview_origin] == true
+
+    conn
+    |> put_resp_header("content-security-policy", "sandbox " <> sandbox(panel, own_origin?))
     |> put_resp_header("x-content-type-options", "nosniff")
   end
 
-  @doc "What a panel's frame may do (the `sandbox` attribute): never `allow-same-origin`."
-  def sandbox(%{scripts?: true}),
-    do: "allow-scripts allow-forms allow-modals allow-popups allow-downloads"
-
-  def sandbox(_panel), do: "allow-forms"
+  @doc """
+  What a panel's frame may do (the `sandbox` attribute). `own_origin?`: its
+  page comes from `BeeWeb.WebviewServer` and keeps that origin; never when
+  it comes from Bee's endpoint.
+  """
+  def sandbox(panel, own_origin?) do
+    Enum.join(
+      if(panel.scripts?,
+        do: ~w(allow-scripts allow-forms allow-modals allow-popups allow-downloads),
+        else: ~w(allow-forms)
+      ) ++ if(own_origin?, do: ~w(allow-same-origin), else: []),
+      " "
+    )
+  end
 
   @doc false
   def page(root, panel) do

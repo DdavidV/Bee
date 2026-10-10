@@ -71,6 +71,35 @@
     await check(await waitFor(() => document.querySelector(".bee-git-changes .bee-git-change")),
       "git plugin's browser module loaded (change gutter)")
 
+    // Webview panels of extensions, when Bee's test extension for them is
+    // installed (test/fixtures/extensions/hello-webview): its page comes
+    // over beeview:// – an origin that isn't Bee's – and a frame inside it
+    // from the extension's local server works.
+    const command = id => window.liveSocket.execJS(document.querySelector("[data-phx-main]"),
+      JSON.stringify([["push", {event: "run_command", value: {command: id}}]]))
+    {
+      command("helloWebview.open")
+      const frame = await waitFor(() => document.querySelector("[data-webview] iframe"), 8000)
+      if (frame) {
+        await check(/^(beeview:\/\/localhost|http:\/\/beeview\.localhost)\/webview\//.test(frame.src),
+          `webview: its page comes from an address of its own (${frame.src.split("/webview/")[0]})`)
+        let reach = "blocked"
+        try { reach = String(frame.contentWindow.document.title) } catch (_e) {}
+        await check(reach === "blocked", "webview: its page is another origin (Bee's page can't read it, nor it Bee's)")
+        // The extension posts "hello" as it opens; the page answers each ping.
+        const tabText = () => document.querySelector("#tabs [data-path^='webview:']")?.textContent.trim() ?? ""
+        await check(await waitFor(() => tabText().includes("Hello Webview"), 5000), "webview: a tab for the panel")
+        command("helloWebview.nested")
+        const nested = await waitFor(() => [...document.querySelectorAll("#tabs [data-path^='webview:']")]
+          .map(t => t.textContent.trim()).find(t => t.startsWith("Nested:")), 15000)
+        await check(nested && nested.includes("pong from its own origin"),
+          `webview: a frame of the extension's local server inside it works (${nested || "no answer"})`)
+        for (const close of document.querySelectorAll("#tabs [data-path^='webview:'] [data-close]")) close.click()
+      } else {
+        await report(true, "webview: hello-webview isn't installed, skipped")
+      }
+    }
+
     // Terminal: open the panel, run a command, read its output.
     document.querySelector("#layout-panel")?.click()
     const input = await waitFor(() => document.querySelector(".xterm-helper-textarea"))

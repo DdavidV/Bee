@@ -829,7 +829,12 @@ defmodule Bee.Plugins.Manager do
     Enum.find_value(get_in(plugin.manifest, ["extension", "dependencies"]) || [], fn id ->
       case extension_by_id(s, id) do
         nil ->
-          "#{name}'s code isn't run: it needs the extension #{id}, which isn't installed"
+          # (One without code of its own is there, and nothing to wait for.)
+          if not Enum.any?(
+               Map.values(s.plugins),
+               &(Bee.Plugins.Vsix.extension_id(&1.dir) == String.downcase(id))
+             ),
+             do: "#{name}'s code isn't run: it needs the extension #{id}, which isn't installed"
 
         %{name: ^name} ->
           nil

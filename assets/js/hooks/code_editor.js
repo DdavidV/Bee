@@ -329,6 +329,9 @@ export const CodeEditor = {
         languageCompartment.of(highlighting(highlight)),
         pluginCompartment.of(pluginExtensions()),
         Object.entries(compartments).map(([name, c]) => c.of(exts[name])),
+        // Leaving the editor (for another tab, say): the server has the
+        // text before it hears of what was clicked.
+        EditorView.domEventHandlers({blur: () => void this.flushAll()}),
         EditorView.updateListener.of(update => {
           if (update.docChanged) this.changed(path)
           if (update.transactions.length) this.historyChanged()

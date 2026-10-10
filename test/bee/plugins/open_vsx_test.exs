@@ -298,6 +298,63 @@ defmodule Bee.Plugins.OpenVsxTest do
     assert message =~ "acme.rocket, another extension named rocket, is installed"
   end
 
+  test "install brings the extensions it needs, and theirs, once", %{counter: counter} do
+    # rocket needs fuel (which needs rocket, and tank) and packs paint and
+    # ghost, which Open VSX doesn't have; tank is installed already.
+    packages = %{
+      "rocket" => %{
+        "extensionDependencies" => ["acme.fuel"],
+        "extensionPack" => ["acme.paint", "acme.ghost"]
+      },
+      "fuel" => %{"main" => "./fuel.js", "extensionDependencies" => ["acme.Rocket", "acme.tank"]},
+      "paint" => %{},
+      "tank" => %{}
+    }
+
+    package = fn name ->
+      Map.merge(%{"name" => name, "publisher" => "acme", "version" => "1.0.0"}, packages[name])
+    end
+
+    routes =
+      for {name, _} <- packages, name != "tank", reduce: %{} do
+        routes ->
+          json =
+            extension_json("1.0.0", %{
+              "name" => name,
+              "files" => %{
+                "download" => "http://openvsx.test/api/acme/#{name}/1.0.0/file/#{name}.vsix"
+              }
+            })
+
+          routes
+          |> Map.put("/api/acme/#{name}", &Req.Test.json(&1, json))
+          |> Map.put("/api/acme/#{name}/1.0.0/file/#{name}.vsix", fn conn ->
+            conn
+            |> Plug.Conn.put_resp_content_type("application/octet-stream")
+            |> Plug.Conn.send_resp(200, vsix(package.(name)))
+          end)
+      end
+
+    stub(counter, routes)
+    # From a VSIX file: not Open VSX's, but there.
+    assert {:ok, "tank"} = Bee.Plugins.Vsix.install(write_vsix(vsix(package.("tank"))))
+
+    assert {:ok, "rocket"} = OpenVsx.install("acme.rocket")
+
+    assert OpenVsx.installed() |> Map.keys() |> Enum.sort() ==
+             ["acme.fuel", "acme.paint", "acme.rocket"]
+
+    # Each asked for and downloaded once; the missing one asked for once.
+    assert requests(counter) == 7
+    # Nothing is lacking now.
+    assert Bee.Plugins.Details.get(Plugins.get("rocket")).missing_dependencies == []
+    assert Bee.Plugins.Details.get(Plugins.get("fuel")).missing_dependencies == []
+
+    # Without what its code needs, its page says so.
+    Plugins.uninstall("tank")
+    assert Bee.Plugins.Details.get(Plugins.get("fuel")).missing_dependencies == ["acme.tank"]
+  end
+
   test "a failed download installs nothing", %{counter: counter} do
     stub(counter, %{"/api/acme/rocket" => &Req.Test.json(&1, extension_json("1.0.0"))})
 

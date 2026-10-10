@@ -218,6 +218,7 @@
         panel={@webviews[tab.webview]}
         theme={@color_theme.id}
         active={tab.path == @active}
+        origin={@webview_origin}
       />
       <div
         :if={@tabs == []}

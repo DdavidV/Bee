@@ -2320,7 +2320,9 @@ defmodule BeeWeb.EditorLive do
   # The workspace's panels there are already (another window's, or this
   # one's before it was loaded again).
   defp load_webviews(socket) do
-    socket = assign(socket, webviews: %{})
+    host = socket.host_uri && socket.host_uri.host
+    origin = if is_binary(host), do: BeeWeb.WebviewServer.origin(host)
+    socket = assign(socket, webviews: %{}, webview_origin: origin)
 
     if connected?(socket),
       do:
