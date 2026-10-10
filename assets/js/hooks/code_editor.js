@@ -208,6 +208,9 @@ export const CodeEditor = {
       }),
       registerCommand("undo", () => this.runHistory(undo)),
       registerCommand("redo", () => this.runHistory(redo)),
+      registerCommand("editor.action.clipboardCutAction", () => this.clipboard("cut")),
+      registerCommand("editor.action.clipboardCopyAction", () => this.clipboard("copy")),
+      registerCommand("editor.action.clipboardPasteAction", () => this.clipboard("paste")),
     ]
     this.history = null // last {canUndo, canRedo} sent
     this.unregisterEditor = setEditor(this)
@@ -301,7 +304,33 @@ export const CodeEditor = {
     return {
       canUndo: !!state && undoDepth(state) > 0,
       canRedo: !!state && redoDepth(state) > 0,
+      editorHasSelection: !!state && state.selection.ranges.some(r => !r.empty),
     }
+  },
+
+  // Cut, Copy and Paste of the editor's right-click menu, on the main
+  // selection (the whole line when it is empty, as with the keys). Reading
+  // the clipboard is the browser's to allow: the keys always work.
+  async clipboard(action) {
+    if (!this.active) return
+    const view = this.view
+    const {state} = view
+    const main = state.selection.main
+    const line = state.doc.lineAt(main.head)
+    const range = main.empty ? {from: line.from, to: Math.min(line.to + 1, state.doc.length)} : main
+    try {
+      if (action === "paste") {
+        const text = await navigator.clipboard.readText()
+        view.dispatch(view.state.replaceSelection(text), {scrollIntoView: true, userEvent: "input.paste"})
+      } else {
+        await navigator.clipboard.writeText(state.sliceDoc(range.from, range.to))
+        if (action === "cut") view.dispatch({changes: range, userEvent: "delete.cut"})
+      }
+    } catch (_e) {
+      const keys = {cut: "Ctrl+X", copy: "Ctrl+C", paste: "Ctrl+V"}
+      this.pushEvent("plugin_message", {plugin: "bee", level: "error", text: `The browser didn't allow the clipboard here: use ${keys[action]}.`})
+    }
+    view.focus()
   },
 
   // Tells the server when undo/redo become (un)available for the active file.

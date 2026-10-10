@@ -59,7 +59,12 @@ defmodule Bee.Plugins.VsixTest do
     assert File.read!(Path.join(dir, "icons/f.svg")) == "<svg/>"
     refute File.exists?(Path.join(dir, "[Content_Types].xml"))
 
-    manifest = Jason.decode!(File.read!(Path.join(dir, "plugin.json")))
+    # Its package.json is read as it is: no plugin.json is written.
+    refute File.exists?(Path.join(dir, "plugin.json"))
+
+    # Its command has no code (no main) to run it.
+    assert %{kind: :vscode, warnings: [warning], manifest: manifest} = Plugins.get("cool-icons")
+    assert warning =~ "cool.ignored"
 
     assert manifest == %{
              "name" => "cool-icons",
@@ -74,6 +79,7 @@ defmodule Bee.Plugins.VsixTest do
            }
 
     assert %{status: :inactive, scope: :user} = Plugins.get("cool-icons")
+    assert Plugins.get("cool-icons").manifest_path == Path.join(dir, "package.json")
     assert {:ok, _theme} = Bee.IconThemes.load("cool", :dark)
 
     # Again (an update): replaced.
@@ -110,8 +116,8 @@ defmodule Bee.Plugins.VsixTest do
 
     assert {:ok, "night-owl"} = Vsix.install(vsix(tmp, files))
 
-    manifest =
-      Jason.decode!(File.read!(Path.join([Plugins.user_dir(), "night-owl", "plugin.json"])))
+    assert %{manifest: manifest, warnings: [warning]} = Plugins.get("night-owl")
+    assert warning =~ ~s(contributes.themes[2] has the uiTheme "sepia")
 
     assert manifest["contributes"] == %{
              "themes" => [
@@ -146,12 +152,23 @@ defmodule Bee.Plugins.VsixTest do
       )
 
     assert {:ok, "cool-icons"} = Vsix.install(vsix(tmp, files))
-    assert %{scope: :user, errors: []} = Plugins.get("cool-icons")
-
-    manifest =
-      Jason.decode!(File.read!(Path.join([Plugins.user_dir(), "cool-icons", "plugin.json"])))
-
+    assert %{scope: :user, errors: [], manifest: manifest} = Plugins.get("cool-icons")
     assert manifest["contributes"] == %{}
+  end
+
+  test "an extension installed by an older Bee: its generated plugin.json is ignored", %{tmp: tmp} do
+    assert {:ok, "cool-icons"} = Vsix.install(vsix(tmp, theme_files()))
+    dir = Path.join(Plugins.user_dir(), "cool-icons")
+
+    File.write!(
+      Path.join(dir, "plugin.json"),
+      ~s({"name": "cool-icons", "displayName": "Stale", "contributes": {}})
+    )
+
+    Plugins.reload("cool-icons")
+
+    assert %{kind: :vscode, display_name: "Cool Icons Theme"} = Plugins.get("cool-icons")
+    assert {:ok, _theme} = Bee.IconThemes.load("cool", :dark)
   end
 
   test "refuses what isn't an extension", %{tmp: tmp} do

@@ -22,7 +22,7 @@ defmodule BeeWeb.Workbench.Toolbar do
         type="button"
         class={[
           "btn btn-xs",
-          if(BeeWeb.Icons.exists?(action.icon || ""),
+          if(BeeWeb.Icons.exists?(action.icon),
             do: "btn-ghost btn-square",
             else: ["px-1 font-normal", @text_class]
           )
@@ -36,7 +36,7 @@ defmodule BeeWeb.Workbench.Toolbar do
         phx-value-args={@args && Jason.encode!(@args)}
       >
         <BeeWeb.Icons.named_icon name={action.icon} class="size-4" />
-        <span :if={!BeeWeb.Icons.exists?(action.icon || "")} class="text-xs">
+        <span :if={!BeeWeb.Icons.exists?(action.icon)} class="text-xs">
           {action.label}
         </span>
       </button>

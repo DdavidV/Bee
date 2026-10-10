@@ -312,6 +312,15 @@ defmodule BeeWeb.Workbench.ExtensionEditor do
           </button>
         </div>
 
+        <details :if={@details.warnings != []} class="mt-4 text-sm">
+          <summary class="cursor-pointer text-warning">
+            {length(@details.warnings)} part(s) of this extension aren't used
+          </summary>
+          <ul class="mt-1 space-y-1 opacity-80 break-words">
+            <li :for={warning <- @details.warnings}>{warning}</li>
+          </ul>
+        </details>
+
         <nav class="mt-6 flex gap-4 border-b border-base-content/10 text-xs uppercase tracking-wide">
           <.page_tab name={@details.name} page="details" other="features" active>Details</.page_tab>
           <.page_tab name={@details.name} page="features" other="details">Features</.page_tab>

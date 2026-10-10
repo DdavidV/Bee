@@ -184,8 +184,7 @@ defmodule Bee.Languages.TextMateTest do
     assert {:ok, "erlang-ls"} = Bee.Plugins.Vsix.install(tmp)
     assert %{errors: []} = Plugins.get("erlang-ls")
 
-    manifest =
-      Jason.decode!(File.read!(Path.join([Plugins.user_dir(), "erlang-ls", "plugin.json"])))
+    manifest = Plugins.get("erlang-ls").manifest
 
     assert manifest["contributes"] == %{
              "languages" => [

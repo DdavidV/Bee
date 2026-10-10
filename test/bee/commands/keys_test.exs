@@ -26,6 +26,21 @@ defmodule Bee.Commands.KeysTest do
     assert Keys.parse("ctrl+pagedown") == {:ok, ["ctrl+pagedown"]}
   end
 
+  test "VS Code's other names: numpad, Windows (oem) names, scan codes" do
+    assert Keys.parse("ctrl+numpad_add") == {:ok, ["ctrl+numpad_add"]}
+    assert Keys.parse("ctrl+numpad0") == {:ok, ["ctrl+0"]}
+    assert Keys.parse("ctrl+oem_3") == {:ok, ["ctrl+`"]}
+    assert Keys.parse("ctrl+k ctrl+oem_2") == {:ok, ["ctrl+k", "ctrl+/"]}
+    assert Keys.parse("shift+pausebreak") == {:ok, ["shift+pausebreak"]}
+    assert Keys.parse("ctrl+[KeyA]") == {:ok, ["ctrl+a"]}
+    assert Keys.parse("ctrl+shift+[BracketLeft]") == {:ok, ["ctrl+shift+["]}
+    assert Keys.parse("alt+[F5]") == {:ok, ["alt+f5"]}
+    assert Keys.parse("[Digit1]") == {:ok, ["1"]}
+    assert Keys.parse("ctrl+[NumpadAdd]") == {:ok, ["ctrl+numpad_add"]}
+    assert {:error, msg} = Keys.parse("ctrl+[Nope]")
+    assert msg =~ "unknown key"
+  end
+
   test "errors" do
     assert {:error, msg} = Keys.parse("ctrl+nope")
     assert msg =~ "unknown key"

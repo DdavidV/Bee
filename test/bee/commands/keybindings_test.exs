@@ -30,9 +30,43 @@ defmodule Bee.Commands.KeybindingsTest do
     assert List.last(bindings) == %{
              key: ["ctrl+b"],
              mac: ["ctrl+b"],
+             linux: ["ctrl+b"],
+             win: ["ctrl+b"],
              command: "myCommand",
-             when: ["key", "editorFocus"]
+             when: ["key", "editorFocus"],
+             args: nil
            }
+  end
+
+  test "a platform can have keys of its own, or be the only one with keys" do
+    defaults = [
+      %{key: "ctrl+u", linux: "ctrl+shift+u", win: nil, mac: "cmd+u", command: "a", when: nil},
+      %{key: nil, mac: "cmd+p", command: "macOnly", when: nil},
+      %{key: "ctrl+[KeyI]", command: "b", when: nil, args: %{"text" => "x"}}
+    ]
+
+    assert {[a, mac_only, b], []} = Keybindings.resolve(defaults, [])
+
+    assert %{key: ["ctrl+u"], linux: ["ctrl+shift+u"], win: ["ctrl+u"], mac: ["meta+u"]} = a
+    assert %{key: nil, linux: nil, win: nil, mac: ["meta+p"]} = mac_only
+    assert %{key: ["ctrl+i"], args: %{"text" => "x"}} = b
+
+    # The label is of the keys most platforms have.
+    assert Keybindings.label("a", [a]) == "Ctrl+U"
+    assert Keybindings.label("macOnly", [mac_only]) == "Meta+P"
+
+    # A user entry removes a binding by any platform's keys.
+    assert {[_mac_only, _b], []} =
+             Keybindings.resolve(defaults, [%{"key" => "ctrl+shift+u", "command" => "-a"}])
+  end
+
+  test "user entries can pass arguments" do
+    user = [%{"key" => "ctrl+b", "command" => "myCommand", "args" => ["a", 1]}]
+    assert {[%{args: ["a", 1]}], []} = Keybindings.resolve([], user)
+
+    assert Keybindings.arguments(nil) == []
+    assert Keybindings.arguments(["a", 1]) == ["a", 1]
+    assert Keybindings.arguments(%{"text" => "x"}) == [%{"text" => "x"}]
   end
 
   test "-command removes all bindings of a command" do

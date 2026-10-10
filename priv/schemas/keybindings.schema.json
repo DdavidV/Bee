@@ -24,7 +24,7 @@
           "description": "Condition under which the binding is active, e.g. \"editorFocus && !inQuickOpen\"."
         },
         "args": {
-          "description": "Arguments for the command (reserved; not used yet)."
+          "description": "What the command gets: a list is its arguments, anything else its one argument."
         }
       },
       "required": ["command"],

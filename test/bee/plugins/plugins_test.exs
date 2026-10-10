@@ -39,7 +39,67 @@ defmodule Bee.PluginsTest do
     %{dir: dir, root: root}
   end
 
+  describe "activation by the workspace's files (workspaceContains:)" do
+    test "a plain path is looked up, a pattern matched against the files", %{root: root} do
+      File.mkdir_p!(Path.join(root, "apps/web"))
+      File.write!(Path.join(root, "apps/web/mix.exs"), "")
+      File.write!(Path.join(root, "package.json"), "{}")
+
+      wanted = [
+        {"plain", ["package.json"]},
+        {"missing", ["Cargo.toml"]},
+        {"pattern", ["**/mix.exs"]},
+        {"either", ["nope.txt", "apps/*/mix.exs"]},
+        {"no-match", ["**/*.rs"]},
+        {"outside", ["../../etc/passwd"]}
+      ]
+
+      assert Enum.sort(Bee.Plugins.Manager.workspace_contains(root, wanted)) ==
+               ["either", "pattern", "plain"]
+    end
+
+    test "starts the plugin's server part in a workspace that has the file", %{root: root} do
+      File.write!(Path.join(root, "marker.txt"), "")
+
+      source = """
+      defmodule BeeTestContains do
+        use Bee.Plugin
+        @impl true
+        def activate(_ctx), do: {:ok, nil}
+      end
+      """
+
+      for {name, glob, module} <- [
+            {"contains", "marker.txt", "BeeTestContains"},
+            {"contains-not", "other.txt", "BeeTestContainsNot"}
+          ] do
+        write_plugin(
+          name,
+          %{
+            "server" => %{"module" => module},
+            "activationEvents" => ["workspaceContains:" <> glob, "onSomething:else"],
+            "contributes" => %{}
+          },
+          %{"lib/plugin.ex" => String.replace(source, "BeeTestContains", module)}
+        )
+      end
+
+      Plugins.reload()
+
+      wait_until(fn -> match?(%{status: :active}, Plugins.get("contains", root)) end)
+      assert %{status: :inactive} = Plugins.get("contains-not", root)
+    end
+  end
+
   ## Helpers
+
+  defp wait_until(fun, tries \\ 100) do
+    cond do
+      fun.() -> :ok
+      tries == 0 -> flunk("condition not met")
+      true -> Process.sleep(20) && wait_until(fun, tries - 1)
+    end
+  end
 
   defp install(example) do
     File.cp_r!(Path.join(@examples, example), Path.join(Plugins.user_dir(), example))

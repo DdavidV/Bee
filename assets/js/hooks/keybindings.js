@@ -1,7 +1,9 @@
 // Keyboard dispatcher, mounted on #workbench.
 //
 // data-keybindings: resolved bindings from Bee.Commands.Keybindings
-//   [{key: ["ctrl+k", "ctrl+s"], mac: [...], command, when: <Bee.Commands.When AST>}]
+//   [{key: ["ctrl+k", "ctrl+s"], mac: [...], linux: [...], win: [...], command,
+//     when: <Bee.Commands.When AST>, args: [...]}]
+//   the strokes per platform (key: any other), null where the binding doesn't exist
 // data-context: the server half of the `when` context (Bee.Workbench.context/2);
 //   focus-related keys are added here.
 //
@@ -37,8 +39,10 @@ export const Keybindings = {
   },
 
   load() {
+    const platform = isMac ? "mac" : navigator.platform.startsWith("Win") ? "win" : navigator.platform.includes("Linux") ? "linux" : "key"
     this.bindings = JSON.parse(this.el.dataset.keybindings || "[]")
-      .map(b => ({...b, strokes: isMac ? b.mac : b.key}))
+      .map(b => ({...b, strokes: b[platform]}))
+      .filter(b => b.strokes)
     this.serverContext = JSON.parse(this.el.dataset.context || "{}")
   },
 
@@ -88,11 +92,11 @@ export const Keybindings = {
       this.stop(e)
       this.status("")
       if (match.client) {
-        if (evaluate(match.enablement, ctx)) exec(match.command)
+        if (evaluate(match.enablement, ctx)) exec(match.command, match.args || [])
       } else {
         // The server should see the latest text and selection first.
         window.dispatchEvent(new Event("bee:flush"))
-        this.pushEvent("run_command", {command: match.command})
+        this.pushEvent("run_command", match.args ? {command: match.command, args: match.args} : {command: match.command})
       }
     } else if (wasChord) {
       this.stop(e)

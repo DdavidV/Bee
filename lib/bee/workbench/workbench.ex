@@ -17,6 +17,8 @@ defmodule Bee.Workbench do
     * `{:panel_shown, id}` – panel section `id` is shown (a plugin's starts)
     * `{:exec_client, command}` – run a client-side command in the browser
     * `{:run_plugin_command, command}` – run a plugin's server command
+    * `{:run_extension_command, command, args}` – run a command of a VS
+      Code extension's code
     * `:reload_plugins`
     * `{:set_plugin_enabled, name, enabled?}` – see `Bee.Plugins.set_enabled/2`
     * `{:update_setting, key, value}` – write it to the user settings file
@@ -539,7 +541,12 @@ defmodule Bee.Workbench do
       "resourceFilename" => active && Path.basename(active),
       "resourceExtname" => active && Path.extname(active),
       "resourcePath" => active,
+      "resourceDirname" => active && Path.dirname(active),
+      "resourceLangId" => active && language(wb, active),
       "editorLangId" => active && language(wb, active),
+      "editorReadonly" => false,
+      "workspaceFolderCount" => 1,
+      "isWorkspaceTrusted" => true,
       "editorIsOpen" => wb.tabs != [],
       "canUndo" => active != nil and wb.can_undo,
       "canRedo" => active != nil and wb.can_redo,

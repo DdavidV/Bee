@@ -13,7 +13,8 @@ defmodule BeeWeb.EditorLive do
   their `use Bee.Commands.Command` handler here, plugin server commands are
   handed to `Bee.Plugins` (the plugin answers with `{:bee_api, request}`
   messages, see `Bee.API`), client ones are sent to the browser as
-  `bee:exec`. The `when` context (`Bee.Workbench.context/2`) is evaluated
+  `bee:exec`, and those of a VS Code extension's code need the extension
+  host. The `when` context (`Bee.Workbench.context/2`) is evaluated
   here for menus and the palette, and sent to the browser (`data-context`)
   for keybindings.
 
@@ -917,6 +918,19 @@ defmodule BeeWeb.EditorLive do
     end
   end
 
+  # A command of a VS Code extension's code: Bee doesn't run that yet.
+  defp run_effect(
+         {:run_extension_command, %{handler: {:extension, name}} = command, _args},
+         socket
+       ) do
+    put_flash(
+      socket,
+      :error,
+      "#{CommandRegistry.label(command)} is a command of the #{name} extension's code, " <>
+        "which Bee can't run yet: it needs the extension host"
+    )
+  end
+
   defp run_effect(:reload_plugins, socket) do
     Plugins.reload()
     socket |> load_plugins() |> put_flash(:info, "Plugins reloaded")
@@ -1149,6 +1163,9 @@ defmodule BeeWeb.EditorLive do
           match?({:plugin, _}, command.handler) ->
             run_effect({:run_plugin_command, command, args}, socket)
 
+          match?({:extension, _}, command.handler) ->
+            run_effect({:run_extension_command, command, args}, socket)
+
           true ->
             change(socket, &CommandRegistry.run_handler(command.handler, &1, args))
         end
@@ -1257,6 +1274,7 @@ defmodule BeeWeb.EditorLive do
   end
 
   defp decode_args(nil), do: []
+  defp decode_args(args) when is_list(args), do: args
 
   defp decode_args(json) when is_binary(json) do
     case Jason.decode(json) do
@@ -1434,11 +1452,22 @@ defmodule BeeWeb.EditorLive do
 
   @doc false
   def context(assigns) do
-    assigns
-    |> workbench_from()
+    wb = workbench_from(assigns)
+    active = Workbench.active_file(wb)
+
+    wb
     |> Workbench.context(assigns.settings)
+    |> Map.put(
+      "editorHasSelection",
+      match?({^active, _}, assigns[:selection]) and active != nil and
+        Enum.any?(elem(assigns.selection, 1), fn {from, to} -> from != to end)
+    )
     |> Map.merge(assigns[:ui_context] || %{})
   end
+
+  @doc false
+  # The file whose text the editor shows (its right-click menu's argument), or nil.
+  def editor_menu(assigns), do: Workbench.active_file(workbench_from(assigns))
 
   ## Settings / keybindings → assigns
 
@@ -1525,7 +1554,12 @@ defmodule BeeWeb.EditorLive do
 
     client =
       Enum.map(bindings, fn binding ->
-        base = Map.take(binding, [:key, :mac, :command, :when])
+        base = Map.take(binding, [:key, :mac, :linux, :win, :command, :when])
+        # Sent with run_command (and to client commands) when it has any.
+        base =
+          if binding.args == nil,
+            do: base,
+            else: Map.put(base, :args, Keybindings.arguments(binding.args))
 
         case commands[binding.command] do
           %{runtime: :client, enablement_ast: ast} ->
@@ -1602,35 +1636,71 @@ defmodule BeeWeb.EditorLive do
   # Items of the open context menu: its contributed entries whose `when`
   # holds (the element's keys on top of the window's), grouped like VS
   # Code's – "navigation" first, then by group name – with separators.
-  # "inline" groups are buttons, not menu items.
+  # "inline" groups are buttons, not menu items. An item naming a submenu
+  # is `%{submenu, label, items}`, its items built the same way (left out
+  # when it has none).
   def context_menu_items(%{context_menu: nil}), do: []
 
   def context_menu_items(%{context_menu: menu} = assigns) do
-    ctx = Map.merge(context(assigns), menu.context)
-    commands = Map.new(assigns.commands, &{&1.id, &1})
+    env = %{
+      ctx: Map.merge(context(assigns), menu.context),
+      commands: Map.new(assigns.commands, &{&1.id, &1}),
+      submenus: CommandRegistry.submenus(),
+      keybindings: assigns.keybindings
+    }
 
-    menu.menu
+    menu_items(menu.menu, env, 0)
+  end
+
+  # Submenus nest at most this deep (and can't loop).
+  @max_menu_depth 3
+
+  defp menu_items(menu, env, depth) do
+    menu
     |> CommandRegistry.menu()
     |> Enum.reject(&String.starts_with?(&1.group, "inline"))
     |> Enum.sort_by(&(&1.group != "navigation"))
     |> Enum.chunk_by(& &1.group)
     |> Enum.map(fn group ->
-      for %{command: id, when_ast: when_ast} <- group,
-          command = commands[id],
-          command != nil and Bee.Commands.When.eval(when_ast, ctx) do
-        %{
-          command: id,
-          label: command.title,
-          shortcut: Keybindings.label(id, assigns.keybindings),
-          disabled: not CommandRegistry.enabled?(command, ctx),
-          runtime: command.runtime
-        }
-      end
+      Enum.flat_map(group, fn item ->
+        if Bee.Commands.When.eval(item.when_ast, env.ctx),
+          do: menu_item(item, env, depth),
+          else: []
+      end)
     end)
     |> Enum.reject(&(&1 == []))
     |> Enum.intersperse([:separator])
     |> List.flatten()
   end
+
+  defp menu_item(%{command: id}, env, _depth) when is_binary(id) do
+    case env.commands[id] do
+      nil ->
+        []
+
+      command ->
+        [
+          %{
+            command: id,
+            label: command.title,
+            shortcut: Keybindings.label(id, env.keybindings),
+            disabled: not CommandRegistry.enabled?(command, env.ctx),
+            runtime: command.runtime
+          }
+        ]
+    end
+  end
+
+  defp menu_item(%{submenu: id}, env, depth) when is_binary(id) and depth < @max_menu_depth do
+    with %{label: label} <- env.submenus[id],
+         [_ | _] = items <- menu_items(id, env, depth + 1) do
+      [%{submenu: id, label: label, items: items}]
+    else
+      _ -> []
+    end
+  end
+
+  defp menu_item(_item, _env, _depth), do: []
 
   # No leading, trailing or doubled separators once hidden items are gone.
   defp tidy_separators(items) do

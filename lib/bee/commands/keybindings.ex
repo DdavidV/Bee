@@ -5,13 +5,19 @@ defmodule Bee.Commands.Keybindings do
   array, each entry validated against `priv/schemas/keybindings.schema.json`),
   with VS Code semantics:
 
-    * entries are `{"key": "ctrl+k ctrl+s", "command": "...", "when": "..."}`
+    * entries are `{"key": "ctrl+k ctrl+s", "command": "...", "when": "...",
+      "args": ...}`
     * later entries win when several match (the client walks the list
       backwards and takes the first one whose `when` holds)
     * `"command": "-some.command"` removes earlier bindings of that command;
       if `key` and/or `when` are given, only the bindings that match them
 
-  Resolved bindings: `%{key: strokes, mac: strokes, command: id, when: ast}`.
+  Resolved bindings: `%{key, mac, linux, win, command: id, when: ast, args}`,
+  each of the first four the strokes on that platform (`key`: any other),
+  or `nil` when the binding doesn't exist there: a contributed binding may
+  name other keys for a platform, or only some platforms. `args` (`nil`
+  for none) is what the command gets: a list is its arguments, anything
+  else its one argument.
   The result lives in `:persistent_term`; reloads broadcast
   `{:keybindings_changed, bindings, errors}` on the `"keybindings"` topic.
   """
@@ -31,10 +37,18 @@ defmodule Bee.Commands.Keybindings do
   @doc "Label of the binding that wins for `command`, e.g. \"Ctrl+Shift+P\", or nil."
   def label(command, bindings \\ all()) do
     case bindings |> Enum.reverse() |> Enum.find(&(&1.command == command)) do
-      nil -> nil
-      binding -> Bee.Commands.Keys.label(binding.key)
+      nil ->
+        nil
+
+      binding ->
+        Bee.Commands.Keys.label(binding.key || binding.linux || binding.win || binding.mac)
     end
   end
+
+  @doc "A binding's `args` as a command's arguments."
+  def arguments(nil), do: []
+  def arguments(args) when is_list(args), do: args
+  def arguments(arg), do: [arg]
 
   def reload, do: GenServer.call(__MODULE__, :reload)
 
@@ -68,7 +82,7 @@ defmodule Bee.Commands.Keybindings do
   def resolve(defaults, user, known_commands \\ nil) do
     {bindings, errors} =
       Enum.reduce(defaults, {[], []}, fn binding, {acc, errors} ->
-        case build(binding.key, binding.mac, binding.command, binding.when) do
+        case build(binding, binding.command, binding.when) do
           {:ok, b} -> {[b | acc], errors}
           {:error, reason} -> {acc, [reason | errors]}
         end
@@ -94,7 +108,7 @@ defmodule Bee.Commands.Keybindings do
          {:ok, when_ast} <- optional_when(entry["when"]) do
       remaining =
         Enum.reject(acc, fn b ->
-          b.command == command and (key == nil or key in [b.key, b.mac]) and
+          b.command == command and (key == nil or key in [b.key, b.mac, b.linux, b.win]) and
             (when_ast == nil or when_ast == b.when)
         end)
 
@@ -104,7 +118,7 @@ defmodule Bee.Commands.Keybindings do
 
   defp apply_user(%{"key" => key, "command" => command} = entry, acc, known)
        when is_binary(command) do
-    with {:ok, binding} <- build(key, nil, command, entry["when"]) do
+    with {:ok, binding} <- build(%{key: key, args: entry["args"]}, command, entry["when"]) do
       warning = if known && command not in known, do: "unknown command #{inspect(command)}"
       {:ok, [binding | acc], warning}
     end
@@ -118,13 +132,29 @@ defmodule Bee.Commands.Keybindings do
     end
   end
 
-  defp build(key, mac, command, when_source) do
-    with {:ok, strokes} <- Bee.Commands.Keys.parse(key),
-         {:ok, mac_strokes} <- if(mac, do: Bee.Commands.Keys.parse(mac), else: {:ok, strokes}),
+  # `keys`: %{key, mac, linux, win, args}, each optional. A platform
+  # without keys of its own has `key`'s.
+  defp build(keys, command, when_source) do
+    with {:ok, strokes} <- optional_key(keys[:key]),
+         {:ok, mac} <- platform_key(keys[:mac], strokes),
+         {:ok, linux} <- platform_key(keys[:linux], strokes),
+         {:ok, win} <- platform_key(keys[:win], strokes),
          {:ok, when_ast} <- Bee.Commands.When.parse(when_source) do
-      {:ok, %{key: strokes, mac: mac_strokes, command: command, when: when_ast}}
+      {:ok,
+       %{
+         key: strokes,
+         mac: mac,
+         linux: linux,
+         win: win,
+         command: command,
+         when: when_ast,
+         args: keys[:args]
+       }}
     end
   end
+
+  defp platform_key(nil, strokes), do: {:ok, strokes}
+  defp platform_key(key, _strokes), do: Bee.Commands.Keys.parse(key)
 
   defp optional_key(nil), do: {:ok, nil}
   defp optional_key(key), do: Bee.Commands.Keys.parse(key)

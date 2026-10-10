@@ -151,7 +151,13 @@
       />
     </div>
 
-    <div class="flex-1 min-h-0 relative">
+    <%!-- Right-clicking a file's text: the editor/context menu. --%>
+    <div
+      id="editor-area"
+      class="flex-1 min-h-0 relative"
+      data-menu={editor_menu(assigns) && "editor/context"}
+      data-menu-args={Jason.encode!(List.wrap(editor_menu(assigns)))}
+    >
       <div
         id="editor"
         phx-hook="CodeEditor"

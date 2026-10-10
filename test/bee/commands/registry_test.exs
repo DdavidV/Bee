@@ -135,6 +135,136 @@ defmodule Bee.Commands.RegistryTest do
       assert message =~ "must not have a server handler"
     end
 
+    test "commands of a VS Code extension's code need its extension part" do
+      source = {:plugin, "test-ext"}
+      on_exit(fn -> Contributions.unregister(source) end)
+
+      run = %{
+        "command" => "ext.run",
+        "title" => "Run",
+        "runtime" => "extension",
+        "icon" => %{"light" => "./media/l.svg", "dark" => "media/d.svg"}
+      }
+
+      spin = %{
+        "command" => "ext.spin",
+        "title" => "Spin",
+        "runtime" => "extension",
+        "icon" => "$(sync~spin)"
+      }
+
+      assert {:error, message} =
+               Contributions.register(source, manifest(%{"commands" => [run]}))
+
+      assert message =~ ~s(extension command "ext.run" needs an "extension" part)
+
+      :ok =
+        Contributions.register(
+          source,
+          Map.put(manifest(%{"commands" => [run, spin]}), "extension", %{"main" => "./x.js"})
+        )
+
+      assert %{runtime: :extension, handler: {:extension, "test-ext"}, icon: icon} =
+               CommandRegistry.command("ext.run")
+
+      # Its images are served from the plugin's folder.
+      assert icon == %{
+               light: "/plugins/test-ext/media/l.svg",
+               dark: "/plugins/test-ext/media/d.svg"
+             }
+
+      assert CommandRegistry.command("ext.spin").icon == "$(sync~spin)"
+
+      # Only plugins have such code.
+      assert {:error, message} =
+               Contributions.register(:test_plugin, manifest(%{"commands" => [spin]}))
+
+      assert message =~ "must come from a plugin"
+    end
+
+    test "submenus: a menu item names one, its items are a menu of its id" do
+      :ok =
+        Contributions.register(
+          :test_plugin,
+          manifest(%{
+            "commands" => [@hello],
+            "submenus" => [%{"id" => "test.more", "label" => "More"}],
+            "menus" => %{
+              "explorer/context" => [%{"submenu" => "test.more", "group" => "z_more"}],
+              "test.more" => [%{"command" => "plugin.hello"}],
+              # Not in the menu bar: left out there.
+              "menubar/file" => [%{"submenu" => "test.more", "group" => "1_save@9"}]
+            }
+          }),
+          handlers: [PluginActions]
+        )
+
+      assert CommandRegistry.submenus()["test.more"] ==
+               %{id: "test.more", label: "More", source: :test_plugin}
+
+      assert %{submenu: "test.more", group: "z_more"} =
+               Enum.find(CommandRegistry.menu("explorer/context"), &(&1[:submenu] != nil))
+
+      assert [%{command: "plugin.hello"}] = CommandRegistry.menu("test.more")
+
+      file = Enum.find(CommandRegistry.menus(), &(&1.id == "file"))
+      assert Enum.all?(file.items, &(&1 == :separator or is_binary(&1.command)))
+
+      # Ids are unique.
+      on_exit(fn -> Contributions.unregister(:test_plugin_2) end)
+
+      assert {:error, message} =
+               Contributions.register(
+                 :test_plugin_2,
+                 manifest(%{"submenus" => [%{"id" => "test.more", "label" => "Again"}]})
+               )
+
+      assert message =~ ~s(submenu "test.more" is already defined)
+    end
+
+    test "keybindings can name keys per platform, and arguments" do
+      :ok =
+        Contributions.register(
+          :test_plugin,
+          manifest(%{
+            "keybindings" => [
+              %{"mac" => "cmd+alt+p", "command" => "x.macOnly"},
+              %{
+                "key" => "ctrl+u",
+                "linux" => "ctrl+shift+u",
+                "win" => "alt+u",
+                "command" => "x.u",
+                "args" => %{"a" => 1}
+              }
+            ]
+          })
+        )
+
+      assert [
+               %{key: nil, mac: "cmd+alt+p", command: "x.macOnly"},
+               %{key: "ctrl+u", linux: "ctrl+shift+u", win: "alt+u", args: %{"a" => 1}}
+             ] = Enum.filter(CommandRegistry.keybindings(), &(&1.source == :test_plugin))
+
+      assert {:error, message} =
+               Contributions.register(
+                 :test_plugin,
+                 manifest(%{
+                   "keybindings" => [
+                     %{"key" => "ctrl+u", "linux" => "ctrl+nope", "command" => "x"}
+                   ]
+                 })
+               )
+
+      assert message =~ ~s(invalid key "ctrl+nope")
+
+      # Keys for some platform at least.
+      assert {:error, "invalid manifest" <> _} =
+               Contributions.register(
+                 :test_plugin,
+                 manifest(%{"keybindings" => [%{"command" => "x"}]})
+               )
+    end
+
     test "plugin commands are handled by the plugin, and need the matching part" do
       source = {:plugin, "test-plugin"}
       on_exit(fn -> Contributions.unregister(source) end)

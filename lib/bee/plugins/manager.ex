@@ -22,9 +22,11 @@ defmodule Bee.Plugins.Manager do
     * `:failed` – activation failed, or it crashed too often
 
   Server parts start lazily, per workspace: when it opens for the `*` /
-  `onStartupFinished` activation events, when a file of the language of an
-  `onLanguage:<id>` event is opened in it, and when one of the plugin's
-  commands runs in one of its windows.
+  `onStartupFinished` activation events, and for `workspaceContains:<glob>`
+  when it has such a file; when a file of the language of an
+  `onLanguage:<id>` event is opened in it; and when one of the plugin's
+  commands runs in one of its windows (`onCommand:` needs no more) or one
+  of its views is shown (`onView:`). Other events are ignored.
 
   A host that crashes is restarted, up to three times a minute. When a
   plugin's folder changes on disk it is reloaded (debounced).
@@ -37,6 +39,7 @@ defmodule Bee.Plugins.Manager do
 
   alias Bee.Contributions
   alias Bee.Plugins.Host
+  alias Bee.Plugins.VSCode.Manifest
 
   @table Bee.Plugins
   @topic "plugins"
@@ -75,7 +78,8 @@ defmodule Bee.Plugins.Manager do
 
   @impl true
   def handle_continue(:load, s),
-    do: {:noreply, Enum.reduce(Map.keys(s.roots), rescan(s), &start_eager(&2, &1))}
+    # (rescan/1 added every plugin: add/2 looked for their workspaceContains.)
+    do: {:noreply, Enum.reduce(Map.keys(s.roots), rescan(s), &start_eager(&2, &1, false))}
 
   @impl true
   def handle_call({:execute, name, id, ctx}, _from, s) do
@@ -182,6 +186,15 @@ defmodule Bee.Plugins.Manager do
      end}
   end
 
+  # workspaceContains activation: the plugins whose files `root` has.
+  def handle_info({:workspace_contains, root, names}, s) do
+    {:noreply,
+     if(Map.has_key?(s.roots, root),
+       do: Enum.reduce(names, s, &start_in(&2, &1, root)),
+       else: s
+     )}
+  end
+
   def handle_info(_msg, s), do: {:noreply, s}
 
   ## Discovery
@@ -241,8 +254,7 @@ defmodule Bee.Plugins.Manager do
 
     {plugins, _seen} =
       for {scope, workspace, base} <- dirs,
-          dir <-
-            base |> Path.join("*/plugin.json") |> Path.wildcard() |> Enum.map(&Path.dirname/1),
+          dir <- plugin_dirs(base),
           reduce: {[], %{}} do
         {acc, seen} ->
           plugin = read_plugin(scope, workspace, dir, disabled)
@@ -263,8 +275,30 @@ defmodule Bee.Plugins.Manager do
     plugins
   end
 
+  # The folders in `base` that are plugins: with a plugin.json, or a VS
+  # Code extension installed from a VSIX (read from its package.json).
+  defp plugin_dirs(base) do
+    case File.ls(base) do
+      {:ok, names} ->
+        for name <- Enum.sort(names),
+            not String.starts_with?(name, "."),
+            dir = Path.join(base, name),
+            File.exists?(Path.join(dir, "plugin.json")) or Manifest.extension?(dir),
+            do: dir
+
+      {:error, _} ->
+        []
+    end
+  end
+
   defp read_plugin(scope, workspace, dir, disabled) do
-    path = Path.join(dir, "plugin.json")
+    kind = if Manifest.extension?(dir), do: :vscode, else: :bee
+
+    path =
+      case kind do
+        :vscode -> Manifest.package_path(dir)
+        :bee -> Path.join(dir, "plugin.json")
+      end
 
     base = %{
       name: Path.basename(dir),
@@ -272,6 +306,8 @@ defmodule Bee.Plugins.Manager do
       description: nil,
       version: nil,
       scope: scope,
+      # :bee (a plugin.json) or :vscode (an extension's package.json).
+      kind: kind,
       # A workspace plugin's workspace: it only runs there.
       workspace: workspace,
       dir: dir,
@@ -281,6 +317,8 @@ defmodule Bee.Plugins.Manager do
       manifest: nil,
       status: :inactive,
       errors: [],
+      # What Bee left out of a VS Code extension, and why.
+      warnings: [],
       server?: false,
       browser: nil,
       activation_events: [],
@@ -290,12 +328,12 @@ defmodule Bee.Plugins.Manager do
       load_id: System.unique_integer([:positive])
     }
 
-    with {:ok, text} <- File.read(path),
-         {:ok, %{} = manifest} <- Bee.JSON.JSONC.decode(text),
+    with {:ok, manifest, warnings} <- read_manifest(kind, dir, path),
          :ok <- validate(manifest) do
       %{
         base
         | name: manifest["name"],
+          warnings: warnings,
           display_name: manifest["displayName"] || manifest["name"],
           description: manifest["description"],
           version: manifest["version"],
@@ -305,9 +343,20 @@ defmodule Bee.Plugins.Manager do
           status: if(manifest["name"] in disabled, do: :disabled, else: :inactive)
       }
     else
-      {:ok, _} -> invalid(base, "plugin.json must contain a JSON object")
-      {:error, reason} when is_binary(reason) -> invalid(base, reason)
-      {:error, reason} -> invalid(base, "cannot read plugin.json: #{inspect(reason)}")
+      {:error, reason} -> invalid(base, reason)
+    end
+  end
+
+  defp read_manifest(:vscode, dir, _path), do: Manifest.read(dir)
+
+  defp read_manifest(:bee, _dir, path) do
+    with {:ok, text} <- File.read(path),
+         {:ok, %{} = manifest} <- Bee.JSON.JSONC.decode(text) do
+      {:ok, manifest, []}
+    else
+      {:ok, _} -> {:error, "plugin.json must contain a JSON object"}
+      {:error, reason} when is_binary(reason) -> {:error, reason}
+      {:error, reason} -> {:error, "cannot read plugin.json: #{inspect(reason)}"}
     end
   end
 
@@ -344,6 +393,7 @@ defmodule Bee.Plugins.Manager do
       end
 
     s = put_in(s.plugins[plugin.name], plugin)
+    Enum.each(Map.keys(s.roots), &check_workspace_contains([plugin], &1))
 
     if eager?(plugin),
       do: Enum.reduce(Map.keys(s.roots), s, &start_in(&2, plugin.name, &1)),
@@ -385,10 +435,71 @@ defmodule Bee.Plugins.Manager do
   defp eager?(plugin),
     do: Enum.any?(plugin.activation_events, &(&1 in ["*", "onStartupFinished"]))
 
-  defp start_eager(s, root) do
+  defp start_eager(s, root, check_files? \\ true) do
+    if check_files?, do: check_workspace_contains(Map.values(s.plugins), root)
+
     for {name, plugin} <- s.plugins, eager?(plugin), reduce: s do
       s -> start_in(s, name, root)
     end
+  end
+
+  # Looking through a workspace's files can take a while: in a task, which
+  # tells us the plugins to start there.
+  defp check_workspace_contains(plugins, root) do
+    wanted =
+      for %{status: :inactive, name: name} = plugin <- plugins,
+          globs = for("workspaceContains:" <> glob <- plugin.activation_events, do: glob),
+          globs != [],
+          do: {name, globs}
+
+    manager = self()
+
+    if wanted != [] do
+      Task.Supervisor.start_child(Bee.Plugins.TaskSup, fn ->
+        send(manager, {:workspace_contains, root, workspace_contains(root, wanted)})
+      end)
+    end
+  end
+
+  @doc false
+  # The names in `wanted` (`[{name, globs}]`) one of whose globs matches a
+  # file of `root`: a plain path is looked up, a pattern matched against
+  # every file (without `files.exclude`d ones).
+  def workspace_contains(root, wanted) do
+    {plain, patterns} =
+      wanted
+      |> Enum.flat_map(fn {name, globs} -> Enum.map(globs, &{name, &1}) end)
+      |> Enum.split_with(fn {_name, glob} -> not String.contains?(glob, ["*", "?", "{", "["]) end)
+
+    found =
+      for {name, path} <- plain,
+          match?({:ok, _}, Bee.Workspace.FS.resolve(root, path)),
+          File.exists?(Path.join(root, path)),
+          into: MapSet.new(),
+          do: name
+
+    patterns =
+      for {name, glob} <- patterns,
+          name not in found,
+          do: {name, Bee.Workspace.Glob.compile(glob)}
+
+    found =
+      if patterns == [] do
+        found
+      else
+        Enum.reduce(Bee.Workspace.files(root), found, fn file, found ->
+          for {name, regex} <- patterns,
+              name not in found,
+              Bee.Workspace.Glob.match?(regex, file),
+              into: found,
+              do: name
+        end)
+      end
+
+    MapSet.to_list(found)
+  rescue
+    # A glob Bee can't read.
+    _ -> []
   end
 
   defp workspace_closed(s, root) do

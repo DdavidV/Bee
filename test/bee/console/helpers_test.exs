@@ -109,29 +109,29 @@ defmodule Bee.Console.HelpersTest do
 
   test "features(): each plugin's features, active or not", %{dir: dir} do
     # Installed from a VSIX: a grammar and a theme Bee uses, the rest not.
-    write_plugin(
-      dir,
-      "erlang-ls",
-      %{
-        "version" => "0.0.39",
-        "contributes" => %{
-          "languages" => [%{"id" => "erlang", "extensions" => [".erl"]}],
-          "grammars" => [
-            %{"language" => "erlang", "scopeName" => "source.erlang", "path" => "e.json"}
-          ],
-          "themes" => [%{"label" => "Owl", "uiTheme" => "vs-dark", "path" => "owl.json"}]
-        }
-      },
-      %{
-        "e.json" => "{}",
-        "owl.json" => "{}",
-        ".vsix.json" => ~s({"name": "erlang-ls", "openVsx": "erlang-ls.erlang-ls"}),
-        "package.json" =>
-          Jason.encode!(%{
-            "contributes" => %{"grammars" => [], "debuggers" => [], "configuration" => %{}}
-          })
-      }
-    )
+    folder = Path.join(dir, "erlang-ls")
+    File.mkdir_p!(folder)
+
+    for {rel, text} <- %{
+          "e.json" => "{}",
+          "owl.json" => "{}",
+          ".vsix.json" => ~s({"name": "erlang-ls", "openVsx": "erlang-ls.erlang-ls"}),
+          "package.json" =>
+            Jason.encode!(%{
+              "name" => "erlang-ls",
+              "version" => "0.0.39",
+              "contributes" => %{
+                "languages" => [%{"id" => "erlang", "extensions" => [".erl"]}],
+                "grammars" => [
+                  %{"language" => "erlang", "scopeName" => "source.erlang", "path" => "e.json"}
+                ],
+                "themes" => [%{"label" => "Owl", "uiTheme" => "vs-dark", "path" => "owl.json"}],
+                "debuggers" => [],
+                "configuration" => %{}
+              }
+            })
+        },
+        do: File.write!(Path.join(folder, rel), text)
 
     # A later plugin's grammar for the same language wins.
     write_plugin(
@@ -165,7 +165,7 @@ defmodule Bee.Console.HelpersTest do
              "    source.erlang (erlang)  e.json  overridden by z-erlang",
              "  Color Themes",
              "    Owl  available",
-             "  Not supported by Bee yet: configuration, debuggers",
+             "  Not supported by Bee yet: debuggers",
              "off  user · disabled",
              "  Commands",
              "    off.x  X  inactive: plugin disabled",

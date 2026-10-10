@@ -394,7 +394,8 @@ defmodule Bee.Console.Helpers do
 
   # Contribution points of a VS Code extension's package.json that Bee
   # doesn't read.
-  @supported ~w(languages grammars themes iconThemes snippets jsonValidation)
+  @supported ~w(commands keybindings menus submenus configuration configurationDefaults) ++
+               ~w(languages grammars themes iconThemes snippets jsonValidation)
   defp unsupported(plugin) do
     with dir when is_binary(dir) <- plugin.dir,
          true <- Bee.Plugins.Vsix.marker(dir) != %{},

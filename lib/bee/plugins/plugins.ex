@@ -1,7 +1,9 @@
 defmodule Bee.Plugins do
   @moduledoc """
   Plugins: folders with a `plugin.json` manifest
-  (`priv/schemas/manifest.schema.json`) in
+  (`priv/schemas/manifest.schema.json`) – or a VS Code extension installed
+  from a VSIX, whose `package.json` is read as one
+  (`Bee.Plugins.VSCode.Manifest`) – in
 
     * `priv/plugins/<name>/` – Bee's own (built-in); their server code is
       compiled with Bee, not at runtime

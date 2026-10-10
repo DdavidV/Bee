@@ -1,0 +1,88 @@
+{
+  "name": "hello",
+  "displayName": "%displayName%",
+  "description": "Bee's test extension: commands, menus, keybindings and settings like a VS Code extension's.",
+  "version": "0.1.0",
+  "publisher": "bee-tests",
+  "engines": {"vscode": "^1.80.0"},
+  "main": "./extension.js",
+  "activationEvents": ["onCommand:hello.sayHello", "workspaceContains:**/.hello"],
+  "contributes": {
+    "commands": [
+      {"command": "hello.sayHello", "title": "%sayHello.title%", "category": "Hello", "icon": "$(megaphone)"},
+      {"command": "hello.shout", "title": {"value": "Shout Selection", "original": "Shout Selection"}, "category": "Hello", "enablement": "editorHasSelection", "icon": {"light": "./media/shout-light.svg", "dark": "media/shout-dark.svg"}},
+      {"command": "hello.pick", "title": "Pick a Greeting", "category": "Hello"},
+      {"command": "hello.insert", "title": "Insert Text", "category": "Hello"},
+      {"command": "hello.reveal", "title": "Greet This File", "category": "Hello"},
+      {"command": "hello.broken", "title": "Broken Enablement", "enablement": "a ==="},
+      {"command": "hello bad id", "title": "Not Usable"},
+      {"command": "hello.untitled"}
+    ],
+    "keybindings": [
+      {"command": "hello.sayHello", "key": "ctrl+alt+h", "mac": "cmd+alt+h"},
+      {"command": "hello.shout", "key": "ctrl+alt+u", "linux": "ctrl+alt+shift+u", "when": "editorTextFocus"},
+      {"command": "hello.insert", "key": "ctrl+alt+[KeyI]", "args": {"text": "inserted"}},
+      {"command": "hello.pick", "mac": "cmd+alt+p"},
+      {"command": "workbench.action.togglePanel", "key": "ctrl+alt+oem_3"},
+      {"command": "hello.pick", "key": "ctrl+alt+nokey"},
+      {"command": "hello.pick", "key": "ctrl+alt+g", "when": "a ==="}
+    ],
+    "submenus": [
+      {"id": "hello.more", "label": "%more.label%"},
+      {"id": "hello.empty", "label": "Empty"}
+    ],
+    "menus": {
+      "editor/context": [
+        {"command": "hello.sayHello", "group": "navigation@1"},
+        {"command": "hello.shout", "group": "1_modification@2.6", "when": "editorHasSelection"},
+        {"submenu": "hello.more", "group": "1_modification@3"},
+        {"submenu": "hello.empty", "group": "1_modification@4"},
+        {"command": "hello.pick", "when": "resourceLangId == nope"},
+        {"command": "hello.pick", "when": "a ==="}
+      ],
+      "hello.more": [
+        {"command": "hello.pick", "group": "a@1"},
+        {"command": "hello.insert", "alt": "hello.shout", "group": "b"}
+      ],
+      "explorer/context": [
+        {"command": "hello.reveal", "group": "navigation", "when": "!explorerResourceIsFolder"}
+      ],
+      "editor/title": [
+        {"command": "hello.sayHello", "group": "navigation", "when": "resourceExtname == .txt"},
+        {"command": "hello.shout", "group": "navigation", "when": "resourceExtname == .txt"}
+      ],
+      "commandPalette": [
+        {"command": "hello.reveal", "when": "false"}
+      ],
+      "scm/title": [
+        {"command": "hello.sayHello"}
+      ]
+    },
+    "configuration": [
+      {
+        "title": "Hello",
+        "order": 1,
+        "properties": {
+          "hello.greeting": {"type": "string", "default": "Hello", "markdownDescription": "%greeting.description%", "scope": "resource"},
+          "hello.volume": {"type": "integer", "minimum": 0, "maximum": 11, "default": 5, "description": "How loud."},
+          "hello.style": {"type": "string", "enum": ["plain", "fancy"], "enumDescriptions": ["No frills", "Frills"], "default": "plain", "description": "How it looks."},
+          "hello.colors": {"$ref": "vscode://schemas/workbench-colors", "default": {}, "description": "Schema from VS Code."},
+          "hello": {"type": "string", "description": "One word: not a setting name in Bee."}
+        }
+      },
+      {
+        "title": "Hello: Advanced",
+        "order": 0,
+        "properties": {
+          "hello.advanced.trace": {"type": "boolean", "default": false, "description": "Trace what it does."}
+        }
+      }
+    ],
+    "configurationDefaults": {
+      "editor.tabSize": 3,
+      "hello.volume": 7,
+      "files.exclude": {"**/.hello-cache": true},
+      "[plaintext]": {"editor.wordWrap": "on"}
+    }
+  }
+}

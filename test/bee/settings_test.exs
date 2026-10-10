@@ -200,6 +200,71 @@ defmodule Bee.SettingsTest do
       assert Settings.errors() == []
     end
 
+    test "sections, in their order; other defaults for settings" do
+      :ok =
+        Bee.Contributions.register(:test_settings, %{
+          "name" => "test",
+          "contributes" => %{
+            "configuration" => [
+              Map.put(@configuration, "order", 2),
+              %{
+                "title" => "Test: First",
+                "order" => 1,
+                "properties" => %{"test.on" => %{"type" => "boolean", "default" => false}}
+              }
+            ],
+            "configurationDefaults" => %{
+              "editor.tabSize" => 3,
+              "test.on" => true,
+              # Added to the default's patterns.
+              "files.exclude" => %{"**/.cache" => true},
+              # Not a valid value: the setting's own default stays.
+              "editor.fontSize" => "big",
+              "[plaintext][markdown]" => %{"editor.wordWrap" => "on"}
+            }
+          }
+        })
+
+      assert_receive {:settings_changed, :user}
+
+      assert [%{sections: [%{title: "Test: First"}, %{title: "Test"}]}] =
+               Enum.filter(
+                 Settings.Configuration.contributed(),
+                 &Map.has_key?(&1.properties, "test.on")
+               )
+
+      assert Settings.get("test.level") == 3
+      assert Settings.get("test.on") == true
+      assert Settings.get("editor.tabSize") == 3
+      assert Settings.get("editor.fontSize") == 14
+      assert %{"**/.git" => true, "**/.cache" => true} = Settings.get("files.exclude")
+
+      assert Settings.Configuration.language_defaults() == %{
+               "plaintext" => %{"editor.wordWrap" => "on"},
+               "markdown" => %{"editor.wordWrap" => "on"}
+             }
+
+      # The user's value is over a plugin's default.
+      write(Settings.user_path(), ~s({"editor.tabSize": 8}))
+      assert Settings.get("editor.tabSize") == 8
+
+      Bee.Contributions.unregister(:test_settings)
+      assert_receive {:settings_changed, :user}
+      write(Settings.user_path(), "{}")
+      assert Settings.get("editor.tabSize") == 2
+    end
+
+    test "defaults alone are a contribution" do
+      :ok =
+        Bee.Contributions.register(:test_settings, %{
+          "name" => "test",
+          "contributes" => %{"configurationDefaults" => %{"editor.tabSize" => 5}}
+        })
+
+      assert_receive {:settings_changed, :user}
+      assert Settings.get("editor.tabSize") == 5
+    end
+
     test "names are unique, and the schema must be valid" do
       assert {:error, message} =
                contribute(:test_settings, %{

@@ -3,7 +3,8 @@ defmodule Bee.Plugins.Details do
   What a plugin's details page shows (VS Code's extension editor), from
   what the plugin itself has – there is no marketplace:
 
-    * its manifest (`plugin.json`): name, version, description, what it
+    * its manifest (`plugin.json`, or what Bee reads of a VS Code
+      extension's `package.json`): name, version, description, what it
       contributes (the Features tab)
     * for one installed from a VSIX, the extension's own `package.json`:
       publisher, license, repository, homepage, icon, categories
@@ -31,6 +32,7 @@ defmodule Bee.Plugins.Details do
       scope: plugin.scope,
       status: plugin.status,
       errors: plugin.errors,
+      warnings: plugin.warnings,
       dir: plugin.dir,
       source: if(vsix?, do: :vsix, else: :folder),
       open_vsx: marker["openVsx"],

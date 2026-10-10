@@ -2,16 +2,12 @@ defmodule Bee.Plugins.Vsix do
   @moduledoc """
   Installs a VS Code extension package (`.vsix`, a zip as downloaded from
   the Marketplace or Open VSX) as a Bee plugin in the user's plugins
-  folder. Any extension installs; its `plugin.json` gets the parts Bee
-  understands: file icon themes (`contributes.iconThemes`, see
-  `Bee.IconThemes`), color themes (`contributes.themes`, see
-  `Bee.ColorThemes`), languages with their configuration and TextMate
-  grammars (`Bee.Languages`), snippets (`Bee.Snippets`) and JSON schemas
-  (`Bee.JSONValidation`). The rest of it does nothing yet.
+  folder. Any extension installs; what Bee uses of it is read from its
+  `package.json` when the plugin loads (`Bee.Plugins.VSCode.Manifest`).
 
   The extension's files (the zip's `extension/` folder) are unpacked into
-  `<plugins>/<name>`, `name` being the extension's, and a `plugin.json` is
-  written for them. A `.vsix.json` marker records where it came from
+  `<plugins>/<name>`, `name` being the extension's. A `.vsix.json` marker
+  makes the folder a VS Code extension and records where it came from
   (`openVsx`: its Open VSX id, see `Bee.Plugins.OpenVsx`; `targetPlatform`:
   which platform's package it is): installing
   again replaces a plugin installed this way (an update), never a folder
@@ -19,6 +15,7 @@ defmodule Bee.Plugins.Vsix do
   """
 
   alias Bee.Plugins
+  alias Bee.Plugins.VSCode.Manifest
 
   @marker ".vsix.json"
   @max_size 300_000_000
@@ -35,10 +32,9 @@ defmodule Bee.Plugins.Vsix do
 
     with {:ok, files} <- read(path),
          {:ok, package} <- json(files, "package.json"),
-         contributes = contributes(package, files),
-         {:ok, name} <- plugin_name(package),
+         {:ok, name} <- Manifest.plugin_name(package),
          :ok <- check_target(name, source) do
-      write(name, files, manifest(name, package, files, contributes), origin)
+      write(name, files, Map.merge(%{name: name, version: package["version"]}, origin))
     end
   end
 
@@ -121,123 +117,6 @@ defmodule Bee.Plugins.Vsix do
     end
   end
 
-  # The contributes section of the plugin: what Bee knows of the
-  # extension's, with the fields Bee knows (color themes need a label, a
-  # known uiTheme and a file). Labels can be "%key%" (package.nls.json).
-  defp contributes(package, files) do
-    %{
-      "languages" => languages(package, files),
-      "grammars" => grammars(package, files),
-      "snippets" => snippets(package, files),
-      "jsonValidation" => json_validation(package, files),
-      "iconThemes" =>
-        for(
-          %{} = t <- List.wrap(get_in(package, ["contributes", "iconThemes"])),
-          do: t |> Map.take(~w(id label path)) |> localize_label(files)
-        ),
-      "themes" =>
-        for(
-          %{"label" => label, "path" => path, "uiTheme" => ui} = t <-
-            List.wrap(get_in(package, ["contributes", "themes"])),
-          is_binary(label) and is_binary(path) and ui in ~w(vs vs-dark hc-black hc-light),
-          do: t |> Map.take(~w(id label uiTheme path)) |> localize_label(files)
-        )
-    }
-    |> Map.reject(fn {_k, list} -> list == [] end)
-  end
-
-  # Languages: their ids, files, and configuration (when the package has
-  # its file); icons… aren't used yet.
-  defp languages(package, files) do
-    for %{"id" => id} = l <- List.wrap(get_in(package, ["contributes", "languages"])),
-        is_binary(id) and Regex.match?(~r/^[A-Za-z0-9_.+-]+$/, id) do
-      %{
-        "id" => id,
-        "aliases" => strings(l["aliases"]),
-        "extensions" => Enum.filter(strings(l["extensions"]), &String.starts_with?(&1, ".")),
-        "filenames" => strings(l["filenames"]),
-        "filenamePatterns" => strings(l["filenamePatterns"]),
-        "configuration" =>
-          with(
-            rel when is_binary(rel) <- l["configuration"],
-            true <- Map.has_key?(files, package_path(rel)),
-            do: rel,
-            else: (_ -> nil)
-          ),
-        # A JavaScript regex; kept when Elixir's understands it too.
-        "firstLine" =>
-          with(
-            line when is_binary(line) and line != "" <- l["firstLine"],
-            {:ok, _} <- Regex.compile(line),
-            do: line,
-            else: (_ -> nil)
-          )
-      }
-      |> Map.reject(fn {_k, v} -> v in [nil, []] end)
-    end
-  end
-
-  # TextMate grammars whose file is in the package.
-  defp grammars(package, files) do
-    for %{"scopeName" => scope, "path" => path} = g <-
-          List.wrap(get_in(package, ["contributes", "grammars"])),
-        is_binary(scope) and scope != "" and is_binary(path),
-        Map.has_key?(files, package_path(path)) do
-      %{
-        "scopeName" => scope,
-        "path" => path,
-        "language" => if(is_binary(g["language"]) and g["language"] != "", do: g["language"]),
-        "injectTo" => strings(g["injectTo"]),
-        "embeddedLanguages" =>
-          for(
-            {k, v} when is_binary(v) <-
-              (is_map(g["embeddedLanguages"]) && g["embeddedLanguages"]) || %{},
-            into: %{},
-            do: {k, v}
-          )
-      }
-      |> Map.reject(fn {_k, v} -> v in [nil, [], %{}] end)
-    end
-  end
-
-  # JSON schemas: web addresses, or files that are in the package.
-  defp json_validation(package, files) do
-    for %{"fileMatch" => match, "url" => url} <-
-          List.wrap(get_in(package, ["contributes", "jsonValidation"])),
-        match = Enum.filter(List.wrap(match), &(is_binary(&1) and &1 != "")),
-        match != [] and is_binary(url),
-        String.starts_with?(url, ["http://", "https://"]) or
-          Map.has_key?(files, package_path(url)),
-        do: %{"fileMatch" => match, "url" => url}
-  end
-
-  # Snippet files that are in the package.
-  defp snippets(package, files) do
-    for %{"path" => path} = s <- List.wrap(get_in(package, ["contributes", "snippets"])),
-        is_binary(path) and Map.has_key?(files, package_path(path)) do
-      if is_binary(s["language"]) and s["language"] != "",
-        do: %{"language" => s["language"], "path" => path},
-        else: %{"path" => path}
-    end
-  end
-
-  # "./grammar/x.json" → "grammar/x.json", the key of `files`.
-  defp package_path(rel), do: rel |> Path.expand("/") |> String.trim_leading("/")
-
-  defp strings(list) when is_list(list), do: Enum.filter(list, &(is_binary(&1) and &1 != ""))
-  defp strings(_list), do: []
-
-  # A Bee plugin name (lowercase letters, digits, dashes) from the extension's.
-  defp plugin_name(package) do
-    name =
-      (package["name"] || "")
-      |> String.downcase()
-      |> String.replace(~r/[^a-z0-9-]+/, "-")
-      |> String.trim("-")
-
-    if name == "", do: {:error, "the extension has no name"}, else: {:ok, name}
-  end
-
   defp check_target(name, source) do
     target = Path.join(Plugins.user_dir(), name)
     installed = marker(target)["openVsx"]
@@ -259,39 +138,10 @@ defmodule Bee.Plugins.Vsix do
     end
   end
 
-  defp manifest(name, package, files, contributes) do
-    %{
-      "name" => name,
-      "displayName" => localized(package["displayName"], files) || package["name"],
-      "description" => localized(package["description"], files),
-      "version" => package["version"],
-      "contributes" => contributes
-    }
-    |> Map.reject(fn {_k, v} -> is_nil(v) end)
-  end
-
-  defp localize_label(%{"label" => label} = theme, files),
-    do: %{theme | "label" => localized(label, files) || label}
-
-  defp localize_label(theme, _files), do: theme
-
-  # "%displayName%" → its text in package.nls.json.
-  defp localized("%" <> _ = text, files) do
-    key = String.trim(text, "%")
-
-    case json(files, "package.nls.json") do
-      {:ok, %{^key => value}} when is_binary(value) -> value
-      _ -> nil
-    end
-  end
-
-  defp localized(text, _files) when is_binary(text), do: text
-  defp localized(_text, _files), do: nil
-
   ## Writing
 
   # Unpacked next to the plugins folder first, then moved in whole.
-  defp write(name, files, manifest, origin) do
+  defp write(name, files, marker) do
     tmp = Path.join(Bee.Settings.user_dir(), ".installing-#{name}")
     target = Path.join(Plugins.user_dir(), name)
     File.rm_rf!(tmp)
@@ -302,14 +152,9 @@ defmodule Bee.Plugins.Vsix do
       File.write!(file, data)
     end
 
-    File.write!(Path.join(tmp, "plugin.json"), Jason.encode!(manifest, pretty: true))
-
     File.write!(
       Path.join(tmp, @marker),
-      %{name: manifest["name"], version: manifest["version"]}
-      |> Map.merge(origin)
-      |> Map.reject(fn {_k, v} -> is_nil(v) end)
-      |> Jason.encode!(pretty: true)
+      marker |> Map.reject(fn {_k, v} -> is_nil(v) end) |> Jason.encode!(pretty: true)
     )
 
     File.mkdir_p!(Plugins.user_dir())

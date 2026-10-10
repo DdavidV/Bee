@@ -8,6 +8,10 @@ const CODES = {
   Home: "home", End: "end", PageUp: "pageup", PageDown: "pagedown",
   Backquote: "`", Minus: "-", Equal: "=", BracketLeft: "[", BracketRight: "]",
   Backslash: "\\", Semicolon: ";", Quote: "'", Comma: ",", Period: ".", Slash: "/",
+  IntlBackslash: "intlbackslash", Pause: "pausebreak", CapsLock: "capslock",
+  ContextMenu: "contextmenu", NumLock: "numlock", ScrollLock: "scrolllock",
+  NumpadMultiply: "numpad_multiply", NumpadAdd: "numpad_add", NumpadSubtract: "numpad_subtract",
+  NumpadDecimal: "numpad_decimal", NumpadDivide: "numpad_divide", NumpadComma: "numpad_separator",
 }
 
 const keyOf = code => {

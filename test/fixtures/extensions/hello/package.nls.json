@@ -1,0 +1,6 @@
+{
+  "displayName": "Hello Extension",
+  "sayHello.title": "Say Hello",
+  "more.label": "More Greetings",
+  "greeting.description": "What it says."
+}

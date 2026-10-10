@@ -51,6 +51,27 @@
         "enablement": "resourceScheme == file"
       },
       {
+        "command": "editor.action.clipboardCutAction",
+        "category": "Edit",
+        "title": "Cut",
+        "runtime": "client",
+        "enablement": "resourceScheme == file"
+      },
+      {
+        "command": "editor.action.clipboardCopyAction",
+        "category": "Edit",
+        "title": "Copy",
+        "runtime": "client",
+        "enablement": "resourceScheme == file"
+      },
+      {
+        "command": "editor.action.clipboardPasteAction",
+        "category": "Edit",
+        "title": "Paste",
+        "runtime": "client",
+        "enablement": "resourceScheme == file"
+      },
+      {
         "command": "undo",
         "category": "Edit",
         "title": "Undo",
@@ -521,6 +542,12 @@
         {"command": "workbench.action.selectTheme", "group": "2_preferences@4"},
         {"command": "workbench.action.selectIconTheme", "group": "2_preferences@5"}
       ],
+      "editor/context": [
+        {"command": "editor.action.clipboardCutAction", "group": "9_cutcopypaste@1"},
+        {"command": "editor.action.clipboardCopyAction", "group": "9_cutcopypaste@2"},
+        {"command": "editor.action.clipboardPasteAction", "group": "9_cutcopypaste@3"},
+        {"command": "workbench.action.showCommands", "group": "z_commands@1"}
+      ],
       "menubar/edit": [
         {"command": "undo", "group": "1_do@1"},
         {"command": "redo", "group": "1_do@2"},
@@ -573,6 +600,9 @@
         {"command": "deleteFile", "group": "7_modification@2", "when": "!explorerResourceIsRoot"}
       ],
       "commandPalette": [
+        {"command": "editor.action.clipboardCutAction", "when": "false"},
+        {"command": "editor.action.clipboardCopyAction", "when": "false"},
+        {"command": "editor.action.clipboardPasteAction", "when": "false"},
         {"command": "filesExplorer.cut", "when": "false"},
         {"command": "filesExplorer.copy", "when": "false"},
         {"command": "filesExplorer.paste", "when": "false"},

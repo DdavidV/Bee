@@ -44,10 +44,19 @@
       "pattern": "\\.m?js$",
       "description": "ES module (relative to the plugin) loaded in the browser. It exports activate(bee)."
     },
+    "extension": {
+      "type": "object",
+      "description": "Code of a VS Code extension, run by Bee's extension host (Node.js) with the vscode API: what its package.json calls main.",
+      "required": ["main"],
+      "additionalProperties": false,
+      "properties": {
+        "main": {"type": "string", "minLength": 1, "description": "The extension's entry file, relative to the plugin."}
+      }
+    },
     "activationEvents": {
       "type": "array",
-      "description": "When the server part starts. Running one of the plugin's commands, or showing one of its views, always starts it.",
-      "items": {"type": "string", "pattern": "^(\\*|onStartupFinished|onLanguage:[A-Za-z0-9_.+-]+|onView:[A-Za-z0-9_.-]+)$"}
+      "description": "When the plugin's code starts: \"*\", \"onStartupFinished\", \"onLanguage:<id>\", \"onView:<id>\", \"onCommand:<id>\", \"workspaceContains:<glob>\". Others are ignored. Running one of the plugin's commands, or showing one of its views, always starts it.",
+      "items": {"type": "string", "minLength": 1}
     },
     "contributes": {
       "type": "object",
@@ -56,9 +65,14 @@
         "commands": {"type": "array", "items": {"$ref": "#/definitions/command"}},
         "keybindings": {"type": "array", "items": {"$ref": "#/definitions/keybinding"}},
         "menubar": {"type": "array", "items": {"$ref": "#/definitions/menubarEntry"}},
+        "submenus": {
+          "type": "array",
+          "description": "Menus shown as an item of another menu: a menu item names one with \"submenu\", and its own items are contributed under its id in \"menus\".",
+          "items": {"$ref": "#/definitions/submenu"}
+        },
         "menus": {
           "type": "object",
-          "description": "Menu id to items: \"menubar/<id>\", \"editor/title\" (editor buttons), \"view/title\" (view header buttons; `when` can test `view`), \"view/item/context\" (group \"inline\": buttons on a view's items; `when` can test `view` and `viewItem`), \"commandPalette\" (`when` false hides a command from the palette), \"editor/title/context\" (an editor tab's right-click menu: commands get the file's absolute path; `when` can test `resourcePath`, `resourceFilename`, `resourceExtname`), \"explorer/context\" (the Explorer's right-click menu: commands get the file's or folder's absolute path; `when` can test `explorerResourceIsFolder`, `explorerResourceIsRoot`, `resourcePath`, `resourceFilename`, `resourceExtname`). Context menus are grouped like VS Code's (\"navigation\", \"5_cutcopypaste\", \"7_modification\"…), with separators between groups.",
+          "description": "Menu id to items: \"menubar/<id>\", \"editor/title\" (editor buttons), \"view/title\" (view header buttons; `when` can test `view`), \"view/item/context\" (group \"inline\": buttons on a view's items; `when` can test `view` and `viewItem`), \"commandPalette\" (`when` false hides a command from the palette), \"editor/title/context\" (an editor tab's right-click menu: commands get the file's absolute path; `when` can test `resourcePath`, `resourceFilename`, `resourceExtname`), \"explorer/context\" (the Explorer's right-click menu: commands get the file's or folder's absolute path; `when` can test `explorerResourceIsFolder`, `explorerResourceIsRoot`, `resourcePath`, `resourceFilename`, `resourceExtname`), \"editor/context\" (the editor's right-click menu: commands get the file's absolute path). Context menus are grouped like VS Code's (\"navigation\", \"5_cutcopypaste\", \"7_modification\"…), with separators between groups.",
           "additionalProperties": {"type": "array", "items": {"$ref": "#/definitions/menuItem"}}
         },
         "languages": {"type": "array", "items": {"$ref": "#/definitions/language"}},
@@ -94,7 +108,17 @@
             }
           }
         },
-        "configuration": {"$ref": "#/definitions/configuration"},
+        "configuration": {
+          "description": "Settings: one section, or a list of them.",
+          "oneOf": [
+            {"$ref": "#/definitions/configuration"},
+            {"type": "array", "items": {"$ref": "#/definitions/configuration"}}
+          ]
+        },
+        "configurationDefaults": {
+          "type": "object",
+          "description": "Other default values for settings (Bee's or other plugins'), like VS Code's. Language blocks (\"[python]\": {…}) are not applied yet."
+        },
         "viewsContainers": {
           "type": "object",
           "additionalProperties": false,
@@ -125,13 +149,23 @@
         "title": {"type": "string", "minLength": 1},
         "category": {"type": "string", "minLength": 1},
         "icon": {
-          "type": "string",
-          "pattern": "^[a-z0-9-]+$",
-          "description": "Icon shown where the command is a button (editor/title, view/title, view/item/context menus): a Heroicons outline name, e.g. \"arrow-path\"."
+          "description": "Icon shown where the command is a button (editor/title, view/title, view/item/context menus): a Heroicons outline name (\"arrow-path\"), a codicon as in VS Code (\"$(refresh)\"), or images in the plugin for light and dark themes.",
+          "oneOf": [
+            {"type": "string", "pattern": "^([a-z0-9-]+|\\$\\([a-z0-9-]+(~spin)?\\))$"},
+            {
+              "type": "object",
+              "required": ["light", "dark"],
+              "additionalProperties": false,
+              "properties": {
+                "light": {"type": "string", "minLength": 1},
+                "dark": {"type": "string", "minLength": 1}
+              }
+            }
+          ]
         },
         "runtime": {
-          "enum": ["server", "client"],
-          "description": "server: a handler in the BEAM (`@command` function of Bee or of the plugin's server module); client: a handler registered in the browser."
+          "enum": ["server", "client", "extension"],
+          "description": "server: a handler in the BEAM (`@command` function of Bee or of the plugin's server module); client: a handler registered in the browser; extension: registered by the code of a VS Code extension (the plugin's \"extension\" part)."
         },
         "enablement": {"$ref": "#/definitions/whenClause"},
         "toggled": {"$ref": "#/definitions/whenClause"}
@@ -139,13 +173,27 @@
     },
     "keybinding": {
       "type": "object",
-      "required": ["key", "command"],
+      "required": ["command"],
+      "anyOf": [{"required": ["key"]}, {"required": ["mac"]}, {"required": ["linux"]}, {"required": ["win"]}],
       "additionalProperties": false,
+      "description": "Keys for a command, like VS Code's: \"key\" everywhere, unless \"mac\", \"linux\" or \"win\" names other keys for that platform (the browser's). Without \"key\", only on the platforms named.",
       "properties": {
         "key": {"type": "string", "minLength": 1},
         "mac": {"type": "string", "minLength": 1},
+        "linux": {"type": "string", "minLength": 1},
+        "win": {"type": "string", "minLength": 1},
         "command": {"type": "string", "minLength": 1},
-        "when": {"$ref": "#/definitions/whenClause"}
+        "when": {"$ref": "#/definitions/whenClause"},
+        "args": {"description": "What the command gets: a list is its arguments, anything else its one argument."}
+      }
+    },
+    "submenu": {
+      "type": "object",
+      "required": ["id", "label"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "label": {"type": "string", "minLength": 1}
       }
     },
     "menubarEntry": {
@@ -159,10 +207,11 @@
     },
     "menuItem": {
       "type": "object",
-      "required": ["command"],
+      "oneOf": [{"required": ["command"]}, {"required": ["submenu"]}],
       "additionalProperties": false,
       "properties": {
         "command": {"type": "string", "minLength": 1},
+        "submenu": {"type": "string", "minLength": 1, "description": "Instead of a command: the id of a submenu (\"submenus\") to open from this item, in context menus."},
         "group": {
           "type": "string",
           "pattern": "^[^@]+(@[0-9]+)?$",
@@ -272,6 +321,7 @@
       "description": "Settings: each property is a JSON Schema (draft 7) for one setting, with a default and a description.",
       "properties": {
         "title": {"type": "string"},
+        "order": {"type": "number"},
         "properties": {
           "type": "object",
           "propertyNames": {"pattern": "^[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)+$"},

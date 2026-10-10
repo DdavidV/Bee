@@ -42,10 +42,22 @@ defmodule Bee.Settings do
   @doc "Bee's own settings (`priv/schemas/settings.schema.json`)."
   def builtin_schema, do: Bee.JSON.Schema.raw!(@schema)["properties"]
 
-  @doc "Default values from the schema, plus defaults that depend on the environment."
+  @doc """
+  Default values from the schema, then those plugins give other settings
+  (`configurationDefaults`, where they are valid; an object's keys are
+  added to the schema's), plus defaults that depend on the environment.
+  """
   def defaults do
-    schema()
-    |> Map.new(fn {key, spec} -> {key, spec["default"]} end)
+    defaults = Map.new(schema(), fn {key, spec} -> {key, spec["default"]} end)
+
+    Bee.Settings.Configuration.defaults()
+    |> Enum.reduce(defaults, fn {key, value}, acc ->
+      case validate(key, value) do
+        :ok when is_map(value) -> Map.update(acc, key, value, &Map.merge(&1 || %{}, value))
+        :ok -> Map.put(acc, key, value)
+        {:error, _} -> acc
+      end
+    end)
     |> Map.merge(runtime_defaults())
   end
 
