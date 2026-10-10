@@ -15,8 +15,13 @@ defmodule BeeWeb.Plugs.RequireToken do
 
   @impl true
   def call(conn, _opts) do
-    if Bee.Access.required?(), do: check(conn), else: conn
+    if Bee.Access.required?() and not webview?(conn), do: check(conn), else: conn
   end
+
+  # A webview panel's page and files (BeeWeb.WebviewController): its frame
+  # is apart from Bee's page and has no cookie; the panel's own token, in
+  # the address, lets it in.
+  defp webview?(conn), do: match?(["webview", _token | _], conn.path_info)
 
   defp check(conn) do
     conn = conn |> fetch_session() |> fetch_query_params()

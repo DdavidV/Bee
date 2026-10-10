@@ -23,6 +23,7 @@ defmodule Bee.Application do
       Bee.UI,
       Bee.Diagnostics,
       Bee.Output,
+      Bee.Webviews,
       {Task.Supervisor, name: Bee.Search.TaskSup},
       Bee.Plugins.Supervisor,
       # Open VSX: its cache, requests (their tasks) and rate limits.

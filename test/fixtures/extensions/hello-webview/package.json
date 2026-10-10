@@ -1,0 +1,19 @@
+{
+  "name": "hello-webview",
+  "displayName": "Hello Webview",
+  "description": "Bee's test webview extension: a panel of its own HTML in an editor tab, with a script, a stylesheet and an image of its own, talking to its extension.",
+  "version": "0.1.0",
+  "publisher": "bee-tests",
+  "engines": {"vscode": "^1.100.0"},
+  "main": "./extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {"command": "helloWebview.open", "title": "Open Panel", "category": "Hello Webview"},
+      {"command": "helloWebview.update", "title": "Update Panel", "category": "Hello Webview"},
+      {"command": "helloWebview.close", "title": "Close Panel", "category": "Hello Webview"},
+      {"command": "helloWebview.plain", "title": "Open Plain Panel", "category": "Hello Webview"},
+      {"command": "helloWebview.external", "title": "Open Example", "category": "Hello Webview"}
+    ]
+  }
+}

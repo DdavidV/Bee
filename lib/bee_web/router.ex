@@ -26,6 +26,11 @@ defmodule BeeWeb.Router do
     get "/:name/*path", PluginAssetController, :show
   end
 
+  # Webview panels of extensions: their page and the files it loads.
+  scope "/webview", BeeWeb do
+    get "/:token/*path", WebviewController, :show
+  end
+
   if Application.compile_env(:bee, :dev_routes) do
     import Phoenix.LiveDashboard.Router
 

@@ -125,7 +125,9 @@ defmodule Bee.Workbench do
   # (`kind: :extension`, path "extension:<name>", like VS Code's extension
   # editor; see `BeeWeb.Workbench.ExtensionEditor`) or an editor a plugin
   # draws itself (`kind: :live`, path "live:<plugin>/<editor>[#<key>]", a
-  # LiveView of its; see `BeeWeb.Workbench.PluginLive`).
+  # LiveView of its; see `BeeWeb.Workbench.PluginLive`), or a webview panel
+  # of a VS Code extension (`kind: :webview`, path "webview:<id>", see
+  # `Bee.Webviews`).
 
   def open?(wb, path), do: Enum.any?(wb.tabs, &(&1.path == path))
 
@@ -183,6 +185,30 @@ defmodule Bee.Workbench do
     end
   end
 
+  @doc """
+  Shows webview panel `id` (`Bee.Webviews`) in an editor tab named `title`:
+  a new one (shown unless `activate?` is false), or the open one.
+  """
+  def open_webview(wb, id, title, activate? \\ true) do
+    path = "webview:" <> id
+
+    cond do
+      open?(wb, path) ->
+        if activate?, do: activate_editor(wb, path), else: wb
+
+      true ->
+        tab = %{path: path, kind: :webview, webview: id, title: title, dirty: false, lang: nil}
+        wb = %{wb | tabs: wb.tabs ++ [tab]}
+        if activate? or wb.active == nil, do: activate_editor(wb, path), else: wb
+    end
+  end
+
+  @doc "The title of webview panel `id`'s tab is `title` now."
+  def set_webview_title(wb, id, title) do
+    path = "webview:" <> id
+    %{wb | tabs: Enum.map(wb.tabs, &if(&1.path == path, do: %{&1 | title: title}, else: &1))}
+  end
+
   @doc "Shows `path`: activates its tab, or asks for the file to be opened."
   def open_editor(wb, path) do
     if open?(wb, path), do: activate_editor(wb, path), else: {wb, [{:open_file, path}]}
@@ -213,9 +239,12 @@ defmodule Bee.Workbench do
         remaining = List.delete_at(wb.tabs, index)
 
         effects =
-          if Enum.at(wb.tabs, index).kind == :file,
-            do: [{:close_buffer, path}, {:push, "cm:close", %{path: path}}],
-            else: []
+          case Enum.at(wb.tabs, index) do
+            %{kind: :file} -> [{:close_buffer, path}, {:push, "cm:close", %{path: path}}]
+            # Its extension is told: the panel is disposed of.
+            %{kind: :webview, webview: id} -> [{:webview_closed, id}]
+            _ -> []
+          end
 
         wb = %{wb | tabs: remaining}
 

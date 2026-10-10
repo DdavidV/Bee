@@ -24,16 +24,20 @@
 //                   cm:edit (server-side edits, UTF-8 byte offsets),
 //                   cm:reveal (select a range / go to a line),
 //                   cm:snippet (Insert Snippet), cm:diagnostics (a file's
-//                   problems, JSON validation)
+//                   problems, JSON validation), cm:language_diagnostics
+//                   (those extensions found), cm:language_features (what
+//                   extensions provide for a file), language:reply
 // Client -> server: doc_changed (throttled), save, selection_changed
 //                   (throttled, UTF-8 byte offsets; for plugin commands)
 //                   history_changed (whether the active file can undo/redo)
+//                   language_request, language_cancel, language_goto
+//                   (editor/language_features.js)
 // Client commands:  workbench.action.files.save, undo, redo
 //
 // A `bee:flush` window event sends pending changes and selections at once
 // (the Keybindings hook fires it before running a command).
 
-import {EditorState, Compartment} from "@codemirror/state"
+import {EditorState, Compartment, Prec} from "@codemirror/state"
 import {
   EditorView, keymap, lineNumbers, highlightActiveLineGutter, highlightSpecialChars,
   drawSelection, dropCursor, rectangularSelection, crosshairCursor, highlightActiveLine,
@@ -46,7 +50,7 @@ import {
   defaultHighlightStyle, bracketMatching, foldKeymap,
 } from "@codemirror/language"
 import {highlightSelectionMatches, searchKeymap} from "@codemirror/search"
-import {closeBrackets, autocompletion, closeBracketsKeymap, completionKeymap} from "@codemirror/autocomplete"
+import {closeBrackets, autocompletion, closeBracketsKeymap, completionKeymap, acceptCompletion} from "@codemirror/autocomplete"
 import {lintKeymap, setDiagnostics} from "@codemirror/lint"
 import {oneDark, oneDarkHighlightStyle} from "@codemirror/theme-one-dark"
 import {registerCommand} from "../commands/registry"
@@ -59,9 +63,14 @@ import {textmate, setGrammars, setTokenColors, onTextMateChange} from "../editor
 import {languageConfig} from "../editor/language_config"
 import {snippetCompletions, insertSnippet, setSnippetRoot} from "../editor/snippets"
 import {jsonAssist, setJsonRequester} from "../editor/json_assist"
+import {
+  languageFeatures, setFeatures, setLanguageRequester, goTo, showHover, startCompletion,
+} from "../editor/language_features"
 
 const SYNC_MS = 300
 const SELECTION_MS = 100
+// How long an extension's language feature is waited for.
+const LANGUAGE_MS = 10000
 
 // CodeMirror's basicSetup, minus lineNumbers (a setting, see below).
 const setup = [
@@ -76,6 +85,9 @@ const setup = [
   bracketMatching(),
   closeBrackets(),
   autocompletion(),
+  // Tab takes the selected suggestion, like Enter (before a snippet's next
+  // field, and before indenting); with no suggestions it does what it did.
+  Prec.highest(keymap.of([{key: "Tab", run: acceptCompletion}])),
   rectangularSelection(),
   crosshairCursor(),
   highlightActiveLine(),
@@ -204,6 +216,25 @@ export const CodeEditor = {
     // (JSON validation), path -> [{from: {line, character}, to, …}] (extensions).
     this.jsonDiagnostics = new Map()
     this.languageDiagnostics = new Map()
+    // Language features of extensions (editor/language_features.js):
+    // path -> what there is for the file, ref -> who waits for an answer.
+    this.languageFeatures = new Map()
+    this.languageRequests = new Map()
+    this.nextLanguageRef = 0
+    setLanguageRequester({
+      request: (feature, state, params) => this.languageRequest(feature, state, params),
+      goTo: (feature, state, position) => {
+        const path = state.facet(filePath)
+        if (!path || path !== this.active) return
+        this.flushAll()
+        this.pushEvent("language_goto", {feature, path, position})
+      },
+    })
+    this.handleEvent("cm:language_features", ({path, features}) => {
+      this.languageFeatures.set(path, features)
+      this.updateState(path, {effects: setFeatures.of(features)})
+    })
+    this.handleEvent("language:reply", ({ref, result}) => this.languageRequests.get(ref)?.(result ?? null))
     this.handleEvent("cm:edit", ({path, edits, text}) => this.edit(path, edits, text))
     this.handleEvent("cm:reveal", target => this.reveal(target))
 
@@ -216,6 +247,14 @@ export const CodeEditor = {
       registerCommand("editor.action.clipboardCutAction", () => this.clipboard("cut")),
       registerCommand("editor.action.clipboardCopyAction", () => this.clipboard("copy")),
       registerCommand("editor.action.clipboardPasteAction", () => this.clipboard("paste")),
+      registerCommand("editor.action.triggerSuggest", () => this.inFile(startCompletion)),
+      registerCommand("editor.action.showHover", () => this.inFile(showHover)),
+      ...Object.entries({
+        "editor.action.revealDefinition": "definition",
+        "editor.action.revealDeclaration": "declaration",
+        "editor.action.goToTypeDefinition": "typeDefinition",
+        "editor.action.goToImplementation": "implementation",
+      }).map(([id, feature]) => registerCommand(id, () => this.inFile(view => goTo(view, feature)))),
     ]
     this.history = null // last {canUndo, canRedo} sent
     this.unregisterEditor = setEditor(this)
@@ -286,6 +325,7 @@ export const CodeEditor = {
       extensions: [
         setup,
         filePath.of(path),
+        languageFeatures(this.languageFeatures.get(path)),
         languageCompartment.of(highlighting(highlight)),
         pluginCompartment.of(pluginExtensions()),
         Object.entries(compartments).map(([name, c]) => c.of(exts[name])),
@@ -296,6 +336,40 @@ export const CodeEditor = {
         }),
       ],
     })
+  },
+
+  // Runs an editor command in the shown file.
+  inFile(command) {
+    if (!this.active) return
+    this.view.focus()
+    command(this.view)
+  },
+
+  // Asks the extensions for a language feature (editor/language_features.js);
+  // the server gets the file's text first. The promise's `cancel()` gives
+  // up on the answer, as does taking too long: it is null then.
+  languageRequest(feature, state, params) {
+    const path = state ? state.facet(filePath) : this.active
+    let ref = null
+    const promise = new Promise(resolve => {
+      if (!path || path !== this.active) return resolve(null)
+      this.flushAll()
+      ref = `l${++this.nextLanguageRef}`
+      const timer = setTimeout(() => promise.cancel(), LANGUAGE_MS)
+      this.languageRequests.set(ref, result => {
+        clearTimeout(timer)
+        this.languageRequests.delete(ref)
+        resolve(result)
+      })
+      this.pushEvent("language_request", {ref, feature, path, params})
+    })
+    promise.cancel = () => {
+      const done = this.languageRequests.get(ref)
+      if (!done) return
+      done(null)
+      this.pushEvent("language_cancel", {ref})
+    }
+    return promise
   },
 
   runHistory(command) {
@@ -414,6 +488,7 @@ export const CodeEditor = {
     this.modes.delete(path)
     this.jsonDiagnostics.delete(path)
     this.languageDiagnostics.delete(path)
+    this.languageFeatures.delete(path)
     if (path === this.active) {
       this.active = null
       this.view.setState(EditorState.create())

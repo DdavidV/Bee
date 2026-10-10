@@ -7,6 +7,7 @@ defmodule Bee.Extensions.LanguagesTest do
   alias Bee.Diagnostics
   alias Bee.Editor.Buffer
   alias Bee.Extensions.Host
+  alias Bee.Languages.Features
   alias Bee.Plugins
   alias Bee.Plugins.Context
 
@@ -266,6 +267,190 @@ defmodule Bee.Extensions.LanguagesTest do
       tell.(Path.join(root, "_build/x.hl"))
       Process.sleep(100)
       refute Enum.any?(Host.log(root), &(&1 =~ "notes.txt" or &1 =~ "x.hl"))
+    end
+
+    # Asks for a feature as a window does, and waits for the answer.
+    defp ask(root, feature, path, params) do
+      ref = make_ref()
+      :ok = Features.request(root, feature, path, params, {self(), ref})
+      assert_receive {:language_reply, ^ref, reply}, 5_000
+      reply
+    end
+
+    defp at(line, character), do: %{position: %{line: line, character: character}}
+
+    defp started(root, path) do
+      {:ok, _} = Buffer.open(path)
+      eventually(fn -> Plugins.get("hello-lang", root).status == :active end)
+      eventually(fn -> Features.for_file(root, path) != %{} end)
+    end
+
+    test "which features there are for a file follows what is registered", %{root: root, a: a} do
+      Features.subscribe(root)
+      assert Features.for_file(root, a) == %{}
+      # Nobody to ask: no answer, not an error.
+      assert ask(root, "hover", a, at(0, 0)) == {:ok, nil}
+
+      started(root, a)
+      assert_receive :language_features_changed
+
+      assert %{
+               "completion" => %{triggerCharacters: ["."]},
+               "hover" => %{triggerCharacters: []},
+               "definition" => %{}
+             } = Features.for_file(root, a)
+
+      assert Features.for_file(root, Path.join(root, "notes.txt")) == %{}
+
+      Plugins.uninstall("hello-lang")
+      eventually(fn -> Features.for_file(root, a) == %{} end)
+    end
+
+    test "completion: items, what resolving adds, the accepted one's command", %{
+      root: root,
+      a: a
+    } do
+      started(root, a)
+
+      assert {:ok,
+              %{"session" => session, "incomplete" => false, "items" => [good, header, shout]}} =
+               ask(root, "completion", a, Map.put(at(0, 2), :context, %{triggerKind: 0}))
+
+      assert %{
+               "index" => 0,
+               "label" => "GOOD",
+               "kind" => "constant",
+               "insertText" => "GOOD",
+               "snippet" => false,
+               "documentation" => nil,
+               "resolvable" => true,
+               "command" => false,
+               "range" => nil
+             } = good
+
+      assert %{"label" => "header", "insertText" => "header!", "edits" => []} = header
+
+      assert %{
+               "label" => "shout",
+               "kind" => "function",
+               "insertText" => "SHOUT(${1:what})",
+               "snippet" => true,
+               "command" => true
+             } = shout
+
+      assert {:ok, %{"label" => "GOOD", "documentation" => "**GOOD** is good"}} =
+               ask(root, "completionResolve", a, %{session: session, index: 0})
+
+      # Plain text documentation is escaped; edits elsewhere come along.
+      assert {:ok, %{"documentation" => "adds a \\*first\\* line", "edits" => [edit]}} =
+               ask(root, "completionResolve", a, %{session: session, index: 1})
+
+      assert edit == %{
+               "from" => %{"line" => 0, "character" => 0},
+               "to" => %{"line" => 0, "character" => 0},
+               "text" => "# hello\n"
+             }
+
+      assert ask(root, "completionAccept", a, %{session: session, index: 2}) == {:ok, nil}
+      eventually(fn -> "accepted shout" in Host.log(root) end)
+      # An item that isn't there (any more).
+      assert ask(root, "completionResolve", a, %{session: session, index: 9}) == {:ok, nil}
+    end
+
+    test "completion is about the buffer's text, with the character that asked", %{
+      root: root,
+      a: a
+    } do
+      started(root, a)
+      Buffer.update(a, "greet.\n")
+
+      assert {:ok, %{"items" => [hello, world]}} =
+               ask(
+                 root,
+                 "completion",
+                 a,
+                 Map.put(at(0, 6), :context, %{triggerKind: 1, triggerCharacter: "."})
+               )
+
+      assert %{"label" => "hello", "kind" => "method", "info" => "trigger 1."} = hello
+
+      assert %{
+               "label" => "world",
+               "detail" => "(name)",
+               "description" => "greets",
+               "insertText" => "world(${1:name})$0",
+               "snippet" => true
+             } = world
+
+      # A character its provider didn't ask for.
+      assert {:ok, %{"items" => []}} =
+               ask(
+                 root,
+                 "completion",
+                 a,
+                 Map.put(at(0, 6), :context, %{triggerKind: 1, triggerCharacter: "("})
+               )
+    end
+
+    test "hover: Markdown and the range it is about; a provider failing is none", %{
+      root: root,
+      a: a
+    } do
+      started(root, a)
+
+      assert ask(root, "hover", a, at(1, 9)) ==
+               {:ok,
+                %{
+                  "contents" => ["**BAD**: 3 letters"],
+                  "range" => %{
+                    "from" => %{"line" => 1, "character" => 8},
+                    "to" => %{"line" => 1, "character" => 11}
+                  }
+                }}
+
+      # Nothing there.
+      Buffer.update(a, "one  two THROW\n")
+      assert ask(root, "hover", a, at(0, 4)) == {:ok, nil}
+      assert ask(root, "hover", a, at(0, 10)) == {:ok, nil}
+
+      eventually(fn ->
+        Enum.any?(Host.log(root), &(&1 =~ "hover failed: Error: no hover here"))
+      end)
+
+      # A file that isn't open, a feature nobody provides.
+      assert ask(root, "hover", Path.join(root, "b.hl"), at(0, 0)) == {:ok, nil}
+      assert ask(root, "implementation", a, at(0, 0)) == {:ok, []}
+    end
+
+    test "a request given up on is cancelled in the extension", %{root: root, a: a} do
+      started(root, a)
+      Buffer.update(a, "SLOW\n")
+      ref = make_ref()
+      :ok = Features.request(root, "hover", a, at(0, 1), {self(), ref})
+      refute_receive {:language_reply, ^ref, _}, 200
+      Features.cancel(root, ref)
+      assert_receive {:language_reply, ^ref, {:ok, nil}}, 2_000
+      eventually(fn -> "hover cancelled" in Host.log(root) end)
+    end
+
+    test "definition: the places in the workspace's files, each once", %{root: root, a: a, b: b} do
+      File.write!(b, "also BAD\ndef twice\n")
+      started(root, a)
+      Buffer.update(a, "def once\ndef twice\nonce twice none\n")
+
+      assert ask(root, "definition", a, at(2, 1)) ==
+               {:ok,
+                [
+                  %{
+                    "path" => a,
+                    "from" => %{"line" => 0, "character" => 4},
+                    "to" => %{"line" => 0, "character" => 8}
+                  }
+                ]}
+
+      assert {:ok, places} = ask(root, "definition", a, at(2, 6))
+      assert Enum.sort(Enum.map(places, &{&1["path"], &1["from"]["line"]})) == [{a, 1}, {b, 1}]
+      assert ask(root, "definition", a, at(2, 12)) == {:ok, []}
     end
   end
 end

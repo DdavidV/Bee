@@ -32,6 +32,70 @@ function diagnose(document) {
   return diagnostics
 }
 
+// Completion: after "greet." its members, else the language's words.
+// `GOOD` gets its documentation when resolved, `header` also adds a first
+// line, `shout` is a snippet whose command runs once it is inserted.
+const completion = {
+  provideCompletionItems(document, position, _token, context) {
+    const before = document.lineAt(position).text.slice(0, position.character)
+    if (/greet\.\w*$/.test(before)) {
+      const hello = new vscode.CompletionItem("hello", vscode.CompletionItemKind.Method)
+      hello.detail = `trigger ${context.triggerKind}${context.triggerCharacter || ""}`
+      const world = new vscode.CompletionItem({label: "world", detail: "(name)", description: "greets"}, vscode.CompletionItemKind.Method)
+      world.insertText = new vscode.SnippetString("world(${1:name})$0")
+      return [hello, world]
+    }
+    const good = new vscode.CompletionItem("GOOD", vscode.CompletionItemKind.Constant)
+    const header = new vscode.CompletionItem("header", vscode.CompletionItemKind.Keyword)
+    header.insertText = "header!"
+    const shout = new vscode.CompletionItem("shout", vscode.CompletionItemKind.Function)
+    shout.insertText = new vscode.SnippetString("SHOUT(${1:what})")
+    shout.command = {command: "helloLang.accepted", title: "", arguments: ["shout"]}
+    return new vscode.CompletionList([good, header, shout], false)
+  },
+  resolveCompletionItem(item) {
+    if (item.label === "GOOD") item.documentation = new vscode.MarkdownString("**GOOD** is good")
+    if (item.label === "header") {
+      item.documentation = "adds a *first* line"
+      item.additionalTextEdits = [vscode.TextEdit.insert(new vscode.Position(0, 0), "# hello\n")]
+    }
+    return item
+  },
+}
+
+// Hover: a word and its length. On SLOW the answer only comes when it
+// isn't waited for any more.
+const hover = {
+  provideHover(document, position, token) {
+    const range = document.getWordRangeAtPosition(position)
+    if (!range) return undefined
+    const word = document.getText(range)
+    if (word === "SLOW") {
+      return new Promise(resolve => token.onCancellationRequested(() => (console.log("hover cancelled"), resolve(undefined))))
+    }
+    if (word === "THROW") throw new Error("no hover here")
+    return new vscode.Hover(new vscode.MarkdownString(`**${word}**: ${word.length} letters`), range)
+  },
+}
+
+// Definition: the "def <word>" lines of the workspace's .hl files.
+const definition = {
+  async provideDefinition(document, position) {
+    const range = document.getWordRangeAtPosition(position)
+    if (!range) return undefined
+    const word = document.getText(range)
+    const found = []
+    for (const uri of await vscode.workspace.findFiles("**/*.hl")) {
+      const other = await vscode.workspace.openTextDocument(uri)
+      for (let line = 0; line < other.lineCount; line++) {
+        const {text} = other.lineAt(line)
+        if (text.startsWith(`def ${word}`)) found.push(new vscode.Location(uri, new vscode.Range(line, 4, line, 4 + word.length)))
+      }
+    }
+    return found
+  },
+}
+
 function activate(context) {
   const collection = vscode.languages.createDiagnosticCollection("hello")
   const refresh = document => {
@@ -46,6 +110,10 @@ function activate(context) {
   context.subscriptions.push(
     collection,
     watcher,
+    vscode.languages.registerCompletionItemProvider(selector, completion, "."),
+    vscode.languages.registerHoverProvider(selector, hover),
+    vscode.languages.registerDefinitionProvider(selector, definition),
+    vscode.commands.registerCommand("helloLang.accepted", what => console.log(`accepted ${what}`)),
     watcher.onDidCreate(seen("created")),
     watcher.onDidChange(seen("changed")),
     watcher.onDidDelete(seen("deleted")),

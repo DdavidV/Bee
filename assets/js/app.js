@@ -38,6 +38,8 @@ import {MarketplaceInput} from "./hooks/marketplace_input"
 import {ActivityBar, PanelSections, TerminalList} from "./hooks/sortable"
 import {ContextMenu, ContextMenus} from "./hooks/context_menu"
 import {Output} from "./hooks/output"
+import {Webview} from "./hooks/webview"
+import {openExternal} from "./external"
 import {ExplorerInput} from "./hooks/explorer_input"
 import {PaneSash, Sash} from "./hooks/sash"
 import {VsixInstall} from "./hooks/vsix_install"
@@ -54,7 +56,7 @@ const liveSocket = new LiveSocket("/live", Socket, {
   ...transport,
   // A function: evaluated on every (re)connect, so the saved layout is current.
   params: () => ({_csrf_token: csrfToken, layout: loadLayout()}),
-  hooks: {...colocatedHooks, ActivityBar, CodeEditor, ContextMenu, ContextMenus, ExplorerInput, Keybindings, Markdown, MarketplaceInput, Output, Palette, PaneSash, PanelSections, Tabs, TerminalList, Plugins, Sash, SearchInput, Terminal, ViewInput, VsixInstall},
+  hooks: {...colocatedHooks, ActivityBar, CodeEditor, ContextMenu, ContextMenus, ExplorerInput, Keybindings, Markdown, MarketplaceInput, Output, Palette, PaneSash, PanelSections, Tabs, TerminalList, Plugins, Sash, SearchInput, Terminal, ViewInput, VsixInstall, Webview},
 })
 
 // Show progress bar on live navigation and form submits
@@ -87,6 +89,9 @@ window.addEventListener("bee:run", e => exec(e.detail.command, e.detail.args || 
 // A folder in a new window: a browser tab, or a window of the desktop app.
 window.addEventListener("phx:bee:open_window", e =>
   window.__bridge ? window.__bridge.openWindow(e.detail.url) : window.open(e.detail.url, "_blank"))
+
+// An address an extension opens (vscode.env.openExternal).
+window.addEventListener("phx:open-external", e => openExternal(e.detail.url))
 
 // connect if there are any LiveViews on the page
 liveSocket.connect()

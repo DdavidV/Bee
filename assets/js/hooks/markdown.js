@@ -13,7 +13,7 @@
 import {marked} from "marked"
 import DOMPurify from "dompurify"
 
-const render = (text, base) => {
+export const render = (text, base) => {
   const html = marked.parse(text, {gfm: true, async: false})
   const fragment = DOMPurify.sanitize(html, {
     RETURN_DOM_FRAGMENT: true,

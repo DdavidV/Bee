@@ -8,7 +8,7 @@
 //   {method, params}              a notification
 //
 // From Bee: initialize, activate, deactivate, executeCommand; settings,
-// document*, activeEditor. To Bee: registerCommand, showMessage,
+// document*, activeEditor, provide, cancel, webview*. To Bee: registerCommand, showMessage,
 // showQuickPick, showInputBox, applyEdit, updateConfiguration,
 // executeCommand (commands that aren't here), statusItem, log, unsupported.
 //
@@ -21,7 +21,9 @@ const {randomUUID} = require("node:crypto")
 const fs = require("node:fs")
 const {Documents} = require("./documents")
 const {Languages} = require("./languages")
-const {Disposable, EventEmitter, Uri, TabInputText} = require("./types")
+const features = require("./features")
+const {Webviews} = require("./webview")
+const {Disposable, EventEmitter, Uri, TabInputText, CancellationTokenSource} = require("./types")
 const {createApi, createContext, TextEditor} = require("./vscode")
 
 // ---- Transport
@@ -171,6 +173,7 @@ const host = {
 }
 
 host.languages = new Languages(host)
+host.webviews = new Webviews(host)
 
 // The documents are the tabs (vscode.window.tabGroups).
 const tabOf = document => ({label: path.basename(document.fileName), input: new TabInputText(document.uri)})
@@ -289,7 +292,25 @@ const methods = {
     }
     return jsonable(await entry.handler.apply(entry.thisArg, revive(args || [])))
   },
+
+  // A language feature for the editor (features.js). `key`: what a
+  // `cancel` notification names it by; `document`: the file's text, if
+  // what we have isn't the editor's.
+  async provide({key, document, ...params}) {
+    if (document) host.documents.put(document)
+    const source = new CancellationTokenSource()
+    providing.set(key, source)
+    try {
+      return jsonable(await features.provide(host, params, source.token))
+    } finally {
+      providing.delete(key)
+      source.dispose()
+    }
+  },
 }
+
+// The `provide` requests being answered: key → their cancellation.
+const providing = new Map()
 
 const dispose = async extension => {
   try {
@@ -305,6 +326,7 @@ const dispose = async extension => {
     }
   }
   host.languages.forget(extension)
+  host.webviews.forget(extension)
   // Commands it didn't put in its subscriptions.
   for (const [id, entry] of [...host.commands]) {
     if (entry.extension !== extension) continue
@@ -357,6 +379,12 @@ const notifications = {
     if (document) host.documents.put(document)
     setActiveEditor(editor)
   },
+  // Webview panels (webview.js): a page's message, a tab shown, hidden or closed.
+  webviewMessage: params => host.webviews.message(params),
+  webviewState: params => host.webviews.state(params),
+  webviewClosed: params => host.webviews.closed(params),
+  // The editor doesn't wait for a `provide` any more.
+  cancel: ({key}) => providing.get(key)?.cancel(),
 }
 
 const failure = e => ({message: (e && e.message) || String(e), stack: e && e.stack})

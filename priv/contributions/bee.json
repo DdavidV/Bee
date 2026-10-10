@@ -72,6 +72,42 @@
         "enablement": "resourceScheme == file"
       },
       {
+        "command": "editor.action.triggerSuggest",
+        "title": "Trigger Suggest",
+        "runtime": "client",
+        "enablement": "resourceScheme == file"
+      },
+      {
+        "command": "editor.action.showHover",
+        "title": "Show Hover",
+        "runtime": "client",
+        "enablement": "editorHasHoverProvider"
+      },
+      {
+        "command": "editor.action.revealDefinition",
+        "title": "Go to Definition",
+        "runtime": "client",
+        "enablement": "editorHasDefinitionProvider"
+      },
+      {
+        "command": "editor.action.revealDeclaration",
+        "title": "Go to Declaration",
+        "runtime": "client",
+        "enablement": "editorHasDeclarationProvider"
+      },
+      {
+        "command": "editor.action.goToTypeDefinition",
+        "title": "Go to Type Definition",
+        "runtime": "client",
+        "enablement": "editorHasTypeDefinitionProvider"
+      },
+      {
+        "command": "editor.action.goToImplementation",
+        "title": "Go to Implementations",
+        "runtime": "client",
+        "enablement": "editorHasImplementationProvider"
+      },
+      {
         "command": "undo",
         "category": "Edit",
         "title": "Undo",
@@ -493,6 +529,10 @@
       {"key": "ctrl+k ctrl+o", "mac": "cmd+k cmd+o", "command": "workbench.action.files.openFolder"},
       {"key": "ctrl+z", "mac": "cmd+z", "command": "undo", "when": "editorTextFocus"},
       {"key": "ctrl+shift+z", "mac": "cmd+shift+z", "command": "redo", "when": "editorTextFocus"},
+      {"key": "ctrl+space", "command": "editor.action.triggerSuggest", "when": "editorTextFocus"},
+      {"key": "ctrl+k ctrl+i", "mac": "cmd+k cmd+i", "command": "editor.action.showHover", "when": "editorTextFocus"},
+      {"key": "f12", "command": "editor.action.revealDefinition", "when": "editorTextFocus && editorHasDefinitionProvider"},
+      {"key": "ctrl+f12", "mac": "cmd+f12", "command": "editor.action.goToImplementation", "when": "editorTextFocus && editorHasImplementationProvider"},
       {"key": "ctrl+b", "mac": "cmd+b", "command": "workbench.action.toggleSidebarVisibility"},
       {"key": "ctrl+j", "mac": "cmd+j", "command": "workbench.action.togglePanel"},
       {"key": "ctrl+shift+e", "mac": "cmd+shift+e", "command": "workbench.view.explorer"},
@@ -558,6 +598,10 @@
         {"command": "workbench.action.selectIconTheme", "group": "2_preferences@5"}
       ],
       "editor/context": [
+        {"command": "editor.action.revealDefinition", "group": "navigation@1", "when": "editorHasDefinitionProvider"},
+        {"command": "editor.action.revealDeclaration", "group": "navigation@2", "when": "editorHasDeclarationProvider"},
+        {"command": "editor.action.goToTypeDefinition", "group": "navigation@3", "when": "editorHasTypeDefinitionProvider"},
+        {"command": "editor.action.goToImplementation", "group": "navigation@4", "when": "editorHasImplementationProvider"},
         {"command": "editor.action.clipboardCutAction", "group": "9_cutcopypaste@1"},
         {"command": "editor.action.clipboardCopyAction", "group": "9_cutcopypaste@2"},
         {"command": "editor.action.clipboardPasteAction", "group": "9_cutcopypaste@3"},

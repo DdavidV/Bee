@@ -366,6 +366,186 @@ defmodule BeeWeb.ExtensionsTest do
   end
 
   @tag :node
+  test "language features: asked by the editor, answered by ref; go to definition", %{
+    conn: conn
+  } do
+    root = Bee.Workspace.root()
+    path = Path.join(root, "a.hl")
+    other = Path.join(root, "b.hl")
+    File.write!(path, "def once\ndef twice\nonce twice none\n")
+    File.write!(other, "\n\ndef twice\n")
+    Bee.Test.Extensions.install("hello-lang")
+
+    {:ok, view, _html} = live(conn, ~p"/")
+    open_file(view, "a.hl")
+    # Nothing for the file yet; then what the extension registered.
+    assert_push_event(view, "cm:language_features", %{path: ^path, features: none})
+    assert none == %{}
+
+    assert_push_event(
+      view,
+      "cm:language_features",
+      %{path: ^path, features: %{"completion" => %{triggerCharacters: ["."]}, "hover" => _}},
+      5_000
+    )
+
+    eventually(fn ->
+      BeeWeb.EditorLive.context(:sys.get_state(view.pid).socket.assigns)[
+        "editorHasDefinitionProvider"
+      ]
+    end)
+
+    position = fn line, character -> %{"line" => line, "character" => character} end
+
+    render_hook(view, "language_request", %{
+      "ref" => "l1",
+      "feature" => "hover",
+      "path" => path,
+      "params" => %{"position" => position.(0, 5)}
+    })
+
+    assert_push_event(
+      view,
+      "language:reply",
+      %{ref: "l1", result: %{"contents" => ["**once**: 4 letters"]}},
+      5_000
+    )
+
+    # About the text the editor sent just before.
+    render_hook(view, "doc_changed", %{"path" => path, "text" => "greet.\ndef once\ndef twice\n"})
+
+    render_hook(view, "language_request", %{
+      "ref" => "l2",
+      "feature" => "completion",
+      "path" => path,
+      "params" => %{
+        "position" => position.(0, 6),
+        "context" => %{"triggerKind" => 1, "triggerCharacter" => "."}
+      }
+    })
+
+    assert_push_event(
+      view,
+      "language:reply",
+      %{ref: "l2", result: %{"items" => [%{"label" => "hello"}, %{"label" => "world"}]}},
+      5_000
+    )
+
+    # A feature the editor doesn't ask for this way, a file that isn't open.
+    render_hook(view, "language_request", %{
+      "ref" => "l3",
+      "feature" => "definition",
+      "path" => path
+    })
+
+    assert_push_event(view, "language:reply", %{ref: "l3", result: nil})
+    render_hook(view, "language_request", %{"ref" => "l4", "feature" => "hover", "path" => other})
+    assert_push_event(view, "language:reply", %{ref: "l4", result: nil})
+
+    # One place: there. ("once" in "def once", line 2 now.)
+    goto = fn line, character ->
+      render_hook(view, "language_goto", %{
+        "feature" => "definition",
+        "path" => path,
+        "position" => position.(line, character)
+      })
+    end
+
+    goto.(1, 5)
+    assert_push_event(view, "cm:reveal", %{path: ^path, from: 11, to: 11}, 5_000)
+
+    # None.
+    goto.(0, 2)
+    eventually(fn -> has_element?(view, "#status", "No definition found") end)
+
+    # Several: picked in the palette; the other file opens at the place.
+    goto.(2, 5)
+    eventually(fn -> has_element?(view, "#palette-input[placeholder='Go to definition']") end)
+    html = render(view)
+    assert html =~ "a.hl:3"
+    assert html =~ "b.hl:3"
+
+    index =
+      Enum.find_index(
+        :sys.get_state(view.pid).socket.assigns.palette.items,
+        &(&1.label == "b.hl:3")
+      )
+
+    render_hook(view, "palette_pick", %{"index" => to_string(index)})
+    assert_push_event(view, "cm:open", %{path: ^other}, 5_000)
+    assert_push_event(view, "cm:reveal", %{path: ^other, from: 6, to: 6})
+    assert has_element?(view, "#tabs [data-path='#{other}'][data-active='true']")
+  end
+
+  @tag :node
+  test "a webview panel: its tab and frame, messages both ways, closing", %{conn: conn} do
+    root = Bee.Workspace.root()
+    Bee.Test.Extensions.install("hello-webview")
+    on_exit(fn -> Bee.Webviews.clear(root) end)
+
+    {:ok, view, _html} = live(conn, ~p"/")
+    run(view, "helloWebview.open")
+    eventually(fn -> has_element?(view, "#tabs [data-path^='webview:'][data-active='true']") end)
+    [panel] = Bee.Webviews.list(root)
+    path = "webview:" <> panel.id
+
+    # Its frame: the panel's page by its token, apart from Bee's page.
+    eventually(fn ->
+      has_element?(
+        view,
+        "#webview-#{panel.id}:not(.hidden) iframe[src='/webview/#{panel.token}/?v=1'][sandbox^='allow-scripts']"
+      )
+    end)
+
+    refute render(view) =~ "allow-same-origin"
+    # (Posted by the extension as it opened the panel.)
+    assert_push_event(view, "webview:message", %{message: %{"type" => "hello"}}, 5_000)
+
+    # From its page to the extension, and back; the tab is renamed.
+    render_hook(view, "webview_message", %{
+      "id" => panel.id,
+      "message" => %{"type" => "ping", "n" => 2}
+    })
+
+    id = panel.id
+
+    assert_push_event(
+      view,
+      "webview:message",
+      %{id: ^id, message: %{"type" => "pong", "n" => 2}},
+      5_000
+    )
+
+    eventually(fn -> has_element?(view, "#tabs [data-path='#{path}']", "Pong 2") end)
+
+    # What its page keeps is there for the page loaded again.
+    render_hook(view, "webview_state", %{"id" => id, "state" => %{"pings" => 2}})
+    eventually(fn -> Bee.Webviews.get(root, id).state == %{"pings" => 2} end)
+    run(view, "helloWebview.update")
+    eventually(fn -> has_element?(view, "#webview-#{id} iframe[src$='?v=2']") end)
+
+    # Another window of the workspace shows the panel too.
+    {:ok, other, _html} = live(conn, ~p"/")
+    assert has_element?(other, "#tabs [data-path='#{path}']", "Pong 2")
+
+    # Another tab: the frame stays, hidden; its extension is told.
+    open_file(view, "notes.txt")
+    assert has_element?(view, "#webview-#{id}.hidden iframe")
+    eventually(fn -> "webview active false" in Bee.Extensions.Host.log(root) end)
+
+    # Closed: the extension's panel is disposed of, everywhere.
+    run(view, "workbench.action.closeEditor", [path])
+    eventually(fn -> Bee.Webviews.list(root) == [] end)
+    refute has_element?(view, "#webview-#{id}")
+    eventually(fn -> not has_element?(other, "#tabs [data-path='#{path}']") end)
+    assert "webview disposed" in Bee.Extensions.Host.log(root)
+
+    # An address for the user's browser.
+    run(view, "helloWebview.external")
+    assert_push_event(view, "open-external", %{url: "https://example.com/from-extension"}, 5_000)
+  end
+
+  @tag :node
   test "the panel's Output section shows what extensions write, a channel at a time", %{
     conn: conn
   } do

@@ -26,9 +26,11 @@ defmodule Bee.Extensions.Host do
   and it carries out what they ask: messages, quick picks and input boxes
   in a window (answered with `{:bee_answer, ref, value}`, see `ask/5`),
   edits of open files, settings, context keys, status bar items, Bee's own
-  commands. The diagnostics their language features find go to
-  `Bee.Diagnostics`, edits of several files (`workspace.applyEdit`) to the
-  open buffers and to disk. What they write to output channels, and what
+  commands. Their language features answer the editor through
+  `Bee.Languages.Features`, which also knows what they registered; the
+  diagnostics they find go to `Bee.Diagnostics`, edits of several files (`workspace.applyEdit`) to the
+  open buffers and to disk. Their webview panels are the workspace's
+  `Bee.Webviews`, shown by its windows. What they write to output channels, and what
   they print, is the workspace's `Bee.Output`. Offsets are UTF-16 code units on Node's side, UTF-8 bytes on
   Bee's (`to_utf16/2`, `to_bytes/2`).
 
@@ -107,6 +109,19 @@ defmodule Bee.Extensions.Host do
     case whereis(root) do
       nil -> :ok
       pid -> GenServer.cast(pid, {:active_editor, window, path, selections})
+    end
+  end
+
+  @doc """
+  What a window has to say about webview panel `id` of workspace `root`
+  (`Bee.Webviews`): `{:message, data}` its page posted, `{:state, active?,
+  visible?}` of its tab, or `:closed`.
+  """
+  def webview(root, id, event) do
+    case whereis(root) do
+      # No host: nobody to tell, and the panel is nobody's.
+      nil -> if event == :closed, do: Bee.Webviews.dispose(root, id), else: :ok
+      pid -> GenServer.cast(pid, {:webview, id, event})
     end
   end
 
@@ -216,6 +231,8 @@ defmodule Bee.Extensions.Host do
           documents: %{},
           # Whether an extension watches files (we send their changes then).
           watching?: false,
+          # Language features being asked for: ref => our request's id.
+          provides: %{},
           log: :queue.new()
         }
 
@@ -302,6 +319,49 @@ defmodule Bee.Extensions.Host do
 
       nil ->
         {:noreply, run.({:error, "#{command_label(id)}: the #{name} extension isn't active"})}
+    end
+  end
+
+  # A language feature for an editor (Bee.Languages.Features): about the
+  # text the buffer has now, which Node gets first if it hasn't.
+  def handle_cast({:provide, feature, path, params, {pid, ref}}, s) do
+    open? = Registry.lookup(Bee.Registry, {:buffer, path}) != []
+    text = open? && inside?(path, s.root) && Bee.API.text(path)
+
+    cond do
+      # Details of a completion already given: not about the text.
+      is_binary(text) or feature in ~w(completionResolve completionAccept) ->
+        s = sync_document(s, path, text)
+        id = s.next_id
+        params = Map.merge(params, %{feature: feature, path: path, key: id})
+
+        {:noreply,
+         request(%{s | provides: Map.put(s.provides, ref, id)}, "provide", params, {
+           :provide,
+           pid,
+           ref
+         })}
+
+      true ->
+        send(pid, {:language_reply, ref, {:ok, nil}})
+        {:noreply, s}
+    end
+  end
+
+  def handle_cast({:webview, id, {:message, message}}, s),
+    do: {:noreply, notify(s, "webviewMessage", %{id: id, message: message})}
+
+  def handle_cast({:webview, id, {:state, active?, visible?}}, s),
+    do: {:noreply, notify(s, "webviewState", %{id: id, active: active?, visible: visible?})}
+
+  # Its panel disposes of itself (`webviewDispose` follows).
+  def handle_cast({:webview, id, :closed}, s),
+    do: {:noreply, notify(s, "webviewClosed", %{id: id})}
+
+  def handle_cast({:cancel_provide, ref}, s) do
+    case s.provides[ref] do
+      nil -> {:noreply, s}
+      id -> {:noreply, notify(s, "cancel", %{key: id})}
     end
   end
 
@@ -408,6 +468,11 @@ defmodule Bee.Extensions.Host do
   def terminate(_reason, s) do
     for {name, _} <- s.extensions, do: forget_commands(s.root, name)
     Bee.Diagnostics.clear(s.root)
+    Bee.Languages.Features.put(s.root, [])
+    Bee.Webviews.clear(s.root)
+
+    for {_id, {:provide, pid, ref}} <- s.pending,
+        do: send(pid, {:language_reply, ref, {:ok, nil}})
 
     if s.port do
       # Closing its stdin ends Node; one that hangs is killed.
@@ -544,6 +609,17 @@ defmodule Bee.Extensions.Host do
     s
   end
 
+  defp answered({:provide, pid, ref}, message, s) do
+    result =
+      case message do
+        %{"error" => error} -> {:error, error_message(error)}
+        _ -> {:ok, message["result"]}
+      end
+
+    send(pid, {:language_reply, ref, result})
+    %{s | provides: Map.delete(s.provides, ref)}
+  end
+
   # A command run for another extension (or Bee): its answer goes back.
   defp answered({:forward, id}, %{"error" => error}, s),
     do: reply_error(s, id, error_message(error))
@@ -647,6 +723,16 @@ defmodule Bee.Extensions.Host do
     end
   end
 
+  # An address for the user's browser (env.openExternal).
+  defp handle_request("openExternal", %{"url" => url}, id, s) when is_binary(url) do
+    if external?(url) do
+      to_window(s, {:open_external, url})
+      reply(s, id, true)
+    else
+      reply(s, id, false)
+    end
+  end
+
   defp handle_request("findFiles", _params, id, s),
     do: reply(s, id, Bee.Workspace.files(s.root))
 
@@ -667,7 +753,12 @@ defmodule Bee.Extensions.Host do
         reply(s, id, nil)
 
       {"vscode.open", [target | _], _} ->
-        Bee.API.open_file(context(s), plain(target))
+        target = plain(target)
+
+        if is_binary(target) and external?(target),
+          do: to_window(s, {:open_external, target}),
+          else: Bee.API.open_file(context(s), target)
+
         reply(s, id, nil)
 
       {_, _, %{handler: {:extension, name}}} ->
@@ -719,6 +810,8 @@ defmodule Bee.Extensions.Host do
     end
   end
 
+  defp external?(url), do: String.match?(url, ~r/^(https?|mailto):/i)
+
   # {"$uri": path} (a vscode.Uri) → the path, for Bee's own commands.
   defp plain(%{"$uri" => path}) when is_binary(path), do: path
   defp plain(other), do: other
@@ -761,8 +854,11 @@ defmodule Bee.Extensions.Host do
     %{s | watching?: on? == true}
   end
 
-  # Which language features extensions provide: used from L2 on.
-  defp handle_notification("providers", _params, s), do: s
+  # Which language features the extensions provide, for which files.
+  defp handle_notification("providers", params, s) do
+    Bee.Languages.Features.put(s.root, Enum.filter(List.wrap(params["providers"]), &is_map/1))
+    s
+  end
 
   defp handle_notification("setStatus", %{"text" => text}, s) do
     Bee.API.set_status(context(s), text)
@@ -774,6 +870,51 @@ defmodule Bee.Extensions.Host do
       do:
         manager({:extension_warning, name, s.root, "uses vscode.#{api}, which Bee doesn't have"})
 
+    s
+  end
+
+  # Webview panels of extensions (window.createWebviewPanel): Bee.Webviews
+  # has them for the windows to show.
+  defp handle_notification("webviewOpen", %{"id" => id} = params, s) when is_binary(id) do
+    Bee.Webviews.open(s.root, id, %{
+      extension: params["extension"],
+      view_type: params["viewType"],
+      title: to_string(params["title"]),
+      scripts?: params["scripts"] == true,
+      roots: Enum.filter(List.wrap(params["roots"]), &is_binary/1)
+    })
+
+    s
+  end
+
+  defp handle_notification("webviewUpdate", %{"id" => id} = params, s) do
+    changes =
+      for {key, name, valid?} <- [
+            {:title, "title", &is_binary/1},
+            {:html, "html", &is_binary/1},
+            {:scripts?, "scripts", &is_boolean/1},
+            {:roots, "roots", &is_list/1}
+          ],
+          Map.has_key?(params, name) and valid?.(params[name]),
+          into: %{},
+          do: {key, params[name]}
+
+    Bee.Webviews.update(s.root, id, changes)
+    s
+  end
+
+  defp handle_notification("webviewPost", %{"id" => id} = params, s) do
+    Bee.Webviews.post(s.root, id, params["message"])
+    s
+  end
+
+  defp handle_notification("webviewReveal", %{"id" => id}, s) do
+    Bee.Webviews.reveal(s.root, id)
+    s
+  end
+
+  defp handle_notification("webviewDispose", %{"id" => id}, s) do
+    Bee.Webviews.dispose(s.root, id)
     s
   end
 

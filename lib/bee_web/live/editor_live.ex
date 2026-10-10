@@ -50,6 +50,8 @@ defmodule BeeWeb.EditorLive do
       Bee.API.subscribe_window(root)
       Bee.UI.subscribe(root)
       Bee.Diagnostics.subscribe(root)
+      Bee.Languages.Features.subscribe(root)
+      Bee.Webviews.subscribe(root)
       Bee.Output.subscribe(root)
     end
 
@@ -72,6 +74,8 @@ defmodule BeeWeb.EditorLive do
      |> assign(grammars: Languages.grammars())
      |> assign(diagnostics: %{}, json_jobs: %{})
      |> assign(language_problems: language_problems(root), language_problems_timer: nil)
+     |> assign(language_features: 0, language_gotos: %{})
+     |> load_webviews()
      |> load_output_channels()
      |> allow_upload(:vsix,
        accept: :any,
@@ -487,6 +491,68 @@ defmodule BeeWeb.EditorLive do
     {:noreply, socket}
   end
 
+  ## Language features of extensions (Bee.Languages.Features)
+
+  # From the editor (editor/language_features.js), which sent its text
+  # first: answered later with language:reply, by `ref`.
+  def handle_event(
+        "language_request",
+        %{"ref" => ref, "feature" => feature, "path" => path} = params,
+        socket
+      )
+      when is_binary(ref) and is_binary(path) do
+    if feature in ~w(completion completionResolve completionAccept hover) and
+         Workbench.open?(workbench(socket), path) do
+      params = if is_map(params["params"]), do: params["params"], else: %{}
+      Bee.Languages.Features.request(socket.assigns.root, feature, path, params, {self(), ref})
+      {:noreply, socket}
+    else
+      {:noreply, push_event(socket, "language:reply", %{ref: ref, result: nil})}
+    end
+  end
+
+  def handle_event("language_cancel", %{"ref" => ref}, socket) when is_binary(ref) do
+    Bee.Languages.Features.cancel(socket.assigns.root, ref)
+    {:noreply, socket}
+  end
+
+  # Go to Definition and its relatives: the place is opened when it is
+  # known (`{:language_reply, ref, …}`), picked first if there are several.
+  def handle_event(
+        "language_goto",
+        %{"feature" => feature, "path" => path, "position" => %{} = position},
+        socket
+      )
+      when feature in ~w(definition typeDefinition declaration implementation) and
+             is_binary(path) do
+    if Workbench.open?(workbench(socket), path) do
+      ref = make_ref()
+      root = socket.assigns.root
+      Bee.Languages.Features.request(root, feature, path, %{position: position}, {self(), ref})
+      {:noreply, update(socket, :language_gotos, &Map.put(&1, ref, feature))}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  ## Webview panels of extensions (Bee.Webviews)
+
+  # From a panel's page (the Webview hook): a message for its extension,
+  # the state it keeps, a link to open, a key for Bee.
+  def handle_event("webview_message", %{"id" => id} = params, socket) when is_binary(id) do
+    if Workbench.open?(workbench(socket), "webview:" <> id),
+      do: Bee.Extensions.Host.webview(socket.assigns.root, id, {:message, params["message"]})
+
+    {:noreply, socket}
+  end
+
+  def handle_event("webview_state", %{"id" => id} = params, socket) when is_binary(id) do
+    if Workbench.open?(workbench(socket), "webview:" <> id),
+      do: Bee.Webviews.put_state(socket.assigns.root, id, params["state"])
+
+    {:noreply, socket}
+  end
+
   ## Output (Bee.Output): the panel's Output section shows one channel.
 
   # Its text element is there (the Output hook): the channel's text so far.
@@ -664,6 +730,85 @@ defmodule BeeWeb.EditorLive do
     {:noreply, if(before == nil, do: push_output(socket), else: socket)}
   end
 
+  # A webview panel of an extension (Bee.Webviews): its tab, here too.
+  def handle_info({:webview, id, :opened}, socket) do
+    case Bee.Webviews.get(socket.assigns.root, id) do
+      nil -> {:noreply, socket}
+      panel -> {:noreply, show_webview(socket, panel, true)}
+    end
+  end
+
+  def handle_info({:webview, id, :changed}, socket) do
+    case Bee.Webviews.get(socket.assigns.root, id) do
+      nil ->
+        {:noreply, socket}
+
+      panel ->
+        {:noreply,
+         socket
+         |> update(:webviews, &Map.put(&1, id, panel))
+         |> change(&Workbench.set_webview_title(&1, id, panel.title))}
+    end
+  end
+
+  def handle_info({:webview, id, :revealed}, socket),
+    do: {:noreply, change(socket, &Workbench.activate_editor(&1, "webview:" <> id))}
+
+  def handle_info({:webview, id, {:message, message}}, socket),
+    do: {:noreply, push_event(socket, "webview:message", %{id: id, message: message})}
+
+  def handle_info({:webview, id, :disposed}, socket) do
+    {:noreply,
+     socket
+     |> update(:webviews, &Map.delete(&1, id))
+     |> change(&Workbench.close_editor(&1, "webview:" <> id))}
+  end
+
+  # Extensions registered (or took back) language features: each open
+  # file's editor is told what there is for it now.
+  def handle_info(:language_features_changed, socket) do
+    socket =
+      Enum.reduce(socket.assigns.tabs, socket, fn
+        %{kind: :file, path: path}, socket -> push_language_features(socket, path)
+        _other, socket -> socket
+      end)
+
+    # (Menus and keybindings depend on them: the editorHas…Provider keys.)
+    {:noreply, update(socket, :language_features, &(&1 + 1))}
+  end
+
+  # An extension's answer: the editor's (its `ref` is a string), or where
+  # Go to Definition leads.
+  def handle_info({:language_reply, ref, reply}, socket) when is_binary(ref) do
+    result =
+      case reply do
+        {:ok, result} -> result
+        {:error, _message} -> nil
+      end
+
+    {:noreply, push_event(socket, "language:reply", %{ref: ref, result: result})}
+  end
+
+  def handle_info({:language_reply, ref, reply}, socket) do
+    case Map.pop(socket.assigns.language_gotos, ref) do
+      {nil, _} -> {:noreply, socket}
+      {feature, gotos} -> {:noreply, go_to(assign(socket, language_gotos: gotos), feature, reply)}
+    end
+  end
+
+  # Which of several places to go to was picked (see go_to/3).
+  def handle_info({:bee_answer, ref, index}, socket) do
+    case Map.pop(socket.assigns.language_gotos, ref) do
+      {places, gotos} when is_list(places) ->
+        socket = assign(socket, language_gotos: gotos)
+        place = is_integer(index) && Enum.at(places, index)
+        {:noreply, if(place, do: open_place(socket, place), else: socket)}
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
   def handle_info(:language_problems, socket) do
     {:noreply,
      assign(socket,
@@ -835,6 +980,7 @@ defmodule BeeWeb.EditorLive do
     |> sync_extension_details()
     |> sync_asked(before)
     |> sync_active_editor(before)
+    |> sync_webviews(before)
   end
 
   # A question asked through the palette (`reply`) that closed, or made way
@@ -907,6 +1053,11 @@ defmodule BeeWeb.EditorLive do
   defp run_effect({:push, event, payload}, socket), do: push_event(socket, event, payload)
 
   defp run_effect({:open_file, path}, socket), do: open_buffer(socket, path)
+
+  defp run_effect({:webview_closed, id}, socket) do
+    Bee.Extensions.Host.webview(socket.assigns.root, id, :closed)
+    socket
+  end
 
   defp run_effect({:explorer_edit, edit}, socket) do
     send_update(BeeWeb.Workbench.FileTree, id: "explorer", edit: edit)
@@ -1193,6 +1344,7 @@ defmodule BeeWeb.EditorLive do
       )
       |> validate_json(path, buffer.text)
       |> push_language_diagnostics(path)
+      |> push_language_features(path)
     else
       {:error, reason} ->
         message = "Cannot open #{display_path(socket.assigns.root, path)}: #{inspect(reason)}"
@@ -1372,6 +1524,10 @@ defmodule BeeWeb.EditorLive do
     |> change(&Workbench.show_panel(&1, "output"))
     |> push_output()
   end
+
+  # An address for the user's browser (env.openExternal of an extension).
+  defp plugin_request(socket, {:open_external, url}),
+    do: push_event(socket, "open-external", %{url: url})
 
   defp plugin_request(socket, {:open_live_editor, spec}),
     do: change(socket, &Workbench.open_live_editor(&1, spec))
@@ -1657,8 +1813,26 @@ defmodule BeeWeb.EditorLive do
       match?({^active, _}, assigns[:selection]) and active != nil and
         Enum.any?(elem(assigns.selection, 1), fn {from, to} -> from != to end)
     )
+    |> Map.merge(language_context(assigns[:root], active))
     |> Map.merge(assigns[:ui_context] || %{})
   end
+
+  # VS Code's editorHas…Provider keys, of the shown file.
+  @provider_keys %{
+    "completion" => "editorHasCompletionItemProvider",
+    "hover" => "editorHasHoverProvider",
+    "definition" => "editorHasDefinitionProvider",
+    "typeDefinition" => "editorHasTypeDefinitionProvider",
+    "declaration" => "editorHasDeclarationProvider",
+    "implementation" => "editorHasImplementationProvider"
+  }
+
+  defp language_context(root, path) when is_binary(root) and is_binary(path) do
+    features = Bee.Languages.Features.for_file(root, path)
+    Map.new(@provider_keys, fn {feature, key} -> {key, Map.has_key?(features, feature)} end)
+  end
+
+  defp language_context(_root, _path), do: %{}
 
   @doc false
   # The file whose text the editor shows (its right-click menu's argument), or nil.
@@ -2141,6 +2315,100 @@ defmodule BeeWeb.EditorLive do
     push_event(socket, "cm:language_diagnostics", %{path: path, diagnostics: diagnostics})
   end
 
+  ## Webview panels (Bee.Webviews)
+
+  # The workspace's panels there are already (another window's, or this
+  # one's before it was loaded again).
+  defp load_webviews(socket) do
+    socket = assign(socket, webviews: %{})
+
+    if connected?(socket),
+      do:
+        Enum.reduce(Bee.Webviews.list(socket.assigns.root), socket, &show_webview(&2, &1, false)),
+      else: socket
+  end
+
+  defp show_webview(socket, panel, activate?) do
+    socket
+    |> update(:webviews, &Map.put(&1, panel.id, panel))
+    |> change(&Workbench.open_webview(&1, panel.id, panel.title, activate?))
+  end
+
+  # Tells the extensions which of their panels is shown now.
+  defp sync_webviews(socket, before) do
+    wb = workbench(socket)
+
+    if before.active != wb.active do
+      for %{kind: :webview, webview: id, path: path} <- wb.tabs,
+          path in [before.active, wb.active] do
+        active? = path == wb.active
+        Bee.Extensions.Host.webview(socket.assigns.root, id, {:state, active?, active?})
+      end
+    end
+
+    socket
+  end
+
+  # Which language features there are for `path`, for its editor.
+  defp push_language_features(socket, path) do
+    features = Bee.Languages.Features.for_file(socket.assigns.root, path)
+    push_event(socket, "cm:language_features", %{path: path, features: features})
+  end
+
+  @goto_names %{
+    "definition" => "definition",
+    "typeDefinition" => "type definition",
+    "declaration" => "declaration",
+    "implementation" => "implementation"
+  }
+
+  # Where a symbol is defined (`[%{"path", "from", "to"}]`): there, or
+  # picked among them in the palette.
+  defp go_to(socket, _feature, {:ok, [place]}), do: open_place(socket, place)
+
+  defp go_to(socket, feature, {:ok, [_ | _] = places}) do
+    root = socket.assigns.root
+    ref = make_ref()
+
+    items =
+      for {%{"path" => path, "from" => from}, index} <- Enum.with_index(places) do
+        %{
+          label: "#{display_path(root, path)}:#{from["line"] + 1}",
+          description: place_line(path, from["line"]),
+          value: index
+        }
+      end
+
+    socket
+    |> update(:language_gotos, &Map.put(&1, ref, places))
+    |> plugin_request(
+      {:ask, ref, self(), :pick, %{placeholder: "Go to #{@goto_names[feature]}", items: items}}
+    )
+  end
+
+  defp go_to(socket, feature, {:error, message}),
+    do: put_flash(socket, :error, "Go to #{@goto_names[feature]}: #{message}")
+
+  defp go_to(socket, feature, _none),
+    do: change(socket, &Workbench.set_status(&1, "No #{@goto_names[feature]} found"))
+
+  defp open_place(socket, %{"path" => path, "from" => from}) do
+    at = Bee.Extensions.Host.position_to_bytes(place_text(path), from)
+    plugin_request(socket, {:open_file, path, %{from: at, to: at}})
+  end
+
+  # A file's text as its editor has it (unsaved, if open).
+  defp place_text(path) do
+    case Bee.API.text(path) do
+      text when is_binary(text) -> text
+      _ -> ""
+    end
+  end
+
+  defp place_line(path, line) do
+    path |> place_text() |> String.split("\n") |> Enum.at(line, "") |> String.trim()
+  end
+
   defp diagnostic_problems(assigns) do
     for {path, diagnostics} <- Enum.sort(assigns[:diagnostics] || %{}),
         d <- diagnostics,
@@ -2267,6 +2535,7 @@ defmodule BeeWeb.EditorLive do
   defp tab_label(%{kind: :file, path: path}, _details), do: Path.basename(path)
 
   defp tab_label(%{kind: :live, title: title}, _details), do: title
+  defp tab_label(%{kind: :webview, title: title}, _details), do: title
 
   defp tab_label(%{kind: :extension, name: name}, details),
     do: "Extension: " <> ((details[name] && details[name].display_name) || name)

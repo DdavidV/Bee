@@ -72,6 +72,7 @@ defmodule Bee.Plugins.Manager do
   def init(_opts) do
     :ets.new(@table, [:named_table, :protected, read_concurrency: true])
     Extensions.Host.create_commands_table()
+    Bee.Languages.Features.create_table()
     File.mkdir_p(Bee.Plugins.user_dir())
     Phoenix.PubSub.subscribe(Bee.PubSub, "fs")
     Bee.Settings.subscribe()

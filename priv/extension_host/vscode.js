@@ -403,6 +403,8 @@ const createApi = (host, ext) => {
     },
     withProgress: (_options, task) =>
       Promise.resolve(task({report() {}}, new types.CancellationTokenSource().token)),
+    // Webview panels (webview.js).
+    ...host.webviews.api(ext),
   }
 
   const workspace = {
@@ -521,6 +523,11 @@ const createApi = (host, ext) => {
     isTelemetryEnabled: false,
     onDidChangeTelemetryEnabled: new EventEmitter().event,
     logLevel: types.LogLevel.Info,
+    // Bee and its extensions run on the user's machine: a local address
+    // is the same from outside.
+    asExternalUri: async uri => uri,
+    // In the user's browser (or whatever opens such an address).
+    openExternal: target => host.request("openExternal", {url: String(target)}).then(Boolean),
   }
 
   const extensions = {

@@ -124,7 +124,7 @@
             class="size-4 shrink-0 opacity-70"
           />
           <.icon
-            :if={tab.kind == :live}
+            :if={tab.kind in [:live, :webview]}
             name="hero-window"
             class="size-4 shrink-0 opacity-70"
           />
@@ -211,6 +211,14 @@
           params={tab.params}
         />
       </div>
+      <%!-- Webview panels of extensions: each frame stays while its tab is open. --%>
+      <BeeWeb.Workbench.Webview.webview
+        :for={tab <- @tabs}
+        :if={tab.kind == :webview and @webviews[tab.webview]}
+        panel={@webviews[tab.webview]}
+        theme={@color_theme.id}
+        active={tab.path == @active}
+      />
       <div
         :if={@tabs == []}
         class="absolute inset-0 grid place-items-center bg-editor text-editor-fg text-sm"

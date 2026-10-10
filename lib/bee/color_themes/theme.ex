@@ -172,6 +172,16 @@ defmodule Bee.ColorThemes.Theme do
     [%{"settings" => editor} | rules]
   end
 
+  @doc """
+  The theme's colors as CSS declarations of the `--vscode-*` variables,
+  for the page of a webview (`BeeWeb.WebviewController`): its own, or VS
+  Code's defaults for its base.
+  """
+  def variables(%__MODULE__{} = theme) do
+    colors = if theme.custom?, do: theme.colors, else: resolve(%{}, theme.base)
+    Enum.map_join(Enum.sort(colors), fn {key, color} -> "#{var(key)}:#{color};" end)
+  end
+
   @doc "The CSS variable of a VS Code color key, as VS Code names it for webviews."
   def var(key), do: "--vscode-" <> String.replace(key, ".", "-")
 
