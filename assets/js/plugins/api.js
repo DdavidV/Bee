@@ -7,6 +7,8 @@
 //   bee.request(method, params)      -> Promise of the server part's answer
 //                                    (handle_request/4); rejects with its error
 //   bee.onMessage(fn)                fn(data) for Bee.API.post_message/2
+//   bee.registerHook(name, hook)     a LiveView hook (phx-hook="name") for the
+//                                    plugin's LiveViews (Bee.Plugin.LiveView)
 //   bee.registerEditorExtension(ext) a CodeMirror extension for every file;
 //                                    bee.editor.pathOf(state) tells which file
 //   bee.editor                       the active editor (see below)
@@ -27,6 +29,18 @@ import {getEditor} from "../editor/active"
 import {filePath, registerExtension} from "../editor/extensions"
 
 const codemirror = {state, view, language, commands, autocomplete}
+
+// LiveView looks a hook up by name when its element is mounted: one added
+// to the socket's hooks later is found like Bee's own (which it can't replace).
+const registerHook = (name, hook) => {
+  const hooks = window.liveSocket?.hooks
+  if (!hooks || Object.hasOwn(hooks, name)) {
+    console.warn(`Bee: hook ${name} is taken`)
+    return () => {}
+  }
+  hooks[name] = hook
+  return () => hooks[name] === hook && delete hooks[name]
+}
 
 // The active editor. Positions are CodeMirror's (UTF-16 offsets).
 const editor = {
@@ -91,6 +105,7 @@ export const createApi = (name, hook) => {
       hook.pushEvent("plugin_message", {plugin: name, level, text: String(text)}),
     request: (method, params = null) => hook.request(name, method, params),
     onMessage: fn => track(hook.onMessage(name, fn)),
+    registerHook: (hookName, liveHook) => track(registerHook(hookName, liveHook)),
     registerEditorExtension: extension => track(registerExtension(extension)),
     editor,
     codemirror,

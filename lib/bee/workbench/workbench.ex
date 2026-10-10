@@ -122,7 +122,9 @@ defmodule Bee.Workbench do
   # Each tab is an editor, `path` its id: a file (`kind: :file`, its
   # absolute path; CodeMirror shows it) or a plugin's details page
   # (`kind: :extension`, path "extension:<name>", like VS Code's extension
-  # editor; see `BeeWeb.Workbench.ExtensionEditor`).
+  # editor; see `BeeWeb.Workbench.ExtensionEditor`) or an editor a plugin
+  # draws itself (`kind: :live`, path "live:<plugin>/<editor>[#<key>]", a
+  # LiveView of its; see `BeeWeb.Workbench.PluginLive`).
 
   def open?(wb, path), do: Enum.any?(wb.tabs, &(&1.path == path))
 
@@ -152,6 +154,32 @@ defmodule Bee.Workbench do
           },
           path
         )
+  end
+
+  @doc """
+  Shows a plugin's editor (`%{plugin, id, title, params, key}`, see
+  `Bee.API.open_editor/3`) in an editor tab: its own, or the open one.
+  """
+  def open_live_editor(wb, %{plugin: plugin, id: id} = spec) do
+    path = "live:#{plugin}/#{id}" <> if(spec[:key], do: "#" <> spec.key, else: "")
+
+    if open?(wb, path) do
+      activate_editor(wb, path)
+    else
+      tab = %{
+        path: path,
+        kind: :live,
+        plugin: plugin,
+        editor: id,
+        key: spec[:key],
+        title: spec.title,
+        params: spec[:params] || %{},
+        dirty: false,
+        lang: nil
+      }
+
+      activate_editor(%{wb | tabs: wb.tabs ++ [tab]}, path)
+    end
   end
 
   @doc "Shows `path`: activates its tab, or asks for the file to be opened."

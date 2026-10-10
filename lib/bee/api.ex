@@ -153,6 +153,48 @@ defmodule Bee.API do
   def post_message(%Context{plugin: plugin} = ctx, data),
     do: window(ctx, {:post_message, plugin, data})
 
+  ## The plugin's LiveViews (Bee.Plugin.LiveView)
+
+  @doc """
+  Opens one of the plugin's editors (declared in its manifest under
+  `contributes.editors`) in an editor tab of the context's window(s), or
+  shows it when it is open. Options: `title:` (the tab's name, else the
+  manifest's), `params:` (JSON-like data, the LiveView's `@bee.params`) and
+  `key:` – a tab per key, so one editor can be open for several things.
+  """
+  def open_editor(%Context{plugin: plugin} = ctx, id, opts \\ []) do
+    id = to_string(id)
+
+    case Bee.Views.editor(id) do
+      %{source: {:plugin, ^plugin}} = editor ->
+        window(ctx, {
+          :open_live_editor,
+          %{
+            plugin: plugin,
+            id: id,
+            title: to_string(opts[:title] || editor.title),
+            params: opts[:params] || %{},
+            key: opts[:key] && to_string(opts[:key])
+          }
+        })
+
+      _ ->
+        raise ArgumentError, "#{plugin} has no editor #{inspect(id)}"
+    end
+  end
+
+  @doc """
+  Sends `message` (any term) to the plugin's LiveViews of view or editor
+  `id` in the workspace's windows: their `handle_info/2` gets it.
+  """
+  def push_live(%Context{plugin: plugin, root: root}, id, message) do
+    Phoenix.PubSub.broadcast(
+      Bee.PubSub,
+      Bee.Plugin.LiveView.topic(root, plugin, to_string(id)),
+      message
+    )
+  end
+
   @doc false
   # The answer to a bee.request() (see Bee.Plugins.request/5).
   def reply(%Context{} = ctx, ref, result), do: window(ctx, {:reply, ref, result})

@@ -20,6 +20,8 @@ defmodule Bee.Plugins do
       its own process (`Bee.Plugins.Host`)
     * a browser part – an ES module loaded by the page, exporting
       `activate(bee)` (`assets/js/plugins/`)
+    * LiveViews – its own user interface, in its views and in editor tabs
+      (`Bee.Plugin.LiveView`), among its server part's sources
 
   Contributions are shared by every window. The server part runs once per
   open workspace (folder), like VS Code's extension host per window: each
@@ -104,12 +106,42 @@ defmodule Bee.Plugins do
         do: %{name: name, url: url}
   end
 
+  @doc "Stylesheets for the windows of workspace `root`: `[%{name, url}]`."
+  def styles(root) do
+    for %{styles: %{url: url}, name: name, status: status} <- list(root),
+        status not in [:invalid, :disabled],
+        do: %{name: name, url: url}
+  end
+
+  @doc """
+  The LiveView of plugin record `plugin` that its manifest calls
+  `module_name` (a view's or editor's `live`), once the plugin's code is
+  loaded: `{:ok, module}` or `:error`. Only ever one of the plugin's own
+  modules, and a LiveView.
+  """
+  def live_module(%{scope: :builtin}, module_name) do
+    module = String.to_existing_atom("Elixir." <> module_name)
+    if live_view?(module), do: {:ok, module}, else: :error
+  rescue
+    ArgumentError -> :error
+  end
+
+  def live_module(%{name: name}, module_name) do
+    case Bee.Plugins.Modules.lookup(name, module_name) do
+      nil -> :error
+      module -> if live_view?(module), do: {:ok, module}, else: :error
+    end
+  end
+
+  defp live_view?(module),
+    do: Code.ensure_loaded?(module) and function_exported?(module, :__live__, 0)
+
   @doc """
   The file `rel` of plugin `name` that may be served to the browser: its
-  browser module, an icon of one of its icon themes (`Bee.IconThemes`), a
+  browser module, its stylesheet, an icon of one of its icon themes (`Bee.IconThemes`), a
   TextMate grammar (`Bee.Languages`), or an image in its folder (its icon,
   its README's pictures – of disabled plugins too, for their details
-  page). `{:ok, absolute_path, :module | :icon | :grammar}` or `:error`.
+  page). `{:ok, absolute_path, :module | :style | :icon | :grammar}` or `:error`.
   """
   def asset_path(name, rel) do
     case get(name) do
@@ -119,6 +151,7 @@ defmodule Bee.Plugins do
 
         cond do
           usable? and match?(%{browser: %{path: ^path}}, plugin) -> {:ok, path, :module}
+          usable? and match?(%{styles: %{path: ^path}}, plugin) -> {:ok, path, :style}
           usable? and Bee.IconThemes.icon_file?(name, path) -> {:ok, path, :icon}
           usable? and Bee.Languages.grammar_file?(name, path) -> {:ok, path, :grammar}
           image?(path, dir) -> {:ok, path, :icon}
@@ -153,6 +186,9 @@ defmodule Bee.Plugins do
   @spec execute_extension(String.t(), String.t(), Context.t()) :: :ok | {:error, String.t()}
   def execute_extension(name, id, %Context{} = ctx),
     do: GenServer.call(Manager, {:execute_extension, name, id, ctx})
+
+  @doc "Starts plugin `name`'s code in workspace `root` (something of it is shown there)."
+  def activate(name, root), do: GenServer.call(Manager, {:activate, name, root})
 
   @doc """
   View `view_id` is shown in a window of workspace `root`: starts the plugin

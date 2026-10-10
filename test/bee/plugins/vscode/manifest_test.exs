@@ -373,6 +373,33 @@ defmodule Bee.Plugins.VSCode.ManifestTest do
     assert manifest["extension"] == %{"main" => "./out/extension.js"}
     assert manifest["server"] == %{"module" => "Hybrid"}
 
+    # What Bee draws for it: a stylesheet, views and editors (LiveViews).
+    bee =
+      Map.merge(package["bee"], %{
+        "styles" => "bee/style.css",
+        "contributes" => %{
+          "viewsContainers" => %{
+            "activitybar" => [%{"id" => "hybrid", "title" => "Hybrid", "icon" => "bolt"}]
+          },
+          "views" => %{
+            "hybrid" => [%{"id" => "hybrid.list", "name" => "List", "live" => "Hybrid.ListLive"}]
+          },
+          "editors" => [
+            %{"id" => "hybrid.board", "title" => "Board", "live" => "Hybrid.BoardLive"}
+          ],
+          # Only views and editors: the rest is the extension's own.
+          "commands" => [%{"command" => "x", "title" => "X", "runtime" => "server"}]
+        }
+      })
+
+    assert {:ok, manifest, []} = Manifest.from_package(%{package | "bee" => bee}, dir)
+    assert manifest["styles"] == "bee/style.css"
+    assert manifest["contributes"]["editors"] == bee["contributes"]["editors"]
+    assert manifest["contributes"]["views"] == bee["contributes"]["views"]
+    refute Map.has_key?(manifest["contributes"], "commands")
+    assert :ok = Bee.JSON.Schema.validate("manifest", "#", manifest)
+    assert {:ok, _} = Bee.Contributions.normalize({:plugin, "hybrid"}, manifest, dir: dir)
+
     # Its id and what it needs, for extensions that depend on each other.
     package =
       Map.merge(package, %{

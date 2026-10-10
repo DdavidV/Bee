@@ -1,0 +1,60 @@
+/* The plugin's LiveViews, in Bee's theme: the --vscode-* variables are the
+   color theme's. Class names carry the plugin's name: the sheet is the
+   page's. */
+.todos-live { font-size: 13px; padding: 4px 0; }
+.todos-live ul { list-style: none; margin: 0; padding: 0; }
+.todos-live-filter { padding: 4px 12px 8px; }
+.todos-live-filter input {
+  width: 100%;
+  padding: 3px 6px;
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 3px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  outline-offset: -1px;
+}
+.todos-live-filter input:focus { outline: 1px solid var(--vscode-focusBorder); }
+.todos-live-item {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  padding: 2px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.todos-live-item:hover { background: var(--vscode-list-hoverBackground); }
+.todos-live-kind { font-size: 10px; font-weight: 600; opacity: 0.8; }
+.todos-live-fixme .todos-live-kind { color: var(--vscode-editorWarning-foreground, #cca700); }
+.todos-live-text { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.todos-live-where { font-size: 11px; opacity: 0.6; }
+.todos-live-empty { padding: 4px 12px; opacity: 0.6; }
+.todos-live-button {
+  margin: 8px 12px;
+  padding: 3px 10px;
+  border-radius: 3px;
+  cursor: pointer;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+.todos-live-button:hover { background: var(--vscode-button-hoverBackground); }
+
+.todos-live-board { padding: 24px 32px; }
+.todos-live-board header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.todos-live-board h1 { font-size: 20px; font-weight: 600; }
+.todos-live-count { flex: 1; opacity: 0.7; }
+.todos-live-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.todos-live-columns h2 { font-weight: 600; margin-bottom: 8px; }
+.todos-live-columns h2 span { opacity: 0.6; font-weight: 400; }
+.todos-live-card {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.3));
+  border-radius: 4px;
+  background: var(--vscode-sideBar-background);
+}
+.todos-live-card > div { flex: 1; min-width: 0; cursor: pointer; }
+.todos-live-card .todos-live-text { white-space: normal; }
+.todos-live-done .todos-live-text { text-decoration: line-through; opacity: 0.6; }

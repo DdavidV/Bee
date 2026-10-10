@@ -24,9 +24,14 @@ defmodule Bee.Plugins.VSCode.Manifest do
   the extension loads. `"%key%"` texts are looked up in `package.nls.json`.
 
   A `"bee"` section adds Bee's own parts to an extension, so one package
-  works in VS Code and in Bee:
+  works in VS Code and in Bee: a server part, a browser part, a
+  stylesheet, and views and editors Bee draws (`Bee.Plugin.LiveView`):
 
-      "bee": {"server": {"module": "MyExt"}, "browser": "bee/browser.js"}
+      "bee": {
+        "server": {"module": "MyExt"},
+        "browser": "bee/browser.js",
+        "contributes": {"editors": [{"id": "myExt.board", "title": "Board", "live": "MyExt.BoardLive"}]}
+      }
   """
 
   @marker ".vsix.json"
@@ -82,7 +87,7 @@ defmodule Bee.Plugins.VSCode.Manifest do
           "version" => string(package["version"]),
           "extension" => if(main, do: extension(package, main, tooling?)),
           "activationEvents" => activation_events(package, contributes, main),
-          "contributes" => contributes
+          "contributes" => Map.merge(contributes, bee_contributes(package))
         }
         |> Map.merge(bee_parts(package))
         |> Map.reject(fn {_k, v} -> is_nil(v) end)
@@ -151,8 +156,18 @@ defmodule Bee.Plugins.VSCode.Manifest do
   end
 
   # Bee's own parts; the manifest schema checks them.
-  defp bee_parts(%{"bee" => %{} = bee}), do: Map.take(bee, ~w(server browser))
+  defp bee_parts(%{"bee" => %{} = bee}), do: Map.take(bee, ~w(server browser styles))
   defp bee_parts(_package), do: %{}
+
+  # What its bee section contributes in Bee's own terms: views (VS Code's
+  # are drawn by the extension's code, these by a LiveView or from data)
+  # and editors.
+  @bee_points ~w(viewsContainers views editors)
+
+  defp bee_contributes(%{"bee" => %{"contributes" => %{} = contributes}}),
+    do: Map.take(contributes, @bee_points)
+
+  defp bee_contributes(_package), do: %{}
 
   ## Contributions
 

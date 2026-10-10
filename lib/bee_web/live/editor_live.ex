@@ -583,7 +583,7 @@ defmodule BeeWeb.EditorLive do
 
     socket =
       if :views in keys do
-        socket = load_views(socket)
+        socket = socket |> load_views() |> load_live()
 
         # The shown container went away with its plugin.
         if Enum.any?(socket.assigns.containers, &(&1.id == socket.assigns.sidebar_view)),
@@ -1299,6 +1299,9 @@ defmodule BeeWeb.EditorLive do
   defp plugin_request(%{assigns: %{palette: %{reply: {_pid, ref}}}} = socket, {:ask_done, ref}),
     do: change(socket, &Workbench.close_palette/1)
 
+  defp plugin_request(socket, {:open_live_editor, spec}),
+    do: change(socket, &Workbench.open_live_editor(&1, spec))
+
   defp plugin_request(socket, {:input_box, spec}),
     do: change(socket, &Workbench.open_input_box(&1, spec))
 
@@ -1458,9 +1461,70 @@ defmodule BeeWeb.EditorLive do
       plugins: Plugins.list(socket.assigns.root),
       plugin_errors: Plugins.errors(socket.assigns.root),
       browser_plugins: Plugins.browser_modules(socket.assigns.root),
+      plugin_styles: Plugins.styles(socket.assigns.root),
       marketplace_installed: OpenVsx.installed()
     )
     |> sync_extension_details(true)
+    |> load_live()
+  end
+
+  # The LiveViews plugins draw their views and editors with
+  # (BeeWeb.Workbench.PluginLive): `{:view | :editor, id} => %{plugin, name,
+  # module, status, load_id}`, `module` once the plugin's code is loaded.
+  defp load_live(socket) do
+    plugins = Map.new(socket.assigns[:plugins] || [], &{&1.name, &1})
+
+    declared =
+      for(
+        %{live: live, source: {:plugin, name}} = v <- Bee.Views.views(),
+        live != nil,
+        do: {{:view, v.id}, name, live}
+      ) ++
+        for(
+          %{live: live, source: {:plugin, name}} = e <- Bee.Views.editors(),
+          do: {{:editor, e.id}, name, live}
+        )
+
+    live =
+      for {key, name, module_name} <- declared, plugin = plugins[name], into: %{} do
+        module =
+          with :active <- plugin.status,
+               {:ok, module} <- Plugins.live_module(plugin, module_name) do
+            module
+          else
+            _ -> nil
+          end
+
+        {key,
+         %{
+           plugin: name,
+           name: module_name,
+           module: module,
+           status: plugin.status,
+           load_id: plugin.load_id
+         }}
+      end
+
+    # What is on screen needs its plugin running (again, after a reload):
+    # open editor tabs, and the views of the shown containers.
+    if connected?(socket) do
+      shown = [
+        socket.assigns[:sidebar_open] && socket.assigns[:sidebar_view],
+        socket.assigns[:panel_open] && socket.assigns[:panel_view]
+      ]
+
+      on_screen =
+        for(%{kind: :live, plugin: name} <- socket.assigns[:tabs] || [], do: name) ++
+          for %{live: live, container: container, source: {:plugin, name}} <- Bee.Views.views(),
+              live != nil and container in shown,
+              do: name
+
+      for name <- Enum.uniq(on_screen),
+          match?(%{status: :inactive}, plugins[name]),
+          do: Plugins.activate(name, socket.assigns.root)
+    end
+
+    assign(socket, live: live)
   end
 
   ## Languages
@@ -2086,6 +2150,8 @@ defmodule BeeWeb.EditorLive do
 
   # A tab's name: the file's, or "Extension: <plugin>".
   defp tab_label(%{kind: :file, path: path}, _details), do: Path.basename(path)
+
+  defp tab_label(%{kind: :live, title: title}, _details), do: title
 
   defp tab_label(%{kind: :extension, name: name}, details),
     do: "Extension: " <> ((details[name] && details[name].display_name) || name)

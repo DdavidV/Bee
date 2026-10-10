@@ -23,7 +23,7 @@ defmodule BeeWeb.Workbench.Panel do
   """
   use BeeWeb, :html
 
-  alias BeeWeb.Workbench.{ContributedView, Toolbar}
+  alias BeeWeb.Workbench.{ContributedView, PluginLive, Toolbar}
 
   attr :maximized, :boolean, required: true
   attr :active, :string, required: true, doc: "the shown section (container id)"
@@ -41,6 +41,9 @@ defmodule BeeWeb.Workbench.Panel do
   attr :view_inputs, :map, required: true
   attr :collapsed, :any, required: true
   attr :icon_theme, :any, default: nil
+  attr :socket, :any, required: true, doc: "the window's socket, for plugins' LiveViews"
+  attr :live, :map, required: true, doc: "plugins' LiveViews (BeeWeb.EditorLive.load_live/1)"
+  attr :root, :string, required: true
 
   def panel(assigns) do
     assigns =
@@ -122,6 +125,9 @@ defmodule BeeWeb.Workbench.Panel do
             :for={v <- section.views}
             view={v.view}
             item_actions={v.item_actions}
+            socket={@socket}
+            live={@live}
+            root={@root}
             terminals={@terminals}
             active_term={@active_term}
             console={@console}
@@ -213,6 +219,21 @@ defmodule BeeWeb.Workbench.Panel do
         class={@term_inset}
       >
       </div>
+    </div>
+    """
+  end
+
+  # Drawn by the plugin itself, with a LiveView.
+  defp view_body(%{view: %{live: live}} = assigns) when live != nil do
+    ~H"""
+    <div class="flex-1 min-w-0 overflow-auto">
+      <PluginLive.plugin_live
+        socket={@socket}
+        state={@live[{:view, @view.id}]}
+        kind="view"
+        id={@view.id}
+        root={@root}
+      />
     </div>
     """
   end

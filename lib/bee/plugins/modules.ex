@@ -21,6 +21,13 @@ defmodule Bee.Plugins.Modules do
   """
   def ensure(plugin), do: GenServer.call(__MODULE__, {:ensure, plugin}, 120_000)
 
+  @doc """
+  The loaded module of plugin `name` called `module_name` ("Todos.ListLive"),
+  or nil: a name from a manifest only ever becomes one of the plugin's own
+  modules.
+  """
+  def lookup(name, module_name), do: GenServer.call(__MODULE__, {:lookup, name, module_name})
+
   @doc "Unloads plugin `name`'s modules (its hosts are gone)."
   def drop(name), do: GenServer.call(__MODULE__, {:drop, name})
 
@@ -60,6 +67,19 @@ defmodule Bee.Plugins.Modules do
         {:reply, {:ok, entry.module, entry.modules},
          Map.put(s, plugin.name, add_host(entry, host))}
     end
+  end
+
+  def handle_call({:lookup, name, module_name}, _from, s) do
+    module =
+      case s[name] do
+        %{modules: modules} ->
+          Enum.find(modules, &(Atom.to_string(&1) == "Elixir." <> module_name))
+
+        nil ->
+          nil
+      end
+
+    {:reply, module, s}
   end
 
   def handle_call({:drop, name}, _from, s), do: {:reply, :ok, unload(s, name)}

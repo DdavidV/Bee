@@ -1,0 +1,32 @@
+<div class="todos-live todos-live-board" id="todos-live-board">
+  <header>
+    <h1>TODO Board</h1>
+    <span class="todos-live-count">
+      {length(@todos)} in {Path.basename(@bee.root)}, {MapSet.size(@done)} ticked off
+    </span>
+    <button type="button" class="todos-live-button" phx-click="refresh">Refresh</button>
+  </header>
+  <div class="todos-live-columns">
+    <section :for={{kind, todos} <- columns(@todos)} data-column={kind}>
+      <h2>{kind} <span>{length(todos)}</span></h2>
+      <p :if={todos == []} class="todos-live-empty">None.</p>
+      <article
+        :for={todo <- todos}
+        id={"todos-live-card-#{todo.id}"}
+        class={["todos-live-card", todo.id in @done && "todos-live-done"]}
+      >
+        <input
+          type="checkbox"
+          checked={todo.id in @done}
+          phx-click="toggle"
+          phx-value-id={todo.id}
+          aria-label="Ticked off"
+        />
+        <div phx-click="open" phx-value-path={todo.path} phx-value-line={todo.line}>
+          <div class="todos-live-text">{todo.text}</div>
+          <div class="todos-live-where">{todo.path}:{todo.line}</div>
+        </div>
+      </article>
+    </section>
+  </div>
+</div>

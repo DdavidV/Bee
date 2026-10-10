@@ -67,6 +67,8 @@
     clipboard={@clipboard}
     marketplace={@marketplace}
     marketplace_installed={@marketplace_installed}
+    socket={@socket}
+    live={@live}
   />
 
   <%!-- Editor area --%>
@@ -119,6 +121,11 @@
           <.icon
             :if={tab.kind == :extension}
             name="hero-puzzle-piece"
+            class="size-4 shrink-0 opacity-70"
+          />
+          <.icon
+            :if={tab.kind == :live}
+            name="hero-window"
             class="size-4 shrink-0 opacity-70"
           />
           <span class={[
@@ -182,6 +189,28 @@
           installing={@marketplace.installing}
         />
       </div>
+      <%!-- Editors plugins draw themselves (LiveViews): each stays mounted
+           while its tab is open, shown when it is the active one. --%>
+      <div
+        :for={tab <- @tabs}
+        :if={tab.kind == :live}
+        id={"live-editor-#{:erlang.phash2(tab.path)}"}
+        data-live-editor={tab.editor}
+        class={[
+          "absolute inset-0 overflow-auto bg-editor text-editor-fg",
+          tab.path != @active && "hidden"
+        ]}
+      >
+        <BeeWeb.Workbench.PluginLive.plugin_live
+          socket={@socket}
+          state={@live[{:editor, tab.editor}]}
+          kind="editor"
+          id={tab.editor}
+          key={tab.key}
+          root={@root}
+          params={tab.params}
+        />
+      </div>
       <div
         :if={@tabs == []}
         class="absolute inset-0 grid place-items-center bg-editor text-editor-fg text-sm"
@@ -224,6 +253,9 @@
       view_inputs={@view_inputs}
       collapsed={@collapsed}
       icon_theme={@icon_theme}
+      socket={@socket}
+      live={@live}
+      root={@root}
     />
   </main>
 
@@ -269,6 +301,13 @@
   </form>
 
   <%!-- Browser parts of plugins, loaded by the Plugins hook --%>
+  <%!-- Plugins' stylesheets, for their LiveViews --%>
+  <link
+    :for={style <- @plugin_styles}
+    rel="stylesheet"
+    href={style.url}
+    data-plugin-style={style.name}
+  />
   <div
     id="browser-plugins"
     phx-hook="Plugins"

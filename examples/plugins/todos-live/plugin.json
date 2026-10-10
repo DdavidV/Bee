@@ -1,0 +1,35 @@
+{
+  "$schema": "../../../priv/schemas/manifest.schema.json",
+  "name": "todos-live",
+  "displayName": "TODOs (LiveView)",
+  "description": "Lists the TODO and FIXME comments of the workspace, drawn by the plugin's own LiveViews: a view in the sidebar and a board in an editor tab. Example of Bee.Plugin.LiveView: HEEx templates, events, asking the server part, messages from it, a stylesheet and a hook.",
+  "version": "0.1.0",
+  "server": {"module": "TodosLive"},
+  "browser": "browser.js",
+  "styles": "style.css",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [{"id": "todos-live", "title": "TODOs (LiveView)", "icon": "check-circle"}]
+    },
+    "views": {
+      "todos-live": [{"id": "todosLive.list", "name": "TODOs", "live": "TodosLive.ListLive"}]
+    },
+    "editors": [
+      {"id": "todosLive.board", "title": "TODO Board", "live": "TodosLive.BoardLive"}
+    ],
+    "commands": [
+      {"command": "todosLive.openBoard", "category": "TODOs", "title": "Open Board", "icon": "view-columns", "runtime": "server"},
+      {"command": "todosLive.refresh", "category": "TODOs", "title": "Refresh (LiveView)", "icon": "arrow-path", "runtime": "server"},
+      {"command": "todosLive.open", "category": "TODOs", "title": "Open TODO (LiveView)", "runtime": "server"}
+    ],
+    "menus": {
+      "view/title": [
+        {"command": "todosLive.openBoard", "group": "navigation@1", "when": "view == todosLive.list"},
+        {"command": "todosLive.refresh", "group": "navigation@2", "when": "view == todosLive.list"}
+      ],
+      "commandPalette": [
+        {"command": "todosLive.open", "when": "false"}
+      ]
+    }
+  }
+}

@@ -39,6 +39,11 @@
         }
       }
     },
+    "styles": {
+      "type": "string",
+      "pattern": "\\.css$",
+      "description": "A stylesheet (relative to the plugin) the page loads while the plugin is: for its LiveViews."
+    },
     "browser": {
       "type": "string",
       "pattern": "\\.m?js$",
@@ -135,6 +140,20 @@
           "description": "Views container id (yours, or e.g. \"explorer\") to the views shown in it.",
           "additionalProperties": {"type": "array", "items": {"$ref": "#/definitions/view"}}
         },
+        "editors": {
+          "type": "array",
+          "description": "Editors the plugin draws itself, each a LiveView (Bee.Plugin.LiveView) shown in an editor tab: opened with Bee.API.open_editor/3.",
+          "items": {
+            "type": "object",
+            "required": ["id", "title", "live"],
+            "additionalProperties": false,
+            "properties": {
+              "id": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+$"},
+              "title": {"type": "string", "minLength": 1, "description": "The tab's name (unless open_editor/3 gives one)."},
+              "live": {"$ref": "#/definitions/liveModule"}
+            }
+          }
+        },
         "iconThemes": {"type": "array", "items": {"$ref": "#/definitions/iconTheme"}},
         "themes": {"type": "array", "items": {"$ref": "#/definitions/colorTheme"}}
       }
@@ -143,6 +162,11 @@
   "additionalProperties": false,
   "definitions": {
     "whenClause": {"type": "string", "description": "VS Code style `when` clause."},
+    "liveModule": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Za-z0-9_]*(\\.[A-Z][A-Za-z0-9_]*)*$",
+      "description": "A LiveView of the plugin (`use Bee.Plugin.LiveView`), by its module name, e.g. \"Todos.ListLive\": one of its server sources."
+    },
     "command": {
       "type": "object",
       "required": ["command", "title", "runtime"],
@@ -238,10 +262,11 @@
       "type": "object",
       "required": ["id", "name"],
       "additionalProperties": false,
-      "description": "A view in a sidebar container or a panel section. A plugin fills its views with Bee.API.set_view/3.",
+      "description": "A view in a sidebar container or a panel section. A plugin fills its views with Bee.API.set_view/3, or draws one itself with a LiveView (live).",
       "properties": {
         "id": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+$"},
         "name": {"type": "string", "minLength": 1},
+        "live": {"$ref": "#/definitions/liveModule"},
         "when": {"$ref": "#/definitions/whenClause"}
       }
     },

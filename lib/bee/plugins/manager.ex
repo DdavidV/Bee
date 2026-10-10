@@ -387,6 +387,8 @@ defmodule Bee.Plugins.Manager do
       server?: false,
       # Code of a VS Code extension, for the Node.js host.
       extension?: false,
+      # Its stylesheet, as the page loads it: %{path, url}.
+      styles: nil,
       # Its extension code in each workspace: %{root => %{status, errors, warnings}}.
       extensions: %{},
       browser: nil,
@@ -458,7 +460,7 @@ defmodule Bee.Plugins.Manager do
   defp add(s, %{status: :inactive} = plugin) do
     plugin =
       case Contributions.register({:plugin, plugin.name}, plugin.manifest, dir: plugin.dir) do
-        :ok -> %{plugin | browser: browser(plugin)}
+        :ok -> %{plugin | browser: asset(plugin, "browser"), styles: asset(plugin, "styles")}
         {:error, message} -> invalid(plugin, message)
       end
 
@@ -493,8 +495,10 @@ defmodule Bee.Plugins.Manager do
     end
   end
 
-  defp browser(%{manifest: %{"browser" => rel}} = plugin) do
-    with {:ok, path} <- Bee.Workspace.FS.resolve(plugin.dir, rel),
+  # A file of the plugin the page loads (its "browser" module, its "styles").
+  defp asset(plugin, key) do
+    with rel when is_binary(rel) <- plugin.manifest[key],
+         {:ok, path} <- Bee.Workspace.FS.resolve(plugin.dir, rel),
          {:ok, %{mtime: mtime, size: size}} <- File.stat(path) do
       # A new URL when the file changes, so the browser re-imports it.
       version = :erlang.phash2({mtime, size})
@@ -503,8 +507,6 @@ defmodule Bee.Plugins.Manager do
       _ -> nil
     end
   end
-
-  defp browser(_plugin), do: nil
 
   ## Workspaces
 
