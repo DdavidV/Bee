@@ -30,7 +30,8 @@
 // Client -> server: doc_changed (throttled), save, selection_changed
 //                   (throttled, UTF-8 byte offsets; for plugin commands)
 //                   history_changed (whether the active file can undo/redo)
-//                   language_request, language_cancel, language_goto
+//                   language_request, language_cancel, language_goto, language_rename,
+//                   language_code_actions
 //                   (editor/language_features.js)
 // Client commands:  workbench.action.files.save, undo, redo
 //
@@ -64,7 +65,8 @@ import {languageConfig} from "../editor/language_config"
 import {snippetCompletions, insertSnippet, setSnippetRoot} from "../editor/snippets"
 import {jsonAssist, setJsonRequester} from "../editor/json_assist"
 import {
-  languageFeatures, setFeatures, setLanguageRequester, goTo, showHover, startCompletion,
+  languageFeatures, setFeatures, setLanguageRequester, goTo, quickFix, rename, showHover, startCompletion,
+  triggerSignatureHelp,
 } from "../editor/language_features"
 
 const SYNC_MS = 300
@@ -229,6 +231,18 @@ export const CodeEditor = {
         this.flushAll()
         this.pushEvent("language_goto", {feature, path, position})
       },
+      codeActions: (state, range) => {
+        const path = state.facet(filePath)
+        if (!path || path !== this.active) return
+        this.flushAll()
+        this.pushEvent("language_code_actions", {path, range})
+      },
+      rename: (state, position) => {
+        const path = state.facet(filePath)
+        if (!path || path !== this.active) return
+        this.flushAll()
+        this.pushEvent("language_rename", {path, position})
+      },
     })
     this.handleEvent("cm:language_features", ({path, features}) => {
       this.languageFeatures.set(path, features)
@@ -249,11 +263,15 @@ export const CodeEditor = {
       registerCommand("editor.action.clipboardPasteAction", () => this.clipboard("paste")),
       registerCommand("editor.action.triggerSuggest", () => this.inFile(startCompletion)),
       registerCommand("editor.action.showHover", () => this.inFile(showHover)),
+      registerCommand("editor.action.triggerParameterHints", () => this.inFile(triggerSignatureHelp)),
+      registerCommand("editor.action.rename", () => this.inFile(rename)),
+      registerCommand("editor.action.quickFix", () => this.inFile(quickFix)),
       ...Object.entries({
         "editor.action.revealDefinition": "definition",
         "editor.action.revealDeclaration": "declaration",
         "editor.action.goToTypeDefinition": "typeDefinition",
         "editor.action.goToImplementation": "implementation",
+        "editor.action.goToReferences": "references",
       }).map(([id, feature]) => registerCommand(id, () => this.inFile(view => goTo(view, feature)))),
     ]
     this.history = null // last {canUndo, canRedo} sent

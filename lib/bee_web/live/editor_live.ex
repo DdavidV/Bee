@@ -74,7 +74,8 @@ defmodule BeeWeb.EditorLive do
      |> assign(grammars: Languages.grammars())
      |> assign(diagnostics: %{}, json_jobs: %{})
      |> assign(language_problems: language_problems(root), language_problems_timer: nil)
-     |> assign(language_features: 0, language_gotos: %{})
+     |> assign(language_features: 0, language_gotos: %{}, formats: %{})
+     |> assign(renames: %{}, references: nil, code_actions: %{}, problems_hidden: [])
      |> load_webviews()
      |> load_output_channels()
      |> allow_upload(:vsix,
@@ -432,28 +433,16 @@ defmodule BeeWeb.EditorLive do
     end
   end
 
+  # Format on save: the file's formatter (an extension's) goes first, and
+  # the file is saved when it answered – or didn't in time.
   def handle_event("save", %{"path" => path, "text" => text}, socket) do
-    with true <- Workbench.open?(workbench(socket), path),
-         {:ok, _buffer} <- Buffer.save(path, text) do
-      # Apply right away, also when file watching is unavailable.
-      if path in [Settings.user_path(), Settings.workspace_path(socket.assigns.root)],
-        do: Settings.reload()
-
-      if path == Keybindings.user_path(), do: Keybindings.reload()
-
-      {:noreply,
-       change(socket, fn wb ->
-         wb
-         |> Workbench.set_dirty(path, false)
-         |> Workbench.set_status("Saved #{display_path(wb.root, path)}")
-       end)}
+    if Workbench.open?(workbench(socket), path) and
+         file_settings(socket, path)["editor.formatOnSave"] == true and
+         formatter?(socket, path, "formatting") do
+      Buffer.update(path, text)
+      {:noreply, format(socket, path, :document, true)}
     else
-      false ->
-        {:noreply, socket}
-
-      {:error, reason} ->
-        message = "Could not save #{display_path(socket.assigns.root, path)}: #{inspect(reason)}"
-        {:noreply, put_flash(socket, :error, message)}
+      {:noreply, save_file(socket, path, text)}
     end
   end
 
@@ -501,7 +490,8 @@ defmodule BeeWeb.EditorLive do
         socket
       )
       when is_binary(ref) and is_binary(path) do
-    if feature in ~w(completion completionResolve completionAccept hover) and
+    if feature in ~w(completion completionResolve completionAccept hover signatureHelp
+                     documentHighlight codeAction) and
          Workbench.open?(workbench(socket), path) do
       params = if is_map(params["params"]), do: params["params"], else: %{}
       Bee.Languages.Features.request(socket.assigns.root, feature, path, params, {self(), ref})
@@ -523,7 +513,7 @@ defmodule BeeWeb.EditorLive do
         %{"feature" => feature, "path" => path, "position" => %{} = position},
         socket
       )
-      when feature in ~w(definition typeDefinition declaration implementation) and
+      when feature in ~w(definition typeDefinition declaration implementation references) and
              is_binary(path) do
     if Workbench.open?(workbench(socket), path) do
       ref = make_ref()
@@ -533,6 +523,91 @@ defmodule BeeWeb.EditorLive do
     else
       {:noreply, socket}
     end
+  end
+
+  # Rename Symbol at a place of the editor: what would be renamed is asked
+  # first, then its new name (rename_step/3).
+  def handle_event("language_rename", %{"path" => path, "position" => %{} = position}, socket)
+      when is_binary(path) do
+    if Workbench.open?(workbench(socket), path) do
+      ref = make_ref()
+      root = socket.assigns.root
+
+      Bee.Languages.Features.request(
+        root,
+        "prepareRename",
+        path,
+        %{position: position},
+        {self(), ref}
+      )
+
+      {:noreply, update(socket, :renames, &Map.put(&1, ref, {:prepare, path, position}))}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  # Quick Fix at a range of the editor: its code actions are asked for,
+  # then picked from (code_action_step/3).
+  def handle_event("language_code_actions", %{"path" => path, "range" => %{} = range}, socket)
+      when is_binary(path) do
+    if Workbench.open?(workbench(socket), path) do
+      ref = make_ref()
+      params = %{range: range, context: %{triggerKind: 1}}
+
+      Bee.Languages.Features.request(
+        socket.assigns.root,
+        "codeAction",
+        path,
+        params,
+        {self(), ref}
+      )
+
+      {:noreply, update(socket, :code_actions, &Map.put(&1, ref, :list))}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  # A row of the Problems section: its file, at the problem.
+  def handle_event("problem_open", %{"index" => index}, socket) do
+    case Enum.at(problem_entries(socket.assigns), int(index)) do
+      %{path: path, line: line} when is_integer(line) ->
+        place = %{
+          "path" => path,
+          "from" => %{
+            "line" => line - 1,
+            "character" => (problem_column(socket, int(index)) || 1) - 1
+          }
+        }
+
+        {:noreply, open_place(socket, place)}
+
+      %{path: path} ->
+        {:noreply, change(socket, &Workbench.open_editor(&1, path))}
+
+      nil ->
+        {:noreply, socket}
+    end
+  end
+
+  # Errors, warnings or infos shown or not, in the Problems section.
+  def handle_event("problems_filter", %{"severity" => severity}, socket)
+      when severity in ~w(error warning info) do
+    severity = String.to_existing_atom(severity)
+
+    hidden =
+      if severity in socket.assigns.problems_hidden,
+        do: List.delete(socket.assigns.problems_hidden, severity),
+        else: [severity | socket.assigns.problems_hidden]
+
+    {:noreply, assign(socket, problems_hidden: hidden)}
+  end
+
+  # A row of the References section: there.
+  def handle_event("reference_open", %{"index" => index}, socket) do
+    place = Enum.at(reference_places(socket.assigns.references), int(index))
+    {:noreply, if(place, do: open_place(socket, place), else: socket)}
   end
 
   ## Webview panels of extensions (Bee.Webviews)
@@ -790,21 +865,60 @@ defmodule BeeWeb.EditorLive do
   end
 
   def handle_info({:language_reply, ref, reply}, socket) do
-    case Map.pop(socket.assigns.language_gotos, ref) do
-      {nil, _} -> {:noreply, socket}
-      {feature, gotos} -> {:noreply, go_to(assign(socket, language_gotos: gotos), feature, reply)}
+    cond do
+      Map.has_key?(socket.assigns.formats, ref) ->
+        {:noreply, formatted(socket, ref, reply)}
+
+      Map.has_key?(socket.assigns.language_gotos, ref) ->
+        {feature, gotos} = Map.pop(socket.assigns.language_gotos, ref)
+        {:noreply, go_to(assign(socket, language_gotos: gotos), feature, reply)}
+
+      Map.has_key?(socket.assigns.renames, ref) ->
+        {step, renames} = Map.pop(socket.assigns.renames, ref)
+        {:noreply, rename_step(assign(socket, renames: renames), step, reply)}
+
+      Map.has_key?(socket.assigns.code_actions, ref) ->
+        {step, actions} = Map.pop(socket.assigns.code_actions, ref)
+        {:noreply, code_action_step(assign(socket, code_actions: actions), step, reply)}
+
+      symbols_reply?(socket.assigns.quick_open, ref) ->
+        {:noreply, symbols_reply(socket, ref, reply)}
+
+      true ->
+        {:noreply, socket}
+    end
+  end
+
+  # The formatter of a file being saved took too long: saved as it is.
+  def handle_info({:format_timeout, ref}, socket) do
+    if Map.has_key?(socket.assigns.formats, ref) do
+      Bee.Languages.Features.cancel(socket.assigns.root, ref)
+      {:noreply, formatted(socket, ref, {:ok, nil})}
+    else
+      {:noreply, socket}
     end
   end
 
   # Which of several places to go to was picked (see go_to/3).
-  def handle_info({:bee_answer, ref, index}, socket) do
-    case Map.pop(socket.assigns.language_gotos, ref) do
-      {places, gotos} when is_list(places) ->
+  def handle_info({:bee_answer, ref, answer}, socket) do
+    cond do
+      is_list(socket.assigns.language_gotos[ref]) ->
+        {places, gotos} = Map.pop(socket.assigns.language_gotos, ref)
         socket = assign(socket, language_gotos: gotos)
-        place = is_integer(index) && Enum.at(places, index)
+        place = is_integer(answer) && Enum.at(places, answer)
         {:noreply, if(place, do: open_place(socket, place), else: socket)}
 
-      _ ->
+      # The code action picked.
+      Map.has_key?(socket.assigns.code_actions, ref) ->
+        {step, actions} = Map.pop(socket.assigns.code_actions, ref)
+        {:noreply, code_action_step(assign(socket, code_actions: actions), step, answer)}
+
+      # The new name of Rename Symbol.
+      Map.has_key?(socket.assigns.renames, ref) ->
+        {step, renames} = Map.pop(socket.assigns.renames, ref)
+        {:noreply, rename_step(assign(socket, renames: renames), step, answer)}
+
+      true ->
         {:noreply, socket}
     end
   end
@@ -1053,6 +1167,7 @@ defmodule BeeWeb.EditorLive do
   defp run_effect({:push, event, payload}, socket), do: push_event(socket, event, payload)
 
   defp run_effect({:open_file, path}, socket), do: open_buffer(socket, path)
+  defp run_effect({:format, path, what}, socket), do: format(socket, path, what, false)
 
   defp run_effect({:webview_closed, id}, socket) do
     Bee.Extensions.Host.webview(socket.assigns.root, id, :closed)
@@ -1824,7 +1939,15 @@ defmodule BeeWeb.EditorLive do
     "definition" => "editorHasDefinitionProvider",
     "typeDefinition" => "editorHasTypeDefinitionProvider",
     "declaration" => "editorHasDeclarationProvider",
-    "implementation" => "editorHasImplementationProvider"
+    "implementation" => "editorHasImplementationProvider",
+    "formatting" => "editorHasDocumentFormattingProvider",
+    "rangeFormatting" => "editorHasDocumentSelectionFormattingProvider",
+    "signatureHelp" => "editorHasSignatureHelpProvider",
+    "references" => "editorHasReferenceProvider",
+    "rename" => "editorHasRenameProvider",
+    "documentSymbol" => "editorHasDocumentSymbolProvider",
+    "documentHighlight" => "editorHasDocumentHighlightProvider",
+    "codeAction" => "editorHasCodeActionsProvider"
   }
 
   defp language_context(root, path) when is_binary(root) and is_binary(path) do
@@ -2097,6 +2220,7 @@ defmodule BeeWeb.EditorLive do
       {:commands, rest} -> command_items(assigns, String.downcase(rest))
       :recent -> mode_items() ++ recent_items(assigns)
       {:files, query} -> file_items(assigns, query)
+      symbols -> symbol_items(assigns, symbols)
     end
   end
 
@@ -2166,14 +2290,21 @@ defmodule BeeWeb.EditorLive do
           sent: nil,
           results: [],
           results_for: nil,
-          loading?: false
+          loading?: false,
+          # Go to Symbol: the file's (asked once), the workspace's (per query).
+          symbols: nil,
+          symbols_ref: nil,
+          symbols_path: nil,
+          workspace_symbols: nil,
+          workspace_ref: nil,
+          workspace_sent: nil
         }
 
     mode = QuickOpen.mode(query)
 
     data =
       case {data.finder, mode} do
-        {nil, {:commands, _}} ->
+        {nil, {kind, _}} when kind in [:commands, :symbols, :workspace_symbols] ->
           data
 
         {nil, _} ->
@@ -2195,7 +2326,7 @@ defmodule BeeWeb.EditorLive do
           data
       end
 
-    assign(socket, quick_open: data)
+    assign(socket, quick_open: sync_symbols(socket, data, mode))
   end
 
   defp sync_quick_open(%{assigns: %{quick_open: nil}} = socket), do: socket
@@ -2210,6 +2341,8 @@ defmodule BeeWeb.EditorLive do
   def quick_open_busy?(%{palette: %{mode: :quick_open, query: query}, quick_open: %{} = data}) do
     case QuickOpen.mode(query) do
       {:files, q} -> data.loading? or data.results_for != q
+      {:symbols, _} -> data.symbols_ref != nil
+      {:workspace_symbols, _} -> data.workspace_ref != nil
       _ -> false
     end
   end
@@ -2229,6 +2362,9 @@ defmodule BeeWeb.EditorLive do
 
   defp palette_choose(socket, %{kind: :mode, prefix: prefix}),
     do: change(socket, &Workbench.open_quick_open(&1, prefix))
+
+  defp palette_choose(socket, %{kind: :symbol, place: place}),
+    do: socket |> change(&Workbench.close_palette/1) |> open_place(place)
 
   defp palette_choose(socket, %{kind: :file, path: path}) do
     socket = change(socket, &Workbench.close_palette/1)
@@ -2273,20 +2409,33 @@ defmodule BeeWeb.EditorLive do
     do:
       assigns.settings_errors ++
         assigns.keybinding_errors ++
-        assigns.plugin_errors ++ diagnostic_problems(assigns) ++ assigns.language_problems
+        assigns.plugin_errors ++
+        diagnostic_problems(assigns) ++
+        for(
+          %{severity: severity, path: path, line: line, message: message} <-
+            assigns.language_problems,
+          severity in [:error, :warning],
+          do: %{path: path, message: "line #{line}: #{first_line(message)}"}
+        )
 
-  # The errors and warnings extensions' language features found in the
-  # workspace's files (Bee.Diagnostics), errors first: `[%{path, message}]`.
+  # What extensions' language features found in the workspace's files
+  # (Bee.Diagnostics), errors first; hints aren't problems:
+  # `[%{path, severity, message, line, column, source}]`.
   defp language_problems(root) do
     for(
       {path, diagnostics} <- Bee.Diagnostics.all(root),
-      %{severity: severity} = d when severity in [:error, :warning] <- diagnostics,
-      do: {severity, path, d}
+      %{severity: severity} = d when severity in [:error, :warning, :info] <- diagnostics,
+      do: %{
+        path: path,
+        severity: severity,
+        message: d.message,
+        line: d.from.line + 1,
+        column: d.from.character + 1,
+        source:
+          Enum.join(Enum.reject([d.source, d.code && "(#{d.code})"], &(&1 in [nil, false])), " ")
+      }
     )
-    |> Enum.sort_by(fn {severity, path, d} -> {severity != :error, path, d.from.line} end)
-    |> Enum.map(fn {_severity, path, d} ->
-      %{path: path, message: "line #{d.from.line + 1}: #{first_line(d.message)}"}
-    end)
+    |> Enum.sort_by(&{&1.severity != :error, &1.path, &1.line})
   end
 
   defp first_line(message), do: message |> String.split("\n", parts: 2) |> hd()
@@ -2357,6 +2506,438 @@ defmodule BeeWeb.EditorLive do
     push_event(socket, "cm:language_features", %{path: path, features: features})
   end
 
+  defp save_file(socket, path, text) do
+    with true <- Workbench.open?(workbench(socket), path),
+         {:ok, _buffer} <- Buffer.save(path, text) do
+      # Apply right away, also when file watching is unavailable.
+      if path in [Settings.user_path(), Settings.workspace_path(socket.assigns.root)],
+        do: Settings.reload()
+
+      if path == Keybindings.user_path(), do: Keybindings.reload()
+
+      change(socket, fn wb ->
+        wb
+        |> Workbench.set_dirty(path, false)
+        |> Workbench.set_status("Saved #{display_path(wb.root, path)}")
+      end)
+    else
+      false ->
+        socket
+
+      {:error, reason} ->
+        message = "Could not save #{display_path(socket.assigns.root, path)}: #{inspect(reason)}"
+        put_flash(socket, :error, message)
+    end
+  end
+
+  ## Formatting (an extension's formatter)
+
+  @format_timeout 3_000
+
+  # The settings as they are for the file: its language's on top
+  # ("[elixir]": {…}, Bee.Settings.for_language/2).
+  defp file_settings(socket, path) do
+    language = Workbench.language(workbench(socket), path)
+    Bee.Settings.for_language(socket.assigns.root, language)
+  end
+
+  defp formatter?(socket, path, feature),
+    do: Map.has_key?(Bee.Languages.Features.for_file(socket.assigns.root, path), feature)
+
+  # Asks the file's formatter for its edits: of the whole text, or of the
+  # selection's lines. They are applied when they come (formatted/3), if
+  # the text is still the one asked about; `save?`: the file is saved then.
+  defp format(socket, path, what, save?) do
+    root = socket.assigns.root
+    text = Bee.API.text(path)
+    feature = if what == :selection, do: "rangeFormatting", else: "formatting"
+
+    if is_binary(text) and formatter?(socket, path, feature) do
+      ref = make_ref()
+      settings = file_settings(socket, path)
+
+      params =
+        Map.merge(
+          %{
+            options: %{tabSize: settings["editor.tabSize"] || 2, insertSpaces: true},
+            formatter: settings["editor.defaultFormatter"]
+          },
+          if(what == :selection, do: %{range: selected_range(socket, path, text)}, else: %{})
+        )
+
+      Bee.Languages.Features.request(root, feature, path, params, {self(), ref})
+      if save?, do: Process.send_after(self(), {:format_timeout, ref}, @format_timeout)
+      format = %{path: path, hash: :erlang.phash2(text), save?: save?}
+      update(socket, :formats, &Map.put(&1, ref, format))
+    else
+      change(socket, &Workbench.set_status(&1, "No formatter for this file"))
+    end
+  end
+
+  # The first selection of the file's editor as positions (the cursor's
+  # place when there is none).
+  defp selected_range(socket, path, text) do
+    {from, to} =
+      case socket.assigns.selection do
+        {^path, [{from, to} | _]} -> {min(from, to), max(from, to)}
+        _ -> {0, 0}
+      end
+
+    %{
+      from: Bee.Extensions.Host.bytes_to_position(text, from),
+      to: Bee.Extensions.Host.bytes_to_position(text, to)
+    }
+  end
+
+  defp formatted(socket, ref, reply) do
+    {%{path: path, hash: hash, save?: save?}, formats} = Map.pop(socket.assigns.formats, ref)
+    socket = assign(socket, formats: formats)
+    text = Bee.API.text(path)
+
+    socket =
+      case reply do
+        {:ok, %{"edits" => [_ | _] = edits}} when is_binary(text) ->
+          if :erlang.phash2(text) == hash do
+            edits =
+              for %{"from" => from, "to" => to, "text" => insert} <- edits do
+                {Bee.Extensions.Host.position_to_bytes(text, from),
+                 Bee.Extensions.Host.position_to_bytes(text, to), insert}
+              end
+
+            case Bee.API.edit(path, edits) do
+              :ok -> socket
+              _ -> put_flash(socket, :error, "The formatter's changes couldn't be applied")
+            end
+          else
+            # Typed in since: its changes are for another text.
+            socket
+          end
+
+        {:error, message} ->
+          put_flash(socket, :error, "Formatting failed: #{message}")
+
+        _ ->
+          socket
+      end
+
+    if save? and is_binary(Bee.API.text(path)),
+      do: save_file(socket, path, Bee.API.text(path)),
+      else: socket
+  end
+
+  ## Quick Fix (code actions)
+
+  # What can be done there: picked from in the palette, the preferred first.
+  defp code_action_step(
+         socket,
+         :list,
+         {:ok, %{"session" => session, "actions" => [_ | _] = actions}}
+       ) do
+    ref = make_ref()
+    actions = Enum.sort_by(actions, &(not &1["preferred"]))
+
+    items =
+      for {action, index} <- Enum.with_index(actions) do
+        %{
+          label: action["title"],
+          description:
+            cond do
+              action["disabled"] -> "can't be done: #{action["disabled"]}"
+              action["preferred"] -> "preferred"
+              true -> ""
+            end,
+          value: index
+        }
+      end
+
+    socket
+    |> update(:code_actions, &Map.put(&1, ref, {:pick, session, actions}))
+    |> plugin_request({:ask, ref, self(), :pick, %{placeholder: "Quick Fix…", items: items}})
+  end
+
+  defp code_action_step(socket, :list, {:error, message}),
+    do: put_flash(socket, :error, "Quick Fix: #{message}")
+
+  defp code_action_step(socket, :list, _none),
+    do: change(socket, &Workbench.set_status(&1, "No code actions available"))
+
+  defp code_action_step(socket, {:pick, session, actions}, index) when is_integer(index) do
+    case Enum.at(actions, index) do
+      %{"disabled" => reason, "title" => title} when is_binary(reason) ->
+        put_flash(socket, :error, "#{title}: #{reason}")
+
+      %{"index" => action, "title" => title} ->
+        ref = make_ref()
+        params = %{session: session, index: action}
+
+        Bee.Languages.Features.request(
+          socket.assigns.root,
+          "codeActionApply",
+          nil,
+          params,
+          {self(), ref}
+        )
+
+        update(socket, :code_actions, &Map.put(&1, ref, {:apply, title}))
+
+      nil ->
+        socket
+    end
+  end
+
+  # (Dismissed.)
+  defp code_action_step(socket, {:pick, _session, _actions}, _nothing), do: socket
+
+  defp code_action_step(socket, {:apply, title}, {:ok, %{"error" => message}}),
+    do: put_flash(socket, :error, "#{title}: #{message}")
+
+  defp code_action_step(socket, {:apply, title}, {:error, message}),
+    do: put_flash(socket, :error, "#{title}: #{message}")
+
+  defp code_action_step(socket, {:apply, _title}, _done), do: socket
+
+  ## Problems (the panel's section)
+
+  # Every problem there is, as the Problems section lists them: Bee's own
+  # (settings, keybindings, plugins: no place), JSON validation's and the
+  # extensions' diagnostics. `%{path, severity, message, line, column, source}`,
+  # by file, errors first in each.
+  @doc false
+  def problem_entries(assigns) do
+    own =
+      for %{path: path, message: message} <-
+            assigns.settings_errors ++ assigns.keybinding_errors ++ assigns.plugin_errors do
+        %{path: path, severity: :error, message: message, line: nil, column: nil, source: "Bee"}
+      end
+
+    json =
+      for {path, diagnostics} <- assigns[:diagnostics] || %{}, d <- diagnostics do
+        %{
+          path: path,
+          severity: if(d[:severity] in [:warning, "warning"], do: :warning, else: :error),
+          message: d.message,
+          line: d.line,
+          column: nil,
+          source: "JSON"
+        }
+      end
+
+    Enum.sort_by(own ++ json ++ assigns.language_problems, fn p ->
+      {p.path, Enum.find_index([:error, :warning, :info], &(&1 == p.severity)), p.line || 0}
+    end)
+  end
+
+  defp problem_column(socket, index) do
+    with %{column: column} <- Enum.at(problem_entries(socket.assigns), index), do: column
+  end
+
+  ## Rename Symbol
+
+  # What is renamed is known: asks for its new name, in the palette.
+  defp rename_step(socket, {:prepare, path, position}, {:ok, %{"placeholder" => old}})
+       when is_binary(old) do
+    ref = make_ref()
+
+    socket
+    |> update(:renames, &Map.put(&1, ref, {:name, path, position, old}))
+    |> plugin_request(
+      {:ask, ref, self(), :input,
+       %{prompt: "Rename Symbol: a new name for #{old}", placeholder: old, value: old}}
+    )
+  end
+
+  defp rename_step(socket, {:prepare, _path, _position}, {:ok, %{"error" => message}}),
+    do: put_flash(socket, :error, to_string(message))
+
+  defp rename_step(socket, {:prepare, _path, _position}, {:error, message}),
+    do: put_flash(socket, :error, "Rename Symbol: #{message}")
+
+  defp rename_step(socket, {:prepare, _path, _position}, _none),
+    do: change(socket, &Workbench.set_status(&1, "Nothing to rename here"))
+
+  # The new name: renamed, in every file it is in.
+  defp rename_step(socket, {:name, path, position, old}, name) when is_binary(name) do
+    name = String.trim(name)
+
+    if name in ["", old] do
+      socket
+    else
+      ref = make_ref()
+      params = %{position: position, newName: name}
+      Bee.Languages.Features.request(socket.assigns.root, "rename", path, params, {self(), ref})
+      update(socket, :renames, &Map.put(&1, ref, {:apply, old, name}))
+    end
+  end
+
+  # (Dismissed.)
+  defp rename_step(socket, {:name, _path, _position, _old}, _nothing), do: socket
+
+  defp rename_step(socket, {:apply, old, name}, {:ok, %{"applied" => true} = done}) do
+    places = "#{done["edits"]} #{if done["edits"] == 1, do: "place", else: "places"}"
+    files = "#{done["files"]} #{if done["files"] == 1, do: "file", else: "files"}"
+    change(socket, &Workbench.set_status(&1, "Renamed #{old} to #{name}: #{places} in #{files}"))
+  end
+
+  defp rename_step(socket, {:apply, _old, _name}, {:ok, %{"error" => message}}),
+    do: put_flash(socket, :error, "Rename Symbol: #{message}")
+
+  defp rename_step(socket, {:apply, _old, _name}, {:error, message}),
+    do: put_flash(socket, :error, "Rename Symbol: #{message}")
+
+  defp rename_step(socket, {:apply, old, _name}, _other),
+    do: put_flash(socket, :error, "Rename Symbol: #{old} couldn't be renamed")
+
+  ## References (the panel's section)
+
+  # Every place a symbol is (`[%{"path", "from", "to"}]`), by file, each
+  # with its line's text around the place: `%{count, files: [%{path, rows:
+  # [%{index, line, before, match, after}]}]}`; `index` among all places.
+  defp show_references(socket, [_ | _] = places) do
+    root = socket.assigns.root
+
+    files =
+      places
+      |> Enum.with_index()
+      |> Enum.group_by(fn {place, _} -> place["path"] end)
+      |> Enum.sort_by(fn {path, _} -> display_path(root, path) end)
+      |> Enum.map(fn {path, entries} ->
+        lines = path |> place_text() |> String.split("\n")
+        %{path: path, rows: Enum.map(entries, &reference_row(&1, lines))}
+      end)
+
+    socket
+    |> assign(references: %{count: length(places), files: files, places: places})
+    |> change(&Workbench.show_panel(&1, "references"))
+  end
+
+  defp show_references(socket, _none),
+    do: change(socket, &Workbench.set_status(&1, "No references found"))
+
+  defp reference_row({%{"from" => from, "to" => to} = _place, index}, lines) do
+    text = String.trim_trailing(Enum.at(lines, from["line"], ""), "\r")
+    start = Bee.Extensions.Host.to_bytes(text, from["character"])
+
+    stop =
+      if to["line"] == from["line"],
+        do: max(start, Bee.Extensions.Host.to_bytes(text, to["character"])),
+        else: byte_size(text)
+
+    before = binary_part(text, 0, start)
+
+    %{
+      index: index,
+      line: from["line"] + 1,
+      # (Its indentation says nothing here.)
+      before: String.trim_leading(before),
+      match: binary_part(text, start, stop - start),
+      after: binary_part(text, stop, byte_size(text) - stop)
+    }
+  end
+
+  defp reference_places(%{places: places}), do: places
+  defp reference_places(_none), do: []
+
+  ## Go to Symbol (Quick Open's @ and # modes)
+
+  # Asks for what the query's mode lists, once per file (@) or query (#):
+  # the answers come as {:language_reply, ref, …} (symbols_reply/3).
+  defp sync_symbols(socket, data, {:symbols, _query}) do
+    path = Workbench.active_file(workbench(socket))
+
+    if data.symbols_ref == nil and data.symbols == nil and path != nil do
+      ref = make_ref()
+
+      Bee.Languages.Features.request(
+        socket.assigns.root,
+        "documentSymbol",
+        path,
+        %{},
+        {self(), ref}
+      )
+
+      %{data | symbols_ref: ref, symbols_path: path}
+    else
+      data
+    end
+  end
+
+  defp sync_symbols(socket, data, {:workspace_symbols, query}) do
+    if query != data.workspace_sent do
+      ref = make_ref()
+      params = %{query: query}
+
+      Bee.Languages.Features.request(
+        socket.assigns.root,
+        "workspaceSymbol",
+        nil,
+        params,
+        {self(), ref}
+      )
+
+      %{data | workspace_ref: ref, workspace_sent: query}
+    else
+      data
+    end
+  end
+
+  defp sync_symbols(_socket, data, _mode), do: data
+
+  defp symbols_reply?(%{symbols_ref: ref}, ref) when ref != nil, do: true
+  defp symbols_reply?(%{workspace_ref: ref}, ref) when ref != nil, do: true
+  defp symbols_reply?(_data, _ref), do: false
+
+  defp symbols_reply(%{assigns: %{quick_open: data}} = socket, ref, reply) do
+    symbols =
+      case reply do
+        {:ok, list} when is_list(list) -> list
+        _ -> []
+      end
+
+    data =
+      if data.symbols_ref == ref,
+        do: %{data | symbols_ref: nil, symbols: symbols},
+        else: %{data | workspace_ref: nil, workspace_symbols: symbols}
+
+    assign(socket, quick_open: data)
+  end
+
+  # The file's symbols matching the query, in file order, nested ones
+  # indented; the workspace's, as its extensions found them for the query.
+  defp symbol_items(%{quick_open: %{symbols: symbols, symbols_path: path}}, {:symbols, query})
+       when is_list(symbols) do
+    query = String.downcase(String.trim(query))
+
+    for %{"name" => name} = symbol <- symbols, fuzzy_match?(String.downcase(name), query) do
+      %{
+        kind: :symbol,
+        label: String.duplicate("  ", if(query == "", do: symbol["depth"] || 0, else: 0)) <> name,
+        description:
+          Enum.join(Enum.reject([symbol["kind"], symbol["detail"]], &(&1 in [nil, ""])), " · "),
+        section: "line #{symbol["from"]["line"] + 1}",
+        place: %{"path" => path, "from" => symbol["from"]}
+      }
+    end
+  end
+
+  defp symbol_items(
+         %{quick_open: %{workspace_symbols: symbols}} = assigns,
+         {:workspace_symbols, _}
+       )
+       when is_list(symbols) do
+    for %{"name" => name, "path" => path} = symbol <- symbols do
+      %{
+        kind: :symbol,
+        label: name,
+        description:
+          Enum.join(Enum.reject([symbol["kind"], symbol["container"]], &(&1 in [nil, ""])), " · "),
+        section: "#{display_path(assigns.root, path)}:#{symbol["from"]["line"] + 1}",
+        place: %{"path" => path, "from" => symbol["from"]}
+      }
+    end
+  end
+
+  defp symbol_items(_assigns, _mode), do: []
+
   @goto_names %{
     "definition" => "definition",
     "typeDefinition" => "type definition",
@@ -2366,6 +2947,14 @@ defmodule BeeWeb.EditorLive do
 
   # Where a symbol is defined (`[%{"path", "from", "to"}]`): there, or
   # picked among them in the palette.
+  defp go_to(socket, "references", {:ok, places}) when is_list(places),
+    do: show_references(socket, places)
+
+  defp go_to(socket, "references", {:error, message}),
+    do: put_flash(socket, :error, "Find All References: #{message}")
+
+  defp go_to(socket, "references", _none), do: show_references(socket, [])
+
   defp go_to(socket, _feature, {:ok, [place]}), do: open_place(socket, place)
 
   defp go_to(socket, feature, {:ok, [_ | _] = places}) do

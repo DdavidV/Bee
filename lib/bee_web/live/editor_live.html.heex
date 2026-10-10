@@ -267,6 +267,9 @@
       root={@root}
       output_channels={@output_channels}
       output_channel={@output_channel}
+      references={@references}
+      problems={problem_entries(assigns)}
+      problems_hidden={@problems_hidden}
     />
   </main>
 
@@ -283,8 +286,8 @@
         |> Enum.take(25)
         |> Enum.map_join("\n", &"#{Path.basename(&1.path)}: #{&1.message}")
       }
-      phx-click="open_problem"
-      phx-value-path={hd(problems).path}
+      phx-click="run_command"
+      phx-value-command="workbench.actions.view.problems"
     >
       <.icon name="hero-exclamation-triangle-micro" class="size-3.5" />
       {length(problems)} {if length(problems) == 1, do: "problem", else: "problems"}

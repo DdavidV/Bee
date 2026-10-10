@@ -144,6 +144,11 @@ class Languages {
     })
   }
 
+  // Every collection's diagnostics of a file.
+  diagnosticsOf(uri) {
+    return [...this.collections].flatMap(collection => collection.get(uri) || [])
+  }
+
   // Everything of an extension that is going away.
   forget(extension) {
     this.entries = this.entries.filter(entry => entry.extension !== extension)

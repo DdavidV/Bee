@@ -151,6 +151,13 @@ defmodule Bee.Extensions.Host do
     start + to_bytes(line_text, character)
   end
 
+  @doc "UTF-8 byte offset `offset` into `text` as a `%{line, character}` position (UTF-16 units)."
+  def bytes_to_position(text, offset) do
+    before = binary_part(text, 0, min(max(offset, 0), byte_size(text)))
+    lines = :binary.split(before, "\n", [:global])
+    %{line: length(lines) - 1, character: to_utf16(List.last(lines), byte_size(List.last(lines)))}
+  end
+
   # `{byte offset of its start, its text without the line break}`.
   defp line_at(text, 0, start) do
     line =
@@ -325,12 +332,14 @@ defmodule Bee.Extensions.Host do
   # A language feature for an editor (Bee.Languages.Features): about the
   # text the buffer has now, which Node gets first if it hasn't.
   def handle_cast({:provide, feature, path, params, {pid, ref}}, s) do
-    open? = Registry.lookup(Bee.Registry, {:buffer, path}) != []
+    open? = is_binary(path) and Registry.lookup(Bee.Registry, {:buffer, path}) != []
     text = open? && inside?(path, s.root) && Bee.API.text(path)
 
     cond do
-      # Details of a completion already given: not about the text.
-      is_binary(text) or feature in ~w(completionResolve completionAccept) ->
+      # Details of a completion already given, the workspace's symbols:
+      # not about the text.
+      is_binary(text) or
+          feature in ~w(completionResolve completionAccept workspaceSymbol codeActionApply) ->
         s = sync_document(s, path, text)
         id = s.next_id
         params = Map.merge(params, %{feature: feature, path: path, key: id})

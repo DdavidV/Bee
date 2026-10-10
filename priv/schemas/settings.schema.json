@@ -19,6 +19,16 @@
       "default": 2,
       "description": "Number of spaces a tab is equal to."
     },
+    "editor.formatOnSave": {
+      "type": "boolean",
+      "default": false,
+      "description": "Format a file when it is saved, with a formatter an extension provides for its language. For one language: inside its block, \"[elixir]\": {\"editor.formatOnSave\": true}."
+    },
+    "editor.defaultFormatter": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "The extension that formats files when several can, by its id (\"publisher.name\"). Otherwise the one fitting the file best does. For one language: inside its block, \"[elixir]\": {\"editor.defaultFormatter\": …}."
+    },
     "editor.wordWrap": {
       "type": "string",
       "enum": ["off", "on"],

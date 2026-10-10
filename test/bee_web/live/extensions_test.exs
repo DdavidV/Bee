@@ -478,6 +478,252 @@ defmodule BeeWeb.ExtensionsTest do
   end
 
   @tag :node
+  test "Quick Fix: a problem's code actions, picked and done; the Problems section", %{
+    conn: conn
+  } do
+    root = Bee.Workspace.root()
+    path = Path.join(root, "a.hl")
+    File.write!(path, "this is BAD here\n# TODO later\nfrozen\n")
+    Bee.Test.Extensions.install("hello-lang")
+
+    {:ok, view, _html} = live(conn, ~p"/")
+    open_file(view, "a.hl")
+    eventually(fn -> has_element?(view, "#problems", "2 problems") end)
+
+    # The Problems section: by file, with who found each and where.
+    run(view, "workbench.actions.view.problems")
+    assert has_element?(view, "#problems-filter-error", "Errors 1")
+    assert has_element?(view, "#problems-filter-warning", "Warnings 1")
+    assert has_element?(view, "[data-problem-file='#{path}'] h3", "a.hl")
+
+    assert has_element?(view, "[data-problem='0'][data-severity='error']", "BAD is bad")
+    assert has_element?(view, "[data-problem='0']", "hello (H001)")
+    assert has_element?(view, "[data-problem='0']", "[Ln 1, Col 9]")
+    refute has_element?(view, "[data-problem='0']", "Use GOOD instead")
+    assert has_element?(view, "[data-problem='1'][data-severity='warning']", "something to do")
+
+    view |> element("#problems-filter-warning") |> render_click()
+    refute has_element?(view, "[data-severity='warning']")
+    assert has_element?(view, "[data-severity='error']")
+
+    # A problem: its place in the file.
+    view |> element("[data-problem='0']") |> render_click()
+    assert_push_event(view, "cm:reveal", %{path: ^path, from: 8, to: 8})
+
+    # Quick Fix there: what can be done, the preferred first.
+    range = fn line ->
+      %{
+        "from" => %{"line" => line, "character" => 0},
+        "to" => %{"line" => line, "character" => 20}
+      }
+    end
+
+    render_hook(view, "language_code_actions", %{"path" => path, "range" => range.(0)})
+    eventually(fn -> has_element?(view, "#palette-input[placeholder='Quick Fix…']") end)
+    assert has_element?(view, "#palette li:nth-child(1) [data-pick]", "Replace with GOOD")
+    assert has_element?(view, "#palette li:nth-child(1)", "preferred")
+    assert has_element?(view, "#palette li:nth-child(2) [data-pick]", "Shout the line")
+    render_hook(view, "palette_run", %{})
+
+    assert_push_event(
+      view,
+      "cm:edit",
+      %{path: ^path, text: "this is GOOD here\n# TODO later\nfrozen\n"},
+      5_000
+    )
+
+    eventually(fn -> has_element?(view, "#problems", "1 problem") end)
+
+    # One that can't be done says why.
+    render_hook(view, "language_code_actions", %{"path" => path, "range" => range.(2)})
+    eventually(fn -> has_element?(view, "#palette [data-pick]", "Thaw") end)
+    assert render(view) =~ "can&#39;t be done: too cold"
+
+    index =
+      Enum.find_index(
+        :sys.get_state(view.pid).socket.assigns.palette.items,
+        &(&1.label == "Thaw")
+      )
+
+    render_hook(view, "palette_pick", %{"index" => to_string(index)})
+    assert render(view) =~ "Thaw: too cold"
+
+    # Nothing to do on an empty line.
+    render_hook(view, "doc_changed", %{"path" => path, "text" => "\n"})
+    render_hook(view, "language_code_actions", %{"path" => path, "range" => range.(0)})
+    eventually(fn -> has_element?(view, "#status", "No code actions available") end)
+  end
+
+  @tag :node
+  test "references in the panel, Rename Symbol, and Go to Symbol", %{conn: conn} do
+    root = Bee.Workspace.root()
+    path = Path.join(root, "a.hl")
+    other = Path.join(root, "b.hl")
+    File.write!(path, "def once\n  var inner\n    once and once\ndef last\n")
+    File.write!(other, "def elsewhere\nuses once\n")
+    Bee.Test.Extensions.install("hello-lang")
+
+    {:ok, view, _html} = live(conn, ~p"/")
+    open_file(view, "a.hl")
+
+    eventually(fn ->
+      BeeWeb.EditorLive.context(:sys.get_state(view.pid).socket.assigns)[
+        "editorHasRenameProvider"
+      ]
+    end)
+
+    position = fn line, character -> %{"line" => line, "character" => character} end
+
+    # Find All References: the panel's section, by file, each with its line.
+    render_hook(view, "language_goto", %{
+      "feature" => "references",
+      "path" => path,
+      "position" => position.(0, 5)
+    })
+
+    eventually(fn ->
+      has_element?(view, "#panel-body-references:not(.invisible) #references-count")
+    end)
+
+    assert has_element?(view, "#references-count", "4 references in 2 files")
+    assert has_element?(view, "[data-reference-file='#{path}'] h3", "a.hl")
+    assert has_element?(view, "[data-reference-file='#{path}'] [data-reference='0']", "def once")
+    assert has_element?(view, "[data-reference-file='#{path}'] [data-reference='1'] mark", "once")
+
+    assert has_element?(
+             view,
+             "[data-reference-file='#{other}'] [data-reference='3']",
+             "uses once"
+           )
+
+    # (Its line's indentation is left out.)
+    html = view |> element("[data-reference='2']") |> render()
+    assert html =~ ~r/>once and <mark[^>]*>once<\/mark></
+
+    # A row: there, in its file.
+    view |> element("[data-reference='3']") |> render_click()
+    assert_push_event(view, "cm:open", %{path: ^other}, 5_000)
+    assert_push_event(view, "cm:reveal", %{path: ^other, from: 19, to: 19})
+    view |> element("#tabs [data-path='#{path}']") |> render_click()
+
+    # Rename Symbol: asked for the new name, the old one filled in.
+    render_hook(view, "language_rename", %{"path" => path, "position" => position.(2, 5)})
+    eventually(fn -> has_element?(view, "#palette-input[value='once']") end)
+    assert render(view) =~ "Rename Symbol: a new name for once"
+    render_hook(view, "palette_filter", %{"query" => "twice"})
+    render_hook(view, "palette_run", %{})
+
+    # Open files get the edits in their editors (undoable); the status says how much.
+    assert_push_event(
+      view,
+      "cm:edit",
+      %{path: ^path, text: "def twice\n  var inner\n    twice and twice\ndef last\n"},
+      5_000
+    )
+
+    assert_push_event(view, "cm:edit", %{path: ^other, text: "def elsewhere\nuses twice\n"})
+
+    eventually(fn ->
+      has_element?(view, "#status", "Renamed once to twice: 4 places in 2 files")
+    end)
+
+    # Dismissed, or the same name: nothing.
+    render_hook(view, "language_rename", %{"path" => path, "position" => position.(0, 5)})
+    eventually(fn -> has_element?(view, "#palette-input[value='twice']") end)
+    render_click(view, "close_palette", %{})
+    refute_push_event(view, "cm:edit", %{}, 200)
+
+    # Go to Symbol in Editor: the file's outline, nested ones indented.
+    run(view, "workbench.action.gotoSymbol")
+    eventually(fn -> has_element?(view, "#palette [data-symbol='inner']") end)
+    assert has_element?(view, "#palette li:nth-child(1) [data-symbol='twice']", "function")
+    assert has_element?(view, "#palette [data-symbol='inner']", "line 2")
+    assert has_element?(view, "#palette [data-symbol='last']")
+    render_hook(view, "palette_filter", %{"query" => "@la"})
+    refute has_element?(view, "#palette [data-symbol='inner']")
+    render_hook(view, "palette_run", %{})
+    assert_push_event(view, "cm:reveal", %{path: ^path, from: 46, to: 46})
+
+    # In Workspace: asked for each query; picked from another file.
+    run(view, "workbench.action.showAllSymbols")
+    render_hook(view, "palette_filter", %{"query" => "#else"})
+    eventually(fn -> has_element?(view, "#palette [data-symbol='elsewhere']", "b.hl:1") end)
+    refute has_element?(view, "#palette [data-symbol='last']")
+    render_hook(view, "palette_run", %{})
+    assert_push_event(view, "cm:reveal", %{path: ^other, from: 4, to: 4})
+    assert has_element?(view, "#tabs [data-path='#{other}'][data-active='true']")
+  end
+
+  @tag :node
+  test "formatting: by command, of the selection, and on save", %{conn: conn} do
+    root = Bee.Workspace.root()
+    path = Path.join(root, "f.hl")
+    File.write!(path, "one   two\nthree    four\n")
+    Bee.Test.Extensions.install("hello-lang")
+
+    {:ok, view, _html} = live(conn, ~p"/")
+
+    render_hook(view, "run_command", %{
+      "command" => "bee.openFile",
+      "args" => Jason.encode!([path])
+    })
+
+    assert_push_event(view, "cm:open", %{path: ^path})
+
+    eventually(fn ->
+      BeeWeb.EditorLive.context(:sys.get_state(view.pid).socket.assigns)[
+        "editorHasDocumentFormattingProvider"
+      ]
+    end)
+
+    # Format Selection: the lines of the selection (the second, here).
+    render_hook(view, "selection_changed", %{"path" => path, "ranges" => [[12, 15]]})
+    run(view, "editor.action.formatSelection")
+
+    assert_push_event(
+      view,
+      "cm:edit",
+      %{path: ^path, text: "one   two\nthree four\n", edits: [[10, 23, "three four"]]},
+      5_000
+    )
+
+    # Format Document: the edits go to the editor, undoable; unsaved.
+    run(view, "editor.action.formatDocument")
+    assert_push_event(view, "cm:edit", %{path: ^path, text: "one two\nthree four\n"}, 5_000)
+    assert File.read!(path) == "one   two\nthree    four\n"
+
+    # Saving doesn't format, unless asked to.
+    render_hook(view, "save", %{"path" => path, "text" => "a   b\n"})
+    assert File.read!(path) == "a   b\n"
+
+    Bee.Settings.update(:user, "editor.formatOnSave", fn _ -> true end)
+    eventually(fn -> :sys.get_state(view.pid).socket.assigns.settings["editor.formatOnSave"] end)
+    render_hook(view, "save", %{"path" => path, "text" => "c   d  \n"})
+    assert_push_event(view, "cm:edit", %{path: ^path, text: "c d\n"}, 5_000)
+    eventually(fn -> File.read!(path) == "c d\n" end)
+    eventually(fn -> has_element?(view, "#status", "Saved f.hl") end)
+
+    # For one language only: its block in the settings.
+    File.write!(
+      Bee.Settings.user_path(),
+      ~s({"editor.formatOnSave": false, "[hellolang]": {"editor.formatOnSave": true, "editor.tabSize": 7}})
+    )
+
+    Bee.Settings.reload()
+    render_hook(view, "save", %{"path" => path, "text" => "e   f\n"})
+    assert_push_event(view, "cm:edit", %{path: ^path, text: "e f\n"}, 5_000)
+    eventually(fn -> File.read!(path) == "e f\n" end)
+    # (The formatter is told the language's tab size.)
+    eventually(fn -> "formatting with tabSize 7" in Bee.Extensions.Host.log(root) end)
+
+    # A file nobody formats is saved as it is, at once.
+    notes = Path.join(root, "notes.txt")
+    open_file(view, "notes.txt")
+    render_hook(view, "save", %{"path" => notes, "text" => "x   y\n"})
+    assert File.read!(notes) == "x   y\n"
+  end
+
+  @tag :node
   test "a webview panel: its tab and frame, messages both ways, closing", %{conn: conn} do
     root = Bee.Workspace.root()
     Bee.Test.Extensions.install("hello-webview")

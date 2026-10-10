@@ -6,15 +6,28 @@ defmodule Bee.Workbench.QuickOpen do
     * `""` – the recently opened files (`Bee.Workspace.RecentFiles`), after
       the ways to go elsewhere (`modes/0`: `>` for commands)
     * `>…` – commands (the command palette)
+    * `@…` – the symbols of the shown file, `#…` – those of the workspace,
+      as its language extensions know them (`Bee.Languages.Features`)
     * anything else – files of the workspace, by name
   """
 
-  @doc "The query's mode: `{:commands, rest}`, `:recent` or `{:files, query}`."
+  @doc """
+  The query's mode: `{:commands, rest}`, `{:symbols, rest}`,
+  `{:workspace_symbols, rest}`, `:recent` or `{:files, query}`.
+  """
   def mode(">" <> rest), do: {:commands, String.trim(rest)}
+  def mode("@" <> rest), do: {:symbols, rest}
+  def mode("#" <> rest), do: {:workspace_symbols, String.trim(rest)}
   def mode(query), do: if(String.trim(query) == "", do: :recent, else: {:files, query})
 
   @doc "Other modes, by prefix, offered while the query is empty."
-  def modes, do: [%{prefix: ">", label: "Show and Run Commands"}]
+  def modes do
+    [
+      %{prefix: ">", label: "Show and Run Commands"},
+      %{prefix: "@", label: "Go to Symbol in Editor"},
+      %{prefix: "#", label: "Go to Symbol in Workspace"}
+    ]
+  end
 
   @typedoc "A file prepared for searching: its path and name lowercased once."
   @type entry :: {lower_path :: String.t(), lower_name :: String.t(), path :: String.t()}

@@ -47,6 +47,16 @@ defmodule BeeWeb.Workbench.Panel do
   attr :output_channels, :list, default: [], doc: "Bee.Output's channels"
   attr :output_channel, :string, default: nil, doc: "the one shown"
 
+  attr :problems, :list,
+    default: [],
+    doc: "every problem: %{path, severity, message, line, column, source} (BeeWeb.EditorLive)"
+
+  attr :problems_hidden, :list, default: [], doc: "the severities not listed"
+
+  attr :references, :map,
+    default: nil,
+    doc: "Find All References' places: %{count, files: [%{path, rows}]} (BeeWeb.EditorLive)"
+
   def panel(assigns) do
     assigns =
       assign(assigns, :shown, Enum.find(assigns.sections, &(&1.container.id == assigns.active)))
@@ -132,6 +142,9 @@ defmodule BeeWeb.Workbench.Panel do
             root={@root}
             output_channels={@output_channels}
             output_channel={@output_channel}
+            references={@references}
+            problems={@problems}
+            problems_hidden={@problems_hidden}
             terminals={@terminals}
             active_term={@active_term}
             console={@console}
@@ -227,6 +240,134 @@ defmodule BeeWeb.Workbench.Panel do
     """
   end
 
+  # Problems: everything wrong, by file – what extensions' language
+  # features found, JSON validation, Bee's own files. The buttons count
+  # each severity and hide or show it; a click on a problem goes there.
+  defp view_body(%{view: %{id: "workbench.panel.problems"}} = assigns) do
+    entries = Enum.with_index(assigns.problems)
+    counts = Enum.frequencies_by(assigns.problems, & &1.severity)
+
+    files =
+      entries
+      |> Enum.reject(fn {problem, _} -> problem.severity in assigns.problems_hidden end)
+      |> Enum.chunk_by(fn {problem, _} -> problem.path end)
+
+    assigns = assign(assigns, counts: counts, files: files)
+
+    ~H"""
+    <div id="problems-view" class="flex-1 min-w-0 flex flex-col text-xs">
+      <div class="shrink-0 flex items-center gap-1 px-3 py-1 border-b border-panel-border">
+        <button
+          :for={
+            {severity, label, icon} <- [
+              {:error, "Errors", "hero-x-circle-micro"},
+              {:warning, "Warnings", "hero-exclamation-triangle-micro"},
+              {:info, "Infos", "hero-information-circle-micro"}
+            ]
+          }
+          type="button"
+          id={"problems-filter-#{severity}"}
+          aria-pressed={to_string(severity not in @problems_hidden)}
+          title={"Show or hide #{String.downcase(label)}"}
+          class={[
+            "flex items-center gap-1 px-1.5 py-0.5 rounded cursor-pointer hover:bg-list-hover",
+            severity in @problems_hidden && "opacity-40"
+          ]}
+          phx-click="problems_filter"
+          phx-value-severity={severity}
+        >
+          <.icon name={icon} class={["size-3.5", severity_class(severity)]} />
+          {label} {@counts[severity] || 0}
+        </button>
+      </div>
+      <div class="flex-1 min-h-0 overflow-auto py-1">
+        <p :if={@problems == []} id="problems-empty" class="px-3 py-1 opacity-60">
+          No problems have been detected in the workspace.
+        </p>
+        <section :for={rows <- @files} data-problem-file={elem(hd(rows), 0).path}>
+          <h3 class="flex items-center gap-1.5 px-3 py-0.5 font-semibold">
+            <BeeWeb.Workbench.FileIcon.file_icon
+              :if={@icon_theme}
+              theme={@icon_theme}
+              path={elem(hd(rows), 0).path}
+              class="shrink-0"
+            />
+            <span class="truncate">{Bee.Workspace.FS.relative(@root, elem(hd(rows), 0).path)}</span>
+            <span class="badge badge-xs badge-ghost">{length(rows)}</span>
+          </h3>
+          <button
+            :for={{problem, index} <- rows}
+            type="button"
+            data-problem={index}
+            data-severity={problem.severity}
+            class="w-full flex items-baseline gap-2 pl-8 pr-3 py-0.5 text-left cursor-pointer hover:bg-list-hover"
+            phx-click="problem_open"
+            phx-value-index={index}
+          >
+            <.icon
+              name={
+                case problem.severity do
+                  :error -> "hero-x-circle-micro"
+                  :warning -> "hero-exclamation-triangle-micro"
+                  _ -> "hero-information-circle-micro"
+                end
+              }
+              class={["size-3.5 shrink-0 self-center", severity_class(problem.severity)]}
+            />
+            <span class="truncate">{problem.message |> String.split("\n") |> hd()}</span>
+            <span :if={problem.source not in [nil, ""]} class="opacity-60 shrink-0">
+              {problem.source}
+            </span>
+            <span :if={problem.line} class="opacity-50 shrink-0">
+              [Ln {problem.line}{if problem.column, do: ", Col #{problem.column}"}]
+            </span>
+          </button>
+        </section>
+      </div>
+    </div>
+    """
+  end
+
+  # Find All References: every place the symbol is, by file, each with its
+  # line; a click goes there.
+  defp view_body(%{view: %{id: "workbench.panel.references"}} = assigns) do
+    ~H"""
+    <div id="references" class="flex-1 min-w-0 overflow-auto text-xs py-1">
+      <p :if={!@references} id="references-empty" class="px-3 py-1 opacity-60">
+        No references yet: Find All References (in an editor's right-click menu) lists a symbol's.
+      </p>
+      <p :if={@references} id="references-count" class="px-3 py-1 opacity-70">
+        {@references.count} {if @references.count == 1, do: "reference", else: "references"} in {length(
+          @references.files
+        )} {if length(@references.files) == 1, do: "file", else: "files"}
+      </p>
+      <section :for={file <- (@references && @references.files) || []} data-reference-file={file.path}>
+        <h3 class="flex items-center gap-1.5 px-3 py-0.5 font-semibold">
+          <BeeWeb.Workbench.FileIcon.file_icon
+            :if={@icon_theme}
+            theme={@icon_theme}
+            path={file.path}
+            class="shrink-0"
+          />
+          <span class="truncate">{Bee.Workspace.FS.relative(@root, file.path)}</span>
+          <span class="badge badge-xs badge-ghost">{length(file.rows)}</span>
+        </h3>
+        <button
+          :for={row <- file.rows}
+          type="button"
+          data-reference={row.index}
+          class="w-full flex gap-2 pl-8 pr-3 py-0.5 text-left font-mono cursor-pointer hover:bg-list-hover"
+          phx-click="reference_open"
+          phx-value-index={row.index}
+        >
+          <span class="opacity-50 shrink-0 w-10 text-right">{row.line}</span>
+          <span class="truncate whitespace-pre">{row.before}<mark class="bg-warning/30 text-inherit rounded-xs">{row.match}</mark>{row.after}</span>
+        </button>
+      </section>
+    </div>
+    """
+  end
+
   # What extensions write for the user (Bee.Output): one channel at a time,
   # picked on the left. Its text is the Output hook's: sent whole when the
   # channel is shown, then as it comes.
@@ -298,6 +439,10 @@ defmodule BeeWeb.Workbench.Panel do
   end
 
   ## Terminals
+
+  defp severity_class(:error), do: "text-error"
+  defp severity_class(:warning), do: "text-warning"
+  defp severity_class(_info), do: "text-info"
 
   attr :terminal, :map, required: true
   attr :class, :any, default: nil

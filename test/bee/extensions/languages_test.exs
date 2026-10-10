@@ -452,5 +452,247 @@ defmodule Bee.Extensions.LanguagesTest do
       assert Enum.sort(Enum.map(places, &{&1["path"], &1["from"]["line"]})) == [{a, 1}, {b, 1}]
       assert ask(root, "definition", a, at(2, 12)) == {:ok, []}
     end
+
+    test "formatting: one formatter's edits, of the file or of a range", %{root: root, a: a} do
+      started(root, a)
+      Buffer.update(a, "one   two  \nthree    four\nfive  \n")
+
+      assert {:ok, %{"extension" => "hello-lang", "edits" => edits}} =
+               ask(root, "formatting", a, %{options: %{tabSize: 4, insertSpaces: true}})
+
+      assert edits == [
+               %{
+                 "from" => %{"line" => 0, "character" => 0},
+                 "to" => %{"line" => 0, "character" => 11},
+                 "text" => "one two"
+               },
+               %{
+                 "from" => %{"line" => 1, "character" => 0},
+                 "to" => %{"line" => 1, "character" => 13},
+                 "text" => "three four"
+               },
+               %{
+                 "from" => %{"line" => 2, "character" => 0},
+                 "to" => %{"line" => 2, "character" => 6},
+                 "text" => "five"
+               }
+             ]
+
+      eventually(fn -> "formatting with tabSize 4" in Host.log(root) end)
+
+      # A range: its lines only. The formatter asked for by its id, or (one
+      # that isn't there) the one there is.
+      range = %{from: %{line: 1, character: 2}, to: %{line: 1, character: 4}}
+
+      for formatter <- ["bee-tests.hello-lang", "Nobody.Here", nil] do
+        assert {:ok, %{"edits" => [%{"text" => "three four"}]}} =
+                 ask(root, "rangeFormatting", a, %{range: range, formatter: formatter})
+      end
+
+      # Nothing to change; nobody to format.
+      Buffer.update(a, "tidy\n")
+
+      assert ask(root, "formatting", a, %{}) ==
+               {:ok, %{"extension" => "hello-lang", "edits" => []}}
+
+      notes = Path.join(root, "notes.txt")
+      {:ok, _} = Buffer.open(notes)
+      assert ask(root, "formatting", notes, %{}) == {:ok, nil}
+    end
+
+    test "signature help: the call's signatures and the parameter being typed", %{
+      root: root,
+      a: a
+    } do
+      started(root, a)
+      assert %{"signatureHelp" => %{triggerCharacters: ["(", ","]}} = Features.for_file(root, a)
+      Buffer.update(a, "greet.world(you, \nnothing here\n")
+
+      assert {:ok, help} =
+               ask(root, "signatureHelp", a, %{
+                 position: %{line: 0, character: 12},
+                 context: %{triggerKind: 2, triggerCharacter: "("}
+               })
+
+      assert help == %{
+               "activeSignature" => 0,
+               "activeParameter" => 0,
+               "signatures" => [
+                 %{
+                   "label" => "world(name, loudly)",
+                   "documentation" => "Greets the **world**.",
+                   "activeParameter" => nil,
+                   "parameters" => [
+                     %{"label" => "name", "documentation" => "who to greet \\(asked by \\(\\)"},
+                     %{"label" => [12, 18], "documentation" => "whether to shout"}
+                   ]
+                 }
+               ]
+             }
+
+      assert {:ok, %{"activeParameter" => 1}} =
+               ask(root, "signatureHelp", a, at(0, 17))
+
+      # Not in a call.
+      assert ask(root, "signatureHelp", a, at(1, 3)) == {:ok, nil}
+    end
+
+    test "references and highlights: every place a symbol is", %{root: root, a: a, b: b} do
+      File.write!(b, "uses once\n")
+      started(root, a)
+      Buffer.update(a, "def once\nonce and once\n")
+
+      assert {:ok, places} = ask(root, "references", a, at(1, 1))
+
+      assert Enum.map(
+               places,
+               &{Path.basename(&1["path"]), &1["from"]["line"], &1["from"]["character"]}
+             ) ==
+               [{"a.hl", 0, 4}, {"a.hl", 1, 0}, {"a.hl", 1, 9}, {"b.hl", 0, 5}]
+
+      assert {:ok, [_, _, _]} =
+               ask(root, "references", a, Map.put(at(1, 1), :includeDeclaration, false))
+
+      assert ask(root, "documentHighlight", a, at(1, 1)) ==
+               {:ok,
+                [
+                  %{
+                    "from" => %{"line" => 0, "character" => 4},
+                    "to" => %{"line" => 0, "character" => 8},
+                    "kind" => "write"
+                  },
+                  %{
+                    "from" => %{"line" => 1, "character" => 0},
+                    "to" => %{"line" => 1, "character" => 4},
+                    "kind" => "read"
+                  },
+                  %{
+                    "from" => %{"line" => 1, "character" => 9},
+                    "to" => %{"line" => 1, "character" => 13},
+                    "kind" => "read"
+                  }
+                ]}
+    end
+
+    test "symbols: a file's outline, flat; the workspace's by a query", %{root: root, a: a, b: b} do
+      File.write!(b, "def other\n")
+      started(root, a)
+      Buffer.update(a, "def first\n  var inner\ntext\ndef second\n")
+
+      assert {:ok, [first, inner, second]} = ask(root, "documentSymbol", a, %{})
+
+      assert first == %{
+               "name" => "first",
+               "detail" => "definition",
+               "kind" => "function",
+               "container" => nil,
+               "depth" => 0,
+               "from" => %{"line" => 0, "character" => 4},
+               "to" => %{"line" => 0, "character" => 9}
+             }
+
+      assert %{"name" => "inner", "kind" => "variable", "container" => "first", "depth" => 1} =
+               inner
+
+      assert %{"name" => "second", "depth" => 0, "from" => %{"line" => 3}} = second
+
+      # Not about a file: no path. The open file as it is in its editor.
+      assert {:ok, found} = ask(root, "workspaceSymbol", nil, %{query: "s"})
+
+      assert Enum.sort(Enum.map(found, &{&1["name"], &1["container"], Path.basename(&1["path"])})) ==
+               [{"first", "a.hl", "a.hl"}, {"second", "a.hl", "a.hl"}]
+
+      assert {:ok,
+              [%{"name" => "other", "kind" => "function", "path" => ^b, "from" => %{"line" => 0}}]} =
+               ask(root, "workspaceSymbol", nil, %{query: "oth"})
+    end
+
+    test "rename: what is renamed, then every place, in open files and on disk", %{
+      root: root,
+      a: a,
+      b: b
+    } do
+      File.write!(b, "uses once\n")
+      started(root, a)
+      Buffer.update(a, "def once\nonce BAD\n")
+      Buffer.subscribe()
+
+      assert ask(root, "prepareRename", a, at(1, 2)) ==
+               {:ok,
+                %{
+                  "placeholder" => "once",
+                  "from" => %{"line" => 1, "character" => 0},
+                  "to" => %{"line" => 1, "character" => 4}
+                }}
+
+      # What its provider refuses, with its reason.
+      assert ask(root, "prepareRename", a, at(1, 6)) ==
+               {:ok, %{"error" => "BAD can't be renamed"}}
+
+      assert ask(root, "rename", a, Map.put(at(1, 2), :newName, "not a name")) ==
+               {:ok, %{"error" => "'not a name' isn't a name"}}
+
+      assert ask(root, "rename", a, Map.put(at(1, 2), :newName, "twice")) ==
+               {:ok, %{"applied" => true, "files" => 2, "edits" => 3}}
+
+      # The open file: in its buffer, as one edit; the other: written.
+      assert_receive {:buffer_edited, ^a, _version, [_, _], "def twice\ntwice BAD\n"}
+      refute File.read!(a) =~ "twice"
+      assert File.read!(b) == "uses twice\n"
+    end
+
+    test "code actions: for the diagnostics of a range; an edit resolved, a command run", %{
+      root: root,
+      a: a
+    } do
+      started(root, a)
+      Buffer.update(a, "this is BAD here\nfine frozen\n")
+      eventually(fn -> match?([_], Diagnostics.for_file(root, a)) end)
+      Buffer.subscribe()
+      line = fn n -> %{from: %{line: n, character: 0}, to: %{line: n, character: 99}} end
+
+      assert {:ok, %{"session" => session, "actions" => [fix, shout]}} =
+               ask(root, "codeAction", a, %{range: line.(0), context: %{triggerKind: 1}})
+
+      assert fix == %{
+               "index" => 0,
+               "title" => "Replace with GOOD",
+               "kind" => "quickfix",
+               "preferred" => true,
+               "disabled" => nil
+             }
+
+      assert %{"index" => 1, "title" => "Shout the line", "kind" => "refactor"} = shout
+
+      # A line without the problem; one that can't be done; only quick fixes.
+      assert {:ok,
+              %{
+                "actions" => [
+                  %{"title" => "Shout the line"},
+                  %{"title" => "Thaw", "disabled" => "too cold"}
+                ]
+              }} =
+               ask(root, "codeAction", a, %{range: line.(1)})
+
+      assert {:ok, %{"actions" => [%{"title" => "Replace with GOOD"}]}} =
+               ask(root, "codeAction", a, %{range: line.(0), context: %{only: "quickfix"}})
+
+      # The fix: its edit comes when it is resolved, and is applied.
+      assert ask(root, "codeActionApply", nil, %{session: session, index: 0}) ==
+               {:ok, %{"applied" => true}}
+
+      assert_receive {:buffer_edited, ^a, _version, [_], "this is GOOD here\nfine frozen\n"}
+      eventually(fn -> Diagnostics.for_file(root, a) == [] end)
+
+      # The refactoring: its command runs.
+      assert ask(root, "codeActionApply", nil, %{session: session, index: 1}) ==
+               {:ok, %{"applied" => true}}
+
+      assert_receive {:buffer_edited, ^a, _version, [_], "THIS IS GOOD HERE\nfine frozen\n"},
+                     2_000
+
+      assert {:ok, %{"error" => _}} =
+               ask(root, "codeActionApply", nil, %{session: session, index: 9})
+    end
   end
 end

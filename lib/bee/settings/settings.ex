@@ -10,6 +10,14 @@ defmodule Bee.Settings do
   back to the next layer down and is reported in `errors/1`. Unknown keys
   are kept (a plugin defining them may not be loaded).
 
+  A file may also set things for one language, in a block named after it
+  as in VS Code – `"[elixir]": {"editor.formatOnSave": true}`, or
+  `"[javascript][typescript]": {…}` for several. Its settings are checked
+  like any other, and kept under the block's key; `for_language/2` is
+  what holds for a language's files. (So far the formatter's settings
+  are read that way: `editor.defaultFormatter`, `editor.formatOnSave`,
+  `editor.tabSize` as the formatter is told it.)
+
   Several workspaces can be open at once (`Bee.Workspace`): each one adds
   its own layer on top of the user's, kept while it is open (`track/1`).
   Reads take the workspace's root, or `nil` for the defaults and the user
@@ -82,6 +90,39 @@ defmodule Bee.Settings do
   def errors(root \\ nil), do: elem(layer_state(root), 1)
 
   def get(key, root \\ nil), do: Map.get(all(root), key, defaults()[key])
+
+  @doc """
+  Every setting of workspace `root` as it is for files of `language` (a
+  language id, or nil): `all/1`, with the settings of the language's
+  blocks on top – VS Code's `"[elixir]": {"editor.formatOnSave": true}`, a
+  block naming several languages (`"[javascript][typescript]"`) being each
+  one's. A language's setting wins over the general one, wherever each is
+  set (as in VS Code); between the user's and the workspace's blocks, the
+  workspace's.
+  """
+  def for_language(root, language) when is_binary(language) do
+    settings = all(root)
+
+    settings
+    |> Enum.filter(fn {key, value} -> is_map(value) and language in languages(key) end)
+    # (The more languages a block names, the less it is this one's.)
+    |> Enum.sort_by(fn {key, _} -> -length(languages(key)) end)
+    |> Enum.reduce(settings, fn {_key, block}, acc -> Map.merge(acc, block) end)
+  end
+
+  def for_language(root, _language), do: all(root)
+
+  @doc "A setting of workspace `root` for files of `language` (see `for_language/2`)."
+  def get(key, root, language), do: Map.get(for_language(root, language), key, defaults()[key])
+
+  # The languages of a block's key ("[a][b]" → ["a", "b"]), [] for a setting's.
+  defp languages("[" <> _ = key) do
+    if Regex.match?(~r/^(\[[^\[\]]+\])+$/, key),
+      do: Enum.map(Regex.scan(~r/\[([^\[\]]+)\]/, key), &List.last/1),
+      else: []
+  end
+
+  defp languages(_key), do: []
 
   @doc """
   A setting from the defaults and the user file only, whatever workspace:
@@ -299,19 +340,45 @@ defmodule Bee.Settings do
 
   defp apply_overrides(settings, errors, path, overrides) do
     Enum.reduce(overrides, {settings, errors}, fn {key, value}, {settings, errors} ->
-      case validate(key, value) do
-        # Object settings (e.g. files.exclude) merge with the layer below, so
-        # adding one pattern keeps the defaults and `false` switches one off.
-        :ok when is_map(value) ->
-          {Map.update(settings, key, value, &Map.merge(&1 || %{}, value)), errors}
+      case languages(key) != [] && value do
+        # A language's block: its settings are checked one by one, and kept
+        # under the block's key, over the same block of the layer below.
+        %{} = block ->
+          {valid, errors} =
+            Enum.reduce(block, {%{}, errors}, fn {inner, inner_value}, {valid, errors} ->
+              case validate(inner, inner_value) do
+                :ok ->
+                  {Map.put(valid, inner, inner_value), errors}
 
-        :ok ->
-          {Map.put(settings, key, value), errors}
+                {:error, reason} ->
+                  {valid, errors ++ [%{path: path, message: "#{key}: \"#{inner}\": #{reason}"}]}
+              end
+            end)
 
-        {:error, reason} ->
-          {settings, errors ++ [%{path: path, message: "\"#{key}\": #{reason}"}]}
+          {Map.update(settings, key, valid, &Map.merge(&1 || %{}, valid)), errors}
+
+        false ->
+          apply_override(settings, errors, path, key, value)
+
+        _not_an_object ->
+          {settings, errors ++ [%{path: path, message: "#{key}: must be an object of settings"}]}
       end
     end)
+  end
+
+  defp apply_override(settings, errors, path, key, value) do
+    case validate(key, value) do
+      # Object settings (e.g. files.exclude) merge with the layer below, so
+      # adding one pattern keeps the defaults and `false` switches one off.
+      :ok when is_map(value) ->
+        {Map.update(settings, key, value, &Map.merge(&1 || %{}, value)), errors}
+
+      :ok ->
+        {Map.put(settings, key, value), errors}
+
+      {:error, reason} ->
+        {settings, errors ++ [%{path: path, message: "\"#{key}\": #{reason}"}]}
+    end
   end
 
   defp log(errors) do

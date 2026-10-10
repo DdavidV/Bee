@@ -107,6 +107,53 @@ defmodule Bee.SettingsTest do
     refute Enum.any?(globs, &(&1 =~ "deps"))
   end
 
+  test "a language's block: its settings hold for its files, over the general ones" do
+    write(Settings.user_path(), ~s({
+      "editor.tabSize": 4,
+      "editor.formatOnSave": false,
+      "[elixir]": {"editor.formatOnSave": true, "editor.defaultFormatter": "a.one", "editor.tabSize": 2},
+      "[elixir][erlang]": {"editor.defaultFormatter": "b.two", "editor.fontSize": 16}
+    }))
+
+    # The workspace's general setting doesn't beat the user's for the language;
+    # its block for the language does.
+    write(Settings.workspace_path(root()), ~s({
+      "editor.tabSize": 8,
+      "[elixir]": {"editor.tabSize": 3}
+    }))
+
+    assert Settings.errors(root()) == []
+    # Not for other files.
+    assert Settings.get("editor.formatOnSave", root()) == false
+    assert Settings.get("editor.tabSize", root()) == 8
+    assert Settings.get("editor.formatOnSave", root(), "markdown") == false
+    assert Settings.for_language(root(), nil) == Settings.all(root())
+
+    elixir = Settings.for_language(root(), "elixir")
+    assert elixir["editor.formatOnSave"] == true
+    assert elixir["editor.tabSize"] == 3
+    # Its own block over one it shares.
+    assert elixir["editor.defaultFormatter"] == "a.one"
+    assert elixir["editor.fontSize"] == 16
+    assert Settings.get("editor.defaultFormatter", root(), "erlang") == "b.two"
+    assert Settings.get("editor.tabSize", root(), "erlang") == 8
+    # Without the workspace: the user's block.
+    assert Settings.get("editor.tabSize", nil, "elixir") == 2
+  end
+
+  test "a language's block is checked setting by setting" do
+    write(Settings.user_path(), ~s({
+      "[elixir]": {"editor.tabSize": "wide", "editor.formatOnSave": true},
+      "[erlang]": true
+    }))
+
+    assert Settings.get("editor.formatOnSave", nil, "elixir") == true
+    assert Settings.get("editor.tabSize", nil, "elixir") == 2
+    messages = Enum.map(Settings.errors(), & &1.message)
+    assert Enum.any?(messages, &(&1 =~ ~s([elixir]: "editor.tabSize":)))
+    assert "[erlang]: must be an object of settings" in messages
+  end
+
   test "unknown keys are kept for plugins" do
     write(Settings.user_path(), ~s({"myPlugin.enabled": true}))
     assert Settings.get("myPlugin.enabled") == true

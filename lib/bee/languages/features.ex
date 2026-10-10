@@ -26,6 +26,25 @@ defmodule Bee.Languages.Features do
     * `"hover"` (`position`) – `%{"contents" => [markdown], "range"}`
     * `"definition"`, `"typeDefinition"`, `"declaration"`,
       `"implementation"` (`position`) – `[%{"path", "from", "to"}]`
+    * `"formatting"` (`options`, `formatter`), `"rangeFormatting"` (and
+      `range`) – `%{"edits" => [%{"from", "to", "text"}], "extension"}` of
+      one formatter: the one named (an extension's id), else the best fit
+    * `"signatureHelp"` (`position`, `context`) – `%{"signatures",
+      "activeSignature", "activeParameter"}`
+    * `"references"` (`position`) – places, like `"definition"`;
+      `"documentHighlight"` (`position`) – `[%{"from", "to", "kind"}]`
+    * `"documentSymbol"` – the file's outline, flat: `[%{"name", "detail",
+      "kind", "container", "depth", "from", "to"}]`; `"workspaceSymbol"`
+      (`query`; not about a file: `path` is `nil`) – `[%{"name", "kind",
+      "container", "path", "from", "to"}]`
+    * `"codeAction"` (`range`, `context`) – `%{"session", "actions" =>
+      [%{"index", "title", "kind", "preferred", "disabled"}]}`;
+      `"codeActionApply"` (`session`, `index`) – does one: `%{"applied"}`
+      or `%{"error"}`
+    * `"prepareRename"` (`position`) – `%{"placeholder", "from", "to"}`
+      or `%{"error"}`; `"rename"` (`position`, `newName`) – the edits are
+      applied (open files in their buffers, others on disk):
+      `%{"applied", "files", "edits"}` or `%{"error"}`
 
   Which features exist for which files is known here (`for_file/2`), as
   the host says what its extensions registered (`put/2`); a change
@@ -38,7 +57,10 @@ defmodule Bee.Languages.Features do
 
   @table __MODULE__
   @features ~w(completion completionResolve completionAccept hover
-               definition typeDefinition declaration implementation)
+               definition typeDefinition declaration implementation
+               formatting rangeFormatting signatureHelp
+               references documentHighlight documentSymbol workspaceSymbol
+               prepareRename rename codeAction codeActionApply)
 
   @doc "The features that can be asked for."
   def features, do: @features
@@ -92,6 +114,8 @@ defmodule Bee.Languages.Features do
     relative = Path.relative_to(path, root)
 
     for %{"feature" => feature} = provider <- providers(root),
+        # (Not a file's: see any?/2.)
+        feature != "workspaceSymbol",
         Enum.any?(List.wrap(provider["selector"]), &selects?(&1, language, path, relative)),
         reduce: %{} do
       acc ->
@@ -108,6 +132,9 @@ defmodule Bee.Languages.Features do
 
   # The host decides for good when it is asked (a pattern may be relative
   # to a folder we aren't told): here a pattern we can't tell selects.
+  @doc "Whether an extension of workspace `root` provides `feature` at all (for any file)."
+  def any?(root, feature), do: Enum.any?(providers(root), &(&1["feature"] == feature))
+
   defp selects?(%{} = selector, language, path, relative) do
     language? = selector["language"] in [nil, "*", language]
     scheme? = selector["scheme"] in [nil, "*", "file"]
@@ -136,7 +163,8 @@ defmodule Bee.Languages.Features do
   `{pid, ref}` gets `{:language_reply, ref, {:ok, result} | {:error, message}}`.
   """
   def request(root, feature, path, params, {pid, ref} = reply_to)
-      when feature in @features and is_binary(path) and is_map(params) and is_pid(pid) do
+      when feature in @features and (is_binary(path) or is_nil(path)) and is_map(params) and
+             is_pid(pid) do
     case Host.whereis(root) do
       nil -> send(pid, {:language_reply, ref, {:ok, nil}})
       host -> GenServer.cast(host, {:provide, feature, path, params, reply_to})

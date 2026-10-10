@@ -121,7 +121,9 @@ defmodule BeeWeb.Workbench.CommandPalette do
     """
   end
 
-  defp placeholder(%{mode: :quick_open}), do: "Search files by name (type > for commands)"
+  defp placeholder(%{mode: :quick_open}),
+    do: "Search files by name (type > for commands, @ for symbols)"
+
   defp placeholder(%{placeholder: placeholder}), do: placeholder
 
   defp empty(%{mode: :pick}), do: "No matching items"
@@ -131,6 +133,8 @@ defmodule BeeWeb.Workbench.CommandPalette do
       {:commands, _} -> "No matching commands"
       :recent -> "No recently opened files"
       {:files, _} -> "No matching files"
+      {:symbols, _} -> "No matching symbols in this file"
+      {:workspace_symbols, _} -> "No matching symbols"
     end
   end
 
@@ -139,4 +143,5 @@ defmodule BeeWeb.Workbench.CommandPalette do
   defp item_data(%{kind: :pick, key: key}), do: %{"data-pick" => key}
   defp item_data(%{kind: :file, path: path}), do: %{"data-file" => path}
   defp item_data(%{kind: :mode, prefix: prefix}), do: %{"data-mode" => prefix}
+  defp item_data(%{kind: :symbol, label: label}), do: %{"data-symbol" => String.trim(label)}
 end

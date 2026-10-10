@@ -108,6 +108,65 @@
         "enablement": "editorHasImplementationProvider"
       },
       {
+        "command": "editor.action.quickFix",
+        "title": "Quick Fix…",
+        "runtime": "client",
+        "enablement": "editorHasCodeActionsProvider"
+      },
+      {
+        "command": "workbench.actions.view.problems",
+        "category": "View",
+        "title": "Show Problems",
+        "runtime": "server"
+      },
+      {
+        "command": "editor.action.goToReferences",
+        "title": "Find All References",
+        "runtime": "client",
+        "enablement": "editorHasReferenceProvider"
+      },
+      {
+        "command": "editor.action.rename",
+        "title": "Rename Symbol",
+        "runtime": "client",
+        "enablement": "editorHasRenameProvider"
+      },
+      {
+        "command": "workbench.action.gotoSymbol",
+        "title": "Go to Symbol in Editor…",
+        "runtime": "server",
+        "enablement": "editorHasDocumentSymbolProvider"
+      },
+      {
+        "command": "workbench.action.showAllSymbols",
+        "title": "Go to Symbol in Workspace…",
+        "runtime": "server"
+      },
+      {
+        "command": "workbench.action.showReferences",
+        "category": "View",
+        "title": "Show References",
+        "runtime": "server"
+      },
+      {
+        "command": "editor.action.formatDocument",
+        "title": "Format Document",
+        "runtime": "server",
+        "enablement": "editorHasDocumentFormattingProvider"
+      },
+      {
+        "command": "editor.action.formatSelection",
+        "title": "Format Selection",
+        "runtime": "server",
+        "enablement": "editorHasDocumentSelectionFormattingProvider"
+      },
+      {
+        "command": "editor.action.triggerParameterHints",
+        "title": "Trigger Parameter Hints",
+        "runtime": "client",
+        "enablement": "editorHasSignatureHelpProvider"
+      },
+      {
         "command": "undo",
         "category": "Edit",
         "title": "Undo",
@@ -531,6 +590,15 @@
       {"key": "ctrl+shift+z", "mac": "cmd+shift+z", "command": "redo", "when": "editorTextFocus"},
       {"key": "ctrl+space", "command": "editor.action.triggerSuggest", "when": "editorTextFocus"},
       {"key": "ctrl+k ctrl+i", "mac": "cmd+k cmd+i", "command": "editor.action.showHover", "when": "editorTextFocus"},
+      {"key": "shift+alt+f", "command": "editor.action.formatDocument", "when": "editorTextFocus && editorHasDocumentFormattingProvider"},
+      {"key": "ctrl+k ctrl+f", "mac": "cmd+k cmd+f", "command": "editor.action.formatSelection", "when": "editorTextFocus && editorHasDocumentSelectionFormattingProvider"},
+      {"key": "ctrl+shift+space", "mac": "cmd+shift+space", "command": "editor.action.triggerParameterHints", "when": "editorTextFocus && editorHasSignatureHelpProvider"},
+      {"key": "ctrl+.", "mac": "cmd+.", "command": "editor.action.quickFix", "when": "editorTextFocus && editorHasCodeActionsProvider"},
+      {"key": "ctrl+shift+m", "mac": "cmd+shift+m", "command": "workbench.actions.view.problems"},
+      {"key": "shift+f12", "command": "editor.action.goToReferences", "when": "editorTextFocus && editorHasReferenceProvider"},
+      {"key": "f2", "command": "editor.action.rename", "when": "editorTextFocus && editorHasRenameProvider"},
+      {"key": "ctrl+shift+o", "mac": "cmd+shift+o", "command": "workbench.action.gotoSymbol"},
+      {"key": "ctrl+t", "mac": "cmd+t", "command": "workbench.action.showAllSymbols"},
       {"key": "f12", "command": "editor.action.revealDefinition", "when": "editorTextFocus && editorHasDefinitionProvider"},
       {"key": "ctrl+f12", "mac": "cmd+f12", "command": "editor.action.goToImplementation", "when": "editorTextFocus && editorHasImplementationProvider"},
       {"key": "ctrl+b", "mac": "cmd+b", "command": "workbench.action.toggleSidebarVisibility"},
@@ -561,7 +629,9 @@
       "panel": [
         {"id": "terminal", "title": "Terminal", "icon": "command-line"},
         {"id": "console", "title": "Bee Console", "icon": "code-bracket"},
-        {"id": "output", "title": "Output", "icon": "queue-list"}
+        {"id": "output", "title": "Output", "icon": "queue-list"},
+        {"id": "references", "title": "References", "icon": "arrows-right-left"},
+        {"id": "problems", "title": "Problems", "icon": "exclamation-triangle"}
       ]
     },
 
@@ -575,7 +645,9 @@
       ],
       "terminal": [{"id": "workbench.panel.terminal", "name": "Terminal"}],
       "console": [{"id": "workbench.panel.console", "name": "Bee Console"}],
-      "output": [{"id": "workbench.panel.output", "name": "Output"}]
+      "output": [{"id": "workbench.panel.output", "name": "Output"}],
+      "references": [{"id": "workbench.panel.references", "name": "References"}],
+      "problems": [{"id": "workbench.panel.problems", "name": "Problems"}]
     },
 
     "menubar": [
@@ -602,6 +674,11 @@
         {"command": "editor.action.revealDeclaration", "group": "navigation@2", "when": "editorHasDeclarationProvider"},
         {"command": "editor.action.goToTypeDefinition", "group": "navigation@3", "when": "editorHasTypeDefinitionProvider"},
         {"command": "editor.action.goToImplementation", "group": "navigation@4", "when": "editorHasImplementationProvider"},
+        {"command": "editor.action.goToReferences", "group": "navigation@5", "when": "editorHasReferenceProvider"},
+        {"command": "editor.action.rename", "group": "1_modification@0", "when": "editorHasRenameProvider"},
+        {"command": "editor.action.quickFix", "group": "1_modification@3", "when": "editorHasCodeActionsProvider"},
+        {"command": "editor.action.formatDocument", "group": "1_modification@1", "when": "editorHasDocumentFormattingProvider"},
+        {"command": "editor.action.formatSelection", "group": "1_modification@2", "when": "editorHasDocumentSelectionFormattingProvider && editorHasSelection"},
         {"command": "editor.action.clipboardCutAction", "group": "9_cutcopypaste@1"},
         {"command": "editor.action.clipboardCopyAction", "group": "9_cutcopypaste@2"},
         {"command": "editor.action.clipboardPasteAction", "group": "9_cutcopypaste@3"},

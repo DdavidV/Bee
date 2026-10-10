@@ -21,6 +21,12 @@ defmodule Bee.Workbench.Actions do
 
   def quick_open_prefix(wb, _args), do: wb
 
+  @command "workbench.action.gotoSymbol"
+  def goto_symbol(wb), do: Workbench.open_quick_open(wb, "@")
+
+  @command "workbench.action.showAllSymbols"
+  def show_all_symbols(wb), do: Workbench.open_quick_open(wb, "#")
+
   ## Editors (tabs)
   #
   # The tab's right-click menu (editor/title/context), its × and a middle
@@ -145,8 +151,28 @@ defmodule Bee.Workbench.Actions do
   @command "workbench.action.output.toggleOutput"
   def show_output(wb), do: Workbench.show_panel(wb, "output")
 
+  @command "workbench.actions.view.problems"
+  def show_problems(wb), do: Workbench.show_panel(wb, "problems")
+
+  @command "workbench.action.showReferences"
+  def show_references(wb), do: Workbench.show_panel(wb, "references")
+
   @command "workbench.output.action.clearOutput"
   def clear_output(wb), do: {wb, [:clear_output]}
+
+  # Formatting by an extension's formatter (Bee.Languages.Features).
+  @command "editor.action.formatDocument"
+  def format_document(wb), do: format(wb, :document)
+
+  @command "editor.action.formatSelection"
+  def format_selection(wb), do: format(wb, :selection)
+
+  defp format(wb, what) do
+    case Workbench.active_file(wb) do
+      nil -> wb
+      path -> {wb, [{:format, path, what}]}
+    end
+  end
 
   @command "bee.console.clear"
   def clear_console(%{console: nil} = wb), do: wb

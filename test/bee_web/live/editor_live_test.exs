@@ -455,7 +455,10 @@ defmodule BeeWeb.EditorLiveTest do
       open_panel(view)
       assert has_element?(view, "#panel-sections > :first-child[data-section='terminal']")
 
-      render_hook(view, "reorder_panel", %{"order" => ["console", "output", "terminal"]})
+      render_hook(view, "reorder_panel", %{
+        "order" => ["console", "output", "references", "problems", "terminal"]
+      })
+
       assert has_element?(view, "#panel-sections > :first-child[data-section='console']")
       assert has_element?(view, "#panel-sections > :last-child[data-section='terminal']")
     end
@@ -662,9 +665,10 @@ defmodule BeeWeb.EditorLiveTest do
       run(view, "workbench.action.quickOpen")
 
       # Most recent first, the first one labelled.
-      assert has_element?(view, "#palette li:nth-child(2) [data-file='#{root}/mix.exs']")
-      assert has_element?(view, "#palette li:nth-child(2)", "recently opened")
-      assert has_element?(view, "#palette li:nth-child(3) [data-file='#{root}/README.md']")
+      # (After the ways to go elsewhere: commands, symbols.)
+      assert has_element?(view, "#palette li:nth-child(4) [data-file='#{root}/mix.exs']")
+      assert has_element?(view, "#palette li:nth-child(4)", "recently opened")
+      assert has_element?(view, "#palette li:nth-child(5) [data-file='#{root}/README.md']")
 
       # Typing searches the workspace's files (off the window's process: the
       # results come a moment later).
@@ -749,7 +753,7 @@ defmodule BeeWeb.EditorLiveTest do
       assert has_element?(view, "#explorer button[phx-value-path='.elixir_ls']")
     end
 
-    test "problems are shown and open the offending file", %{conn: conn} do
+    test "problems are counted, listed in the panel, and open the offending file", %{conn: conn} do
       {:ok, view, _html} = live(conn, ~p"/")
       refute has_element?(view, "#problems")
 
@@ -757,9 +761,34 @@ defmodule BeeWeb.EditorLiveTest do
       _ = render(view)
       assert has_element?(view, "#problems", "1 problem")
 
+      # The count opens the panel's Problems section, which lists it.
       view |> element("#problems") |> render_click()
       path = Bee.Settings.user_path()
+      assert has_element?(view, "#panel-body-problems:not(.invisible) #problems-view")
+      assert has_element?(view, "#problems-filter-error[aria-pressed='true']", "Errors 1")
+      assert has_element?(view, "[data-problem-file='#{path}'] h3", "settings.json")
+
+      assert has_element?(
+               view,
+               "[data-problem='0'][data-severity='error']",
+               ~s("editor.fontSize": Type mismatch)
+             )
+
+      # Hidden by its severity, and shown again.
+      view |> element("#problems-filter-error") |> render_click()
+      refute has_element?(view, "[data-problem]")
+      assert has_element?(view, "#problems-filter-error[aria-pressed='false']", "Errors 1")
+      view |> element("#problems-filter-error") |> render_click()
+
+      # A problem: its file.
+      view |> element("[data-problem='0']") |> render_click()
       assert_push_event(view, "cm:open", %{path: ^path})
+
+      # Fixed: none.
+      put_user_settings(%{"editor.fontSize" => 15})
+      _ = render(view)
+      refute has_element?(view, "#problems")
+      assert has_element?(view, "#problems-empty")
     end
 
     test "Open User Settings creates a documented file; saving it applies it", %{conn: conn} do

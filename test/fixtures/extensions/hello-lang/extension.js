@@ -96,6 +96,175 @@ const definition = {
   },
 }
 
+// Formatting: runs of spaces become one, spaces at a line's end go – in
+// the whole file, or the lines of a range.
+const tidy = (document, first, last) => {
+  const edits = []
+  for (let line = first; line <= last; line++) {
+    const {text, range} = document.lineAt(line)
+    const tidied = text.replace(/ {2,}/g, " ").replace(/ +$/, "")
+    if (tidied !== text) edits.push(vscode.TextEdit.replace(range, tidied))
+  }
+  return edits
+}
+
+const formatting = {
+  provideDocumentFormattingEdits: (document, options) => {
+    console.log(`formatting with tabSize ${options.tabSize}`)
+    return tidy(document, 0, document.lineCount - 1)
+  },
+  provideDocumentRangeFormattingEdits: (document, range) => tidy(document, range.start.line, range.end.line),
+}
+
+// Signature help: inside "world(" its parameters, the one being typed
+// by the commas before the cursor.
+const signatures = {
+  provideSignatureHelp(document, position, _token, context) {
+    const before = document.lineAt(position).text.slice(0, position.character)
+    const call = /world\(([^()]*)$/.exec(before)
+    if (!call) return undefined
+    const help = new vscode.SignatureHelp()
+    const signature = new vscode.SignatureInformation("world(name, loudly)", new vscode.MarkdownString("Greets the **world**."))
+    signature.parameters = [
+      new vscode.ParameterInformation("name", `who to greet (asked by ${context.triggerCharacter || "hand"})`),
+      new vscode.ParameterInformation([12, 18], "whether to shout"),
+    ]
+    help.signatures = [signature]
+    help.activeSignature = 0
+    help.activeParameter = call[1].split(",").length - 1
+    return help
+  },
+}
+
+// Every place a word is, in the workspace's .hl files (open ones as they
+// are in their editors): `{uri, range, definition}`.
+async function occurrences(word) {
+  const found = []
+  for (const uri of await vscode.workspace.findFiles("**/*.hl")) {
+    const document = await vscode.workspace.openTextDocument(uri)
+    for (let line = 0; line < document.lineCount; line++) {
+      const {text} = document.lineAt(line)
+      for (const match of text.matchAll(new RegExp(`\\b${word}\\b`, "g"))) {
+        found.push({
+          uri,
+          range: new vscode.Range(line, match.index, line, match.index + word.length),
+          definition: text.startsWith(`def ${word}`) && match.index === 4,
+        })
+      }
+    }
+  }
+  return found.sort((a, b) => a.uri.fsPath.localeCompare(b.uri.fsPath) || a.range.start.line - b.range.start.line)
+}
+
+const wordAt = (document, position) => {
+  const range = document.getWordRangeAtPosition(position)
+  return range && document.getText(range)
+}
+
+const references = {
+  async provideReferences(document, position, context) {
+    const word = wordAt(document, position)
+    if (!word) return []
+    return (await occurrences(word))
+      .filter(one => context.includeDeclaration || !one.definition)
+      .map(one => new vscode.Location(one.uri, one.range))
+  },
+}
+
+const highlights = {
+  async provideDocumentHighlights(document, position) {
+    const word = wordAt(document, position)
+    if (!word) return []
+    return (await occurrences(word))
+      .filter(one => one.uri.fsPath === document.uri.fsPath)
+      .map(one => new vscode.DocumentHighlight(one.range, one.definition ? vscode.DocumentHighlightKind.Write : vscode.DocumentHighlightKind.Read))
+  },
+}
+
+// Symbols: the "def <name>" lines, each with the "  var <name>" lines under it.
+const symbols = {
+  provideDocumentSymbols(document) {
+    const list = []
+    for (let line = 0; line < document.lineCount; line++) {
+      const {text, range} = document.lineAt(line)
+      const def = /^def (\w+)/.exec(text)
+      const variable = /^  var (\w+)/.exec(text)
+      if (def) {
+        list.push(new vscode.DocumentSymbol(def[1], "definition", vscode.SymbolKind.Function, range, new vscode.Range(line, 4, line, 4 + def[1].length)))
+      } else if (variable && list.length) {
+        const child = new vscode.DocumentSymbol(variable[1], "", vscode.SymbolKind.Variable, range, new vscode.Range(line, 6, line, 6 + variable[1].length))
+        list[list.length - 1].children.push(child)
+      }
+    }
+    return list
+  },
+  async provideWorkspaceSymbols(query) {
+    const found = []
+    for (const uri of await vscode.workspace.findFiles("**/*.hl")) {
+      const document = await vscode.workspace.openTextDocument(uri)
+      for (let line = 0; line < document.lineCount; line++) {
+        const def = /^def (\w+)/.exec(document.lineAt(line).text)
+        if (def && def[1].includes(query)) {
+          found.push(new vscode.SymbolInformation(def[1], vscode.SymbolKind.Function, path.basename(uri.fsPath), new vscode.Location(uri, new vscode.Range(line, 4, line, 4 + def[1].length))))
+        }
+      }
+    }
+    return found
+  },
+}
+
+// Rename: every occurrence in the workspace. BAD keeps its name.
+const rename = {
+  prepareRename(document, position) {
+    const range = document.getWordRangeAtPosition(position)
+    if (range && document.getText(range) === "BAD") throw new Error("BAD can't be renamed")
+    return range
+  },
+  async provideRenameEdits(document, position, newName) {
+    if (!/^\w+$/.test(newName)) throw new Error(`'${newName}' isn't a name`)
+    const edit = new vscode.WorkspaceEdit()
+    for (const one of await occurrences(wordAt(document, position))) edit.replace(one.uri, one.range, newName)
+    return edit
+  },
+}
+
+// Code actions: a quick fix for each BAD in the range ("Replace with
+// GOOD", its edit filled in when it is resolved), a refactoring that is a
+// command ("Shout the line"), and one that can't be done.
+const actions = {
+  provideCodeActions(document, range, context) {
+    const list = []
+    for (const diagnostic of context.diagnostics) {
+      if (diagnostic.code && diagnostic.code.value === "H001") {
+        const fix = new vscode.CodeAction("Replace with GOOD", vscode.CodeActionKind.QuickFix)
+        fix.diagnostics = [diagnostic]
+        fix.isPreferred = true
+        fix.uri = document.uri
+        list.push(fix)
+      }
+    }
+    if (context.only && !context.only.contains(vscode.CodeActionKind.Refactor)) return list
+    const {text} = document.lineAt(range.start.line)
+    if (/[a-z]/.test(text)) {
+      const shout = new vscode.CodeAction("Shout the line", vscode.CodeActionKind.Refactor)
+      shout.command = {command: "helloLang.shout", title: "Shout", arguments: [document.uri, range.start.line]}
+      list.push(shout)
+    }
+    if (text.includes("frozen")) {
+      const frozen = new vscode.CodeAction("Thaw", vscode.CodeActionKind.Refactor)
+      frozen.disabled = {reason: "too cold"}
+      list.push(frozen)
+    }
+    return list
+  },
+  resolveCodeAction(action) {
+    if (action.title !== "Replace with GOOD") return action
+    action.edit = new vscode.WorkspaceEdit()
+    action.edit.replace(action.uri, action.diagnostics[0].range, "GOOD")
+    return action
+  },
+}
+
 function activate(context) {
   const collection = vscode.languages.createDiagnosticCollection("hello")
   const refresh = document => {
@@ -113,6 +282,21 @@ function activate(context) {
     vscode.languages.registerCompletionItemProvider(selector, completion, "."),
     vscode.languages.registerHoverProvider(selector, hover),
     vscode.languages.registerDefinitionProvider(selector, definition),
+    vscode.languages.registerCodeActionsProvider(selector, actions, {providedCodeActionKinds: [vscode.CodeActionKind.QuickFix, vscode.CodeActionKind.Refactor]}),
+    vscode.commands.registerCommand("helloLang.shout", async (uri, line) => {
+      const document = await vscode.workspace.openTextDocument(uri)
+      const edit = new vscode.WorkspaceEdit()
+      edit.replace(uri, document.lineAt(line).range, document.lineAt(line).text.toUpperCase())
+      return vscode.workspace.applyEdit(edit)
+    }),
+    vscode.languages.registerReferenceProvider(selector, references),
+    vscode.languages.registerDocumentHighlightProvider(selector, highlights),
+    vscode.languages.registerDocumentSymbolProvider(selector, symbols),
+    vscode.languages.registerWorkspaceSymbolProvider(symbols),
+    vscode.languages.registerRenameProvider(selector, rename),
+    vscode.languages.registerDocumentFormattingEditProvider(selector, formatting),
+    vscode.languages.registerDocumentRangeFormattingEditProvider(selector, formatting),
+    vscode.languages.registerSignatureHelpProvider(selector, signatures, "(", ","),
     vscode.commands.registerCommand("helloLang.accepted", what => console.log(`accepted ${what}`)),
     watcher.onDidCreate(seen("created")),
     watcher.onDidChange(seen("changed")),

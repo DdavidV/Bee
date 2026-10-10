@@ -10,13 +10,35 @@
 //   hover              {position} → {contents: [markdown], range} | null
 //   definition, typeDefinition, declaration, implementation
 //                      {position} → [{path, from, to}]
+//   formatting         {options: {tabSize, insertSpaces}, formatter}
+//   rangeFormatting    {range, options, formatter}
+//                      → {edits: [{from, to, text}], extension} | null
+//   references         {position, includeDeclaration} → [{path, from, to}]
+//   documentHighlight  {position} → [{from, to, kind: "text"|"read"|"write"}]
+//   documentSymbol     → [{name, detail, kind, container, depth, from, to}]
+//                        (the outline, flattened, in file order)
+//   workspaceSymbol    {query} → [{name, kind, container, path, from, to}]
+//                        (no file: every provider is asked)
+//   prepareRename      {position} → {placeholder, from, to} | {error}
+//   rename             {position, newName} → {applied, files, edits} | {error}
+//                        (its edits are applied here, through Bee)
+//   codeAction         {range, context: {triggerKind, only}}
+//                      → {session, actions: [{index, title, kind, preferred, disabled}]}
+//                        (quick fixes and refactorings for the range, with
+//                        the diagnostics there as their context)
+//   codeActionApply    {session, index} → {applied} | {error}
+//                        (resolved if need be; its edit, then its command)
+//   signatureHelp      {position, context: {triggerKind, triggerCharacter, isRetrigger}}
+//                      → {signatures: [{label, documentation, parameters:
+//                         [{label, documentation}]}], activeSignature,
+//                         activeParameter} | null
 //
 // Positions are {line, character}, ranges {from, to} of them (convert.js).
 // A provider that throws is logged and left out: the others still answer.
 "use strict"
 
 const convert = require("./convert")
-const {Position, Range, SnippetString, MarkdownString, CompletionItemKind} = require("./types")
+const {Position, Range, SnippetString, MarkdownString, CompletionItemKind, SymbolKind, WorkspaceEdit} = require("./types")
 
 const SESSIONS = 4
 const KINDS = Object.fromEntries(Object.entries(CompletionItemKind).map(([name, value]) => [value, name.toLowerCase()]))
@@ -144,12 +166,215 @@ const features = {
   },
 }
 
+// One formatter formats: the one asked for (`formatter`: an extension's id
+// or its plugin's name, editor.defaultFormatter), else the best fitting.
+const formatter = (host, feature, document, wanted) => {
+  const entries = host.languages.providers(feature, document)
+  const name = String(wanted || "").toLowerCase()
+  return entries.find(entry => name && [entry.extension.id, entry.extension.name].some(id => id.toLowerCase() === name)) || entries[0]
+}
+
+const formatted = (entry, edits) => (Array.isArray(edits) ? {edits: plainEdits(edits), extension: entry.extension.name} : null)
+
+features.formatting = async (host, document, {options, formatter: wanted}, token) => {
+  const entry = formatter(host, "formatting", document, wanted)
+  if (!entry) return null
+  return formatted(entry, await asked(entry, "provideDocumentFormattingEdits", [document, options || {}, token], token))
+}
+
+features.rangeFormatting = async (host, document, {range, options, formatter: wanted}, token) => {
+  const entry = formatter(host, "rangeFormatting", document, wanted)
+  if (!entry) return null
+  const where = new Range(range.from.line, range.from.character, range.to.line, range.to.character)
+  return formatted(entry, await asked(entry, "provideDocumentRangeFormattingEdits", [document, where, options || {}, token], token))
+}
+
+// The parameters of the call the cursor is in: the first provider with an answer.
+features.signatureHelp = async (host, document, {position, context}, token) => {
+  const at = new Position(position.line, position.character)
+  const asking = {
+    triggerKind: (context && context.triggerKind) || 1,
+    triggerCharacter: (context && context.triggerCharacter) || undefined,
+    isRetrigger: !!(context && context.isRetrigger),
+    activeSignatureHelp: undefined,
+  }
+  for (const entry of host.languages.providers("signatureHelp", document)) {
+    const help = await asked(entry, "provideSignatureHelp", [document, at, token, asking], token)
+    if (!help || !help.signatures || help.signatures.length === 0) continue
+    return {
+      signatures: help.signatures.map(signature => ({
+        label: String(signature.label),
+        documentation: markdown(signature.documentation, true),
+        activeParameter: signature.activeParameter ?? null,
+        parameters: (signature.parameters || []).map(parameter => ({
+          label: Array.isArray(parameter.label) ? parameter.label : String(parameter.label),
+          documentation: markdown(parameter.documentation, true),
+        })),
+      })),
+      activeSignature: help.activeSignature || 0,
+      activeParameter: help.activeParameter || 0,
+    }
+  }
+  return null
+}
+
+const SYMBOLS = Object.fromEntries(Object.entries(SymbolKind).map(([name, value]) => [value, name.toLowerCase()]))
+
+features.documentHighlight = async (host, document, {position}, token) => {
+  const at = new Position(position.line, position.character)
+  for (const entry of host.languages.providers("documentHighlight", document)) {
+    const found = await asked(entry, "provideDocumentHighlights", [document, at, token], token)
+    if (!Array.isArray(found) || found.length === 0) continue
+    return found.filter(one => one && one.range).map(one => ({...convert.range(one.range), kind: ["text", "read", "write"][one.kind] || "text"}))
+  }
+  return []
+}
+
+// The file's outline: DocumentSymbols (a tree) or SymbolInformations
+// (flat, with the name of what contains them), as one list.
+features.documentSymbol = async (host, document, _params, token) => {
+  const entries = host.languages.providers("documentSymbol", document)
+  const results = await Promise.all(entries.map(entry => asked(entry, "provideDocumentSymbols", [document, token], token)))
+  const list = []
+  const walk = (symbols, depth, container) => {
+    for (const symbol of symbols || []) {
+      if (!symbol) continue
+      const range = symbol.selectionRange || (symbol.location && symbol.location.range) || symbol.range
+      if (!range) continue
+      list.push({
+        name: String(symbol.name),
+        detail: symbol.detail || null,
+        kind: SYMBOLS[symbol.kind] || "variable",
+        container: symbol.containerName || container || null,
+        depth,
+        ...convert.range(range),
+      })
+      if (Array.isArray(symbol.children)) walk(symbol.children, depth + 1, String(symbol.name))
+    }
+  }
+  for (const result of results) if (Array.isArray(result)) walk(result, 0, null)
+  return list.sort((a, b) => a.from.line - b.from.line || a.from.character - b.from.character)
+}
+
+features.workspaceSymbol = async (host, _document, {query}, token) => {
+  const entries = host.languages.entries.filter(entry => entry.feature === "workspaceSymbol")
+  const results = await Promise.all(entries.map(entry => asked(entry, "provideWorkspaceSymbols", [String(query || ""), token], token)))
+  const list = []
+  for (const symbol of results.flatMap(result => (Array.isArray(result) ? result : []))) {
+    const location = symbol && symbol.location
+    if (!location || !location.uri || location.uri.scheme !== "file") continue
+    // (A location without a range is one to be resolved: its file's start.)
+    const range = location.range || new Range(0, 0, 0, 0)
+    list.push({
+      name: String(symbol.name),
+      kind: SYMBOLS[symbol.kind] || "variable",
+      container: symbol.containerName || null,
+      path: location.uri.fsPath,
+      ...convert.range(range),
+    })
+  }
+  return list.slice(0, 500)
+}
+
+// Quick fixes and refactorings for a range: what every provider offers,
+// told the diagnostics that are there.
+features.codeAction = async (host, document, {range, context}, token) => {
+  const where = new Range(range.from.line, range.from.character, range.to.line, range.to.character)
+  const diagnostics = host.languages.diagnosticsOf(document.uri).filter(diagnostic => diagnostic.range && diagnostic.range.intersection(where))
+  const only = context && context.only
+  const asking = {
+    diagnostics,
+    only: only ? {value: only, contains: other => other.value === only || other.value.startsWith(only + ".")} : undefined,
+    triggerKind: (context && context.triggerKind) || 1,
+  }
+  const entries = host.languages.providers("codeAction", document)
+  const results = await Promise.all(entries.map(entry => asked(entry, "provideCodeActions", [document, where, asking, token], token)))
+  const session = []
+  results.forEach((result, i) => {
+    for (const action of Array.isArray(result) ? result : []) if (action && action.title) session.push({item: action, entry: entries[i]})
+  })
+  const id = ++nextSession
+  sessions.set(id, session)
+  for (const old of sessions.keys()) if (old <= id - SESSIONS) sessions.delete(old)
+  return {
+    session: id,
+    actions: session.map(({item}, index) => ({
+      index,
+      title: String(item.title),
+      kind: (item.kind && item.kind.value) || null,
+      preferred: !!item.isPreferred,
+      disabled: (item.disabled && item.disabled.reason) || null,
+    })),
+  }
+}
+
+features.codeActionApply = async (host, _document, {session, index}, token) => {
+  const kept = (sessions.get(session) || [])[index]
+  if (!kept) return {error: "The code action isn't there any more."}
+  let action = kept.item
+  // A CodeAction without its edit yet: its provider fills it in.
+  if (!action.edit && typeof action.command !== "string" && typeof kept.entry.provider.resolveCodeAction === "function") {
+    action = (await asked(kept.entry, "resolveCodeAction", [action, token], token)) || action
+  }
+  if (action.edit && typeof action.edit.entries === "function") {
+    const applied = await host.request("applyWorkspaceEdit", convert.workspaceEdit(action.edit))
+    if (!applied) return {error: "Its changes couldn't be applied."}
+  }
+  // A Command (its `command` is the id), or a CodeAction's command.
+  const command = typeof action.command === "string" ? action : action.command
+  try {
+    if (command && command.command) await host.executeCommand(kept.entry.extension, command.command, command.arguments || [])
+  } catch (e) {
+    return {error: String((e && e.message) || e)}
+  }
+  return {applied: true}
+}
+
+// What Rename Symbol would rename: its provider's say, or the word there.
+features.prepareRename = async (host, document, {position}, token) => {
+  const at = new Position(position.line, position.character)
+  const entry = host.languages.providers("rename", document)[0]
+  if (!entry) return null
+  let range
+  let placeholder
+  if (typeof entry.provider.prepareRename === "function") {
+    try {
+      const prepared = await entry.provider.prepareRename(document, at, token)
+      if (prepared && prepared.range) ({range, placeholder} = prepared)
+      else if (prepared) range = prepared
+    } catch (e) {
+      return {error: String((e && e.message) || e)}
+    }
+  }
+  range ??= document.getWordRangeAtPosition(at)
+  if (!range) return {error: "The element can't be renamed."}
+  return {placeholder: placeholder ?? document.getText(range), ...convert.range(range)}
+}
+
+// Renames: the first provider's edits (of any files), applied through Bee.
+features.rename = async (host, document, {position, newName}, token) => {
+  const at = new Position(position.line, position.character)
+  for (const entry of host.languages.providers("rename", document)) {
+    let edit
+    try {
+      edit = await entry.provider.provideRenameEdits(document, at, String(newName), token)
+    } catch (e) {
+      return {error: String((e && e.message) || e)}
+    }
+    if (!(edit instanceof WorkspaceEdit) && !(edit && typeof edit.entries === "function")) continue
+    const plain = convert.workspaceEdit(edit)
+    const applied = await host.request("applyWorkspaceEdit", plain)
+    return {applied: !!applied, files: plain.files.length, edits: plain.files.reduce((n, file) => n + file.edits.length, 0)}
+  }
+  return {error: "No result."}
+}
+
 // Where something is: Location, Location[] or LocationLink[] of every
 // provider, files only, each place once.
-const locations = method => async (host, document, {position}, token, feature) => {
-  const at = new Position(position.line, position.character)
+const locations = (method, extra = () => []) => async (host, document, params, token, feature) => {
+  const at = new Position(params.position.line, params.position.character)
   const entries = host.languages.providers(feature, document)
-  const results = await Promise.all(entries.map(entry => asked(entry, method, [document, at, token], token)))
+  const results = await Promise.all(entries.map(entry => asked(entry, method, [document, at, ...extra(params), token], token)))
   const found = new Map()
   for (const one of results.flatMap(result => [].concat(result ?? []))) {
     const uri = one && (one.targetUri || one.uri)
@@ -165,13 +390,15 @@ features.definition = locations("provideDefinition")
 features.typeDefinition = locations("provideTypeDefinition")
 features.declaration = locations("provideDeclaration")
 features.implementation = locations("provideImplementation")
+features.references = locations("provideReferences", params => [{includeDeclaration: params.includeDeclaration !== false}])
 
 // What Bee asked: null for a feature there isn't, or a file that isn't open.
 const provide = (host, params, token) => {
   const feature = features[params.feature]
   if (!feature) return Promise.resolve(null)
   const document = host.documents.get(params.path)
-  if (!document && !params.session) return Promise.resolve(null)
+  // (Not about a file: an item of an earlier completion, the workspace's symbols.)
+  if (!document && !params.session && params.feature !== "workspaceSymbol") return Promise.resolve(null)
   // A provider may never answer: once cancelled, Bee is.
   const cancelled = new Promise(resolve => token.onCancellationRequested(() => resolve(null)))
   return Promise.race([feature(host, document, params, token, params.feature), cancelled])
