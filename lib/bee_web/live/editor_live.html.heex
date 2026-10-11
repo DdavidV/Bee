@@ -12,9 +12,9 @@
   data-theme={@color_theme.base}
   data-color-theme={@color_theme.id}
   data-keybindings={Jason.encode!(@client_keybindings)}
-  data-context={Jason.encode!(context(assigns))}
+  data-context={Jason.encode!(Window.context(assigns))}
   data-root={@root}
-  style={layout_style(assigns, @connected)}
+  style={Layout.layout_style(assigns, @connected)}
   class={[
     "h-screen w-screen grid grid-rows-[auto_1fr_auto] bg-base-100 text-base-content overflow-hidden",
     if(@sidebar_open,
@@ -25,17 +25,21 @@
 >
   <BeeWeb.Workbench.TitleBar.title_bar
     title={
-      window_title(
-        @active && tab_label(Workbench.tab(workbench_from(assigns), @active), @extension_details),
+      Window.window_title(
+        @active &&
+          EditorArea.tab_label(
+            Workbench.tab(Window.workbench_from(assigns), @active),
+            @extension_details
+          ),
         @root
       )
     }
     palette={@palette}
-    palette_items={palette_items(assigns)}
+    palette_items={Palette.palette_items(assigns)}
     palette_shortcut={Bee.Commands.Keybindings.label("workbench.action.quickOpen", @keybindings)}
     icon_theme={@icon_theme}
-    palette_busy={quick_open_busy?(assigns)}
-    menus={menubar(assigns)}
+    palette_busy={Palette.quick_open_busy?(assigns)}
+    menus={Menus.menubar(assigns)}
     open_menu={@open_menu}
     sidebar_open={@sidebar_open}
     panel_open={@panel_open}
@@ -43,7 +47,7 @@
 
   <%!-- Activity bar and sidebar: views containers and views (Bee.Views) --%>
   <BeeWeb.Workbench.Sidebar.activity_bar
-    containers={activity_bar(assigns)}
+    containers={Views.activity_bar(assigns)}
     sidebar_view={@sidebar_view}
     sidebar_open={@sidebar_open}
     keybindings={@keybindings}
@@ -51,10 +55,10 @@
 
   <BeeWeb.Workbench.Sidebar.sidebar
     container={Enum.find(@containers, &(&1.id == @sidebar_view))}
-    views={sidebar_views(assigns)}
+    views={Views.sidebar_views(assigns)}
     sidebar_open={@sidebar_open}
     root={@root}
-    active={Workbench.active_file(workbench_from(assigns))}
+    active={Workbench.active_file(Window.workbench_from(assigns))}
     plugins={@plugins}
     view_contents={@view_contents}
     view_inputs={@view_inputs}
@@ -94,7 +98,7 @@
       data-group={@group}
       class="flex-1 min-h-0 min-w-0 flex"
     >
-      <.editor_node node={@editor_layout} a={assigns} />
+      <EditorArea.editor_node node={@editor_layout} a={assigns} />
     </div>
 
     <%!-- The bottom panel: Terminal, Bee Console, plugins' sections --%>
@@ -102,8 +106,8 @@
       :if={@panel_open}
       maximized={@panel_maximized}
       active={@panel_view}
-      sections={panel_sections(assigns)}
-      actions={panel_actions(assigns)}
+      sections={Views.panel_sections(assigns)}
+      actions={Views.panel_actions(assigns)}
       terminals={@terminals}
       active_term={@active_term}
       console={@console}
@@ -118,7 +122,7 @@
       output_channels={@output_channels}
       output_channel={@output_channel}
       references={@references}
-      problems={problem_entries(assigns)}
+      problems={Problems.problem_entries(assigns)}
       problems_hidden={@problems_hidden}
     />
   </main>
@@ -126,9 +130,13 @@
   <%!-- Status bar --%>
   <footer class="col-span-full h-6 bg-statusbar text-statusbar-fg text-xs flex items-center gap-4 pl-3 pr-2">
     <span class="truncate">{@root}</span>
-    <.status_item :for={item <- @status_items} :if={item.alignment == :left} item={item} />
+    <BeeWeb.Workbench.StatusBar.status_item
+      :for={item <- @status_items}
+      :if={item.alignment == :left}
+      item={item}
+    />
     <button
-      :if={(problems = problems(assigns)) != []}
+      :if={(problems = Problems.problems(assigns)) != []}
       id="problems"
       class="flex items-center gap-1 cursor-pointer hover:underline"
       title={
@@ -143,7 +151,11 @@
       {length(problems)} {if length(problems) == 1, do: "problem", else: "problems"}
     </button>
     <div class="flex-1" />
-    <.status_item :for={item <- @status_items} :if={item.alignment == :right} item={item} />
+    <BeeWeb.Workbench.StatusBar.status_item
+      :for={item <- @status_items}
+      :if={item.alignment == :right}
+      item={item}
+    />
     <%!-- Filled in by the Keybindings hook while a chord is pending --%>
     <span id="keybinding-status" phx-update="ignore"></span>
     <span :if={@status} id="status" class="truncate">{@status}</span>
@@ -173,7 +185,7 @@
   <BeeWeb.Workbench.ContextMenu.context_menu
     :if={@context_menu}
     menu={@context_menu}
-    items={context_menu_items(assigns)}
+    items={Menus.context_menu_items(assigns)}
   />
 
   <%!-- The file picker of Plugins: Install from VSIX… (VsixInstall hook) --%>
@@ -198,5 +210,6 @@
   >
   </div>
 
+  <%!-- LiveView's own: the connection was lost (Bee's messages are notifications) --%>
   <Layouts.flash_group flash={@flash} />
 </div>

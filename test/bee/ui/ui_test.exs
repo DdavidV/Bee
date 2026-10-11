@@ -155,5 +155,36 @@ defmodule Bee.UITest do
         UI.put_progress(root, "elp", "3", [])
       end
     end
+
+    test "can be cancelled when an extension's, not when a plugin's (Bee.API)" do
+      root = "/tmp/bee-ui-progress-#{System.unique_integer([:positive])}"
+      on_exit(fn -> UI.forget_workspace(root) end)
+      ctx = %Bee.Plugins.Context{plugin: "builder", root: root}
+
+      # The extension host's: it can tell the extension (Bee.Extensions.Host).
+      :ok = UI.put_progress(root, "elp", "1", %{title: "Indexing", cancellable: true})
+      # A plugin's: nobody would hear of a Cancel.
+      :ok = Bee.API.progress(ctx, "build", %{title: "Building", cancellable: true, toast: true})
+      :ok = Bee.API.progress(ctx, "test", %{"title" => "Testing", "cancellable" => true})
+
+      assert [
+               %{owner: "elp", cancellable: true},
+               %{
+                 owner: "builder",
+                 id: "build",
+                 title: "Building",
+                 cancellable: false,
+                 toast: true
+               },
+               %{owner: "builder", id: "test", title: "Testing", cancellable: false}
+             ] = UI.progress(root)
+
+      :ok = Bee.API.end_progress(ctx, "build")
+      assert [%{id: "1"}, %{id: "test"}] = UI.progress(root)
+
+      assert_raise ArgumentError, ~r/must be a map/, fn ->
+        Bee.API.progress(ctx, "bad", [])
+      end
+    end
   end
 end

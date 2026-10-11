@@ -2,7 +2,7 @@ defmodule BeeWeb.Workbench.Toolbar do
   @moduledoc """
   Icon buttons for the commands of an icon menu (`editor/title`,
   `view/title`, `view/item/context`), as built by
-  `BeeWeb.EditorLive.toolbar/3`: `%{command, label, icon, disabled}`.
+  `BeeWeb.EditorLive.Menus.toolbar/3`: `%{command, label, icon, disabled}`.
   A command without an icon is a text button (its title), like VS Code's
   Install button on a marketplace result (`text_class` styles those).
   """

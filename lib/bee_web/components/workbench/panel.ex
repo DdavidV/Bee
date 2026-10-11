@@ -42,20 +42,26 @@ defmodule BeeWeb.Workbench.Panel do
   attr :collapsed, :any, required: true
   attr :icon_theme, :any, default: nil
   attr :socket, :any, required: true, doc: "the window's socket, for plugins' LiveViews"
-  attr :live, :map, required: true, doc: "plugins' LiveViews (BeeWeb.EditorLive.load_live/1)"
+
+  attr :live, :map,
+    required: true,
+    doc: "plugins' LiveViews (BeeWeb.EditorLive.Extensions.load_live/1)"
+
   attr :root, :string, required: true
   attr :output_channels, :list, default: [], doc: "Bee.Output's channels"
   attr :output_channel, :string, default: nil, doc: "the one shown"
 
   attr :problems, :list,
     default: [],
-    doc: "every problem: %{path, severity, message, line, column, source} (BeeWeb.EditorLive)"
+    doc:
+      "every problem: %{path, severity, message, line, column, source} (BeeWeb.EditorLive.Problems)"
 
   attr :problems_hidden, :list, default: [], doc: "the severities not listed"
 
   attr :references, :map,
     default: nil,
-    doc: "Find All References' places: %{count, files: [%{path, rows}]} (BeeWeb.EditorLive)"
+    doc:
+      "Find All References' places: %{count, files: [%{path, rows}]} (BeeWeb.EditorLive.LanguageFeatures)"
 
   def panel(assigns) do
     assigns =

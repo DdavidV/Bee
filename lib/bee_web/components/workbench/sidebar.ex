@@ -114,7 +114,11 @@ defmodule BeeWeb.Workbench.Sidebar do
   attr :icon_theme, :any, required: true
   attr :clipboard, :any, default: nil, doc: "the Explorer's cut or copied files"
   attr :socket, :any, required: true, doc: "the window's socket, for plugins' LiveViews"
-  attr :live, :map, required: true, doc: "plugins' LiveViews (BeeWeb.EditorLive.load_live/1)"
+
+  attr :live, :map,
+    required: true,
+    doc: "plugins' LiveViews (BeeWeb.EditorLive.Extensions.load_live/1)"
+
   attr :marketplace, :map, required: true, doc: "Bee.Workbench.Marketplace"
   attr :marketplace_installed, :map, required: true, doc: "Bee.Plugins.OpenVsx.installed/0"
 

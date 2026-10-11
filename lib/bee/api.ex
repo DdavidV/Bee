@@ -85,10 +85,13 @@ defmodule Bee.API do
   entry in the notifications of every window – until `end_progress/2`:
   `%{title, message, percent}` (`percent`: 0–100, left out when unknown;
   `toast: true` pops it up as a notification too). Call it again with the
-  same `id` as the work goes on.
+  same `id` as the work goes on. It can't be cancelled by the user: a
+  plugin has no way to be told (`cancellable` is an extension's).
   """
-  def progress(%Context{plugin: plugin, root: root}, id, item),
-    do: Bee.UI.put_progress(root, plugin, to_string(id), item)
+  def progress(%Context{plugin: plugin, root: root}, id, item) do
+    item = if is_map(item), do: Map.drop(item, [:cancellable, "cancellable"]), else: item
+    Bee.UI.put_progress(root, plugin, to_string(id), item)
+  end
 
   def end_progress(%Context{plugin: plugin, root: root}, id),
     do: Bee.UI.delete_progress(root, plugin, to_string(id))

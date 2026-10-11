@@ -480,7 +480,7 @@ defmodule Bee.Workbench.Actions do
   def open_file_path(wb, [path]) when is_binary(path) do
     if File.regular?(path),
       do: Workbench.open_editor(wb, path),
-      else: {wb, [{:flash, :error, "Can't open #{path}: no such file"}]}
+      else: {wb, [{:notify, :error, "Can't open #{path}: no such file"}]}
   end
 
   def open_file_path(wb, _args), do: wb
@@ -578,14 +578,14 @@ defmodule Bee.Workbench.Actions do
   def insert_snippet(wb) do
     case Workbench.active_file(wb) do
       nil ->
-        {wb, [{:flash, :info, "Open a file to insert a snippet into"}]}
+        {wb, [{:notify, :info, "Open a file to insert a snippet into"}]}
 
       path ->
         lang = Workbench.language(wb, path)
 
         case Bee.Snippets.for_language(lang) do
           [] ->
-            {wb, [{:flash, :info, "No snippets for #{Bee.Languages.name(lang)}"}]}
+            {wb, [{:notify, :info, "No snippets for #{Bee.Languages.name(lang)}"}]}
 
           snippets ->
             Workbench.open_quick_pick(wb, %{

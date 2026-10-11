@@ -1,7 +1,7 @@
 defmodule BeeWeb.Workbench.ContextMenu do
   @moduledoc """
   A right-click menu: the items of a contributed menu (`explorer/context`,
-  …, see `BeeWeb.EditorLive.context_menu_items/1`) at the pointer, grouped
+  …, see `BeeWeb.EditorLive.Menus.context_menu_items/1`) at the pointer, grouped
   with separators; an item naming a submenu opens it beside itself. An item runs its command with the arguments of the
   element right-clicked (client commands run in the page, still in the
   click). Closes on a click elsewhere or Escape; the

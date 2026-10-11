@@ -392,7 +392,7 @@ defmodule BeeWeb.ExtensionsTest do
     )
 
     eventually(fn ->
-      BeeWeb.EditorLive.context(:sys.get_state(view.pid).socket.assigns)[
+      BeeWeb.EditorLive.Window.context(:sys.get_state(view.pid).socket.assigns)[
         "editorHasDefinitionProvider"
       ]
     end)
@@ -569,7 +569,7 @@ defmodule BeeWeb.ExtensionsTest do
     open_file(view, "a.hl")
 
     eventually(fn ->
-      BeeWeb.EditorLive.context(:sys.get_state(view.pid).socket.assigns)[
+      BeeWeb.EditorLive.Window.context(:sys.get_state(view.pid).socket.assigns)[
         "editorHasRenameProvider"
       ]
     end)
@@ -673,7 +673,7 @@ defmodule BeeWeb.ExtensionsTest do
     assert_push_event(view, "cm:open", %{path: ^path})
 
     eventually(fn ->
-      BeeWeb.EditorLive.context(:sys.get_state(view.pid).socket.assigns)[
+      BeeWeb.EditorLive.Window.context(:sys.get_state(view.pid).socket.assigns)[
         "editorHasDocumentFormattingProvider"
       ]
     end)

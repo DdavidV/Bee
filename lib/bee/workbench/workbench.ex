@@ -5,7 +5,7 @@ defmodule Bee.Workbench do
 
   Functions return the new workbench, or `{workbench, effects}` when
   something has to happen outside the struct. The LiveView carries effects
-  out (`BeeWeb.EditorLive.run_effects/2`):
+  out (`BeeWeb.EditorLive.Effects.run_effects/2`):
 
     * `{:push, event, payload}` – event to the browser (CodeMirror etc.)
     * `{:open_file, path}`, `{:open_file, path, :preview}` – open a
@@ -28,7 +28,7 @@ defmodule Bee.Workbench do
     * `{:open_folder, path, :this_window | :new_window}` – another workspace
     * `{:pick_folder, "same" | "new", title}` – the desktop app's folder
       dialog, its pick running `bee.openFolder`
-    * `{:flash, kind, message}`
+    * `{:notify, severity, message}` – tell the user (a notification)
     * `{:explorer_edit, edit}` – an input in the Explorer's tree: a new
       file's or folder's name in `dir`, or a new name for `path`
     * `{:delete_file, path}`, `{:paste_files, op, paths, dir}` – see
@@ -876,7 +876,7 @@ defmodule Bee.Workbench do
       choice runs `command` with `arguments ++ [value]`. Optional: `index`,
       the item selected first; `preview`, what the selected item previews
       while it is selected (`:color_theme`: its value is a theme id, see
-      `BeeWeb.EditorLive`)
+      `BeeWeb.EditorLive.Config`)
     * `:input` – type a line; Enter runs `command` with `arguments ++ [text]`
 
   `open_quick_open/2` opens the first with `query` typed in: `""` for
@@ -896,7 +896,7 @@ defmodule Bee.Workbench do
 
   # A pick (or, below, a text) runs `command` with it – or, with `reply:
   # {pid, ref}` and no command, is sent there: `{:bee_answer, ref, value}`,
-  # `nil` when the palette closes without one (BeeWeb.EditorLive).
+  # `nil` when the palette closes without one (BeeWeb.EditorLive.Window).
   def open_quick_pick(wb, %{items: items} = spec) do
     palette = %{
       mode: :pick,

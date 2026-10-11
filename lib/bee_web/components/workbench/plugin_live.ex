@@ -5,7 +5,7 @@ defmodule BeeWeb.Workbench.PluginLive do
   (`live_render/3`), so it is a process of its own – its crash is its own,
   and it starts again by itself.
 
-  `state` is what `BeeWeb.EditorLive` knows of it (`live_state/3`):
+  `state` is what `BeeWeb.EditorLive.Extensions` knows of it (`load_live/1`):
   `%{plugin, module, status, load_id}`, `module` being the LiveView once
   the plugin's code is loaded (nil until then, or when the manifest names
   a module the plugin doesn't have). The element's id carries the plugin's
