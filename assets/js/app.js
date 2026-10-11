@@ -82,6 +82,13 @@ window.addEventListener("phx:bee:pick_folder", async e => {
 // dispatches it).
 window.addEventListener("bee:open_file", e => runCommand("bee.openFile", [e.detail.path]))
 
+// A double click keeps a file open (its tab, its row in the Explorer): the
+// single click before it opened it as a preview, as in VS Code.
+window.addEventListener("dblclick", e => {
+  const keep = e.target.closest?.("[data-keep]")
+  if (keep && !e.target.closest("[data-close]")) runCommand("workbench.action.keepEditor", [keep.dataset.keep])
+})
+
 // Client commands from a right-click menu, run at once (still in the click:
 // copying to the clipboard needs that). BeeWeb.Workbench.ContextMenu.
 window.addEventListener("bee:run", e => exec(e.detail.command, e.detail.args || []))

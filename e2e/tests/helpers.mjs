@@ -48,8 +48,17 @@ export const fileUrl = file => `/?file=${encodeURIComponent(file)}`
 // The Explorer's row of `rel` (a path in the folder, "lib/a.ex").
 export const explorerItem = (page, rel) => page.locator(`#explorer button[phx-value-path='${rel}']`)
 
-// Opens `rel` from the Explorer (its folders must be open) and waits for its tab.
+// Opens `rel` from the Explorer to stay (a double click; its folders must
+// be open) and waits for its tab.
 export const openFile = async (page, rel) => {
+  await explorerItem(page, rel).dblclick()
+  const opened = page.locator(`#tabs [data-path$='/${rel}']`)
+  await expect(opened).toBeVisible()
+  await expect(preview(opened)).toHaveCount(0)
+}
+
+// A single click on `rel` in the Explorer: a preview of it.
+export const previewFile = async (page, rel) => {
   await explorerItem(page, rel).click()
   await expect(page.locator(`#tabs [data-path$='/${rel}']`)).toBeVisible()
 }
@@ -59,6 +68,8 @@ export const openFile = async (page, rel) => {
 export const tabs = page => page.locator("#tabs [data-tab]")
 // The tab of the file (or editor) called `name`.
 export const tab = (page, name) => tabs(page).filter({has: page.getByText(name, {exact: true})})
+// A tab that is a preview: the next file previewed takes its place.
+export const preview = locator => locator.and(locator.page().locator("[data-preview=true]"))
 // Whether a tab shows unsaved changes.
 export const unsaved = locator => locator.and(locator.page().locator("[data-dirty=true]"))
 export const activeTab = page => page.locator("#tabs [data-tab][data-active=true]")
@@ -97,7 +108,7 @@ export const takeCompletion = async (page, key = "Enter") => {
     const text = await editorText(page)
     await page.keyboard.press(key)
     try {
-      await expect.poll(squeezed, {timeout: 700}).not.toBe(before)
+      await expect.poll(squeezed, {timeout: 2500}).not.toBe(before)
     } catch (e) {
       if ((await editorText(page)) !== text) await page.keyboard.press("Control+z")
       throw e

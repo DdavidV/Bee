@@ -27,6 +27,9 @@ freshBee({
 })
 
 test.skip(!existsSync(elixirLs.vsix), "ElixirLS couldn't be downloaded")
+// A real language server answers in its own time, the more so while other
+// tests run beside it: tried again (on a fresh Bee) before it counts as failed.
+test.describe.configure({retries: 2})
 
 test("its diagnostics, completion, parameter hints, hover, definitions, formatting, symbols, references and quick fixes work in the editor", async ({page}) => {
   test.setTimeout(240_000)

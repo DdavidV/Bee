@@ -41,8 +41,10 @@ defmodule BeeWeb.ExtensionsTest do
     |> Jason.decode!()
   end
 
-  defp open_file(view, rel),
-    do: view |> element("#explorer button[phx-value-path='#{rel}']") |> render_click()
+  defp open_file(view, rel) do
+    view |> element("#explorer button[phx-value-path='#{rel}']") |> render_click()
+    render_hook(view, "run_command", %{"command" => "workbench.action.keepEditor"})
+  end
 
   # What the ContextMenus hook sends for a right-click on `selector`.
   defp right_click(view, selector, context \\ %{}) do

@@ -46,6 +46,11 @@
       "default": "dark",
       "description": "Color theme of the workbench, editor and terminal: the id of one Bee or a plugin contributes (\"dark\", \"light\", or e.g. a theme installed from a VSIX)."
     },
+    "workbench.editor.enablePreview": {
+      "type": "boolean",
+      "default": true,
+      "description": "A single click on a file (in the Explorer, on a search result) opens it as a preview: in a tab, its name in italics, that the next file opened that way reuses. Double-click the file or its tab, or edit it, to keep it open. false: every file opens in a tab of its own."
+    },
     "workbench.quickOpen.recentFiles": {
       "type": "integer",
       "minimum": 0,

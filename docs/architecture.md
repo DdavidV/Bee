@@ -123,6 +123,10 @@ becomes an ordinary undoable change.
 Before any command runs, pending text and selections are flushed, so a
 command always sees what the user sees.
 
+A file opened with a single click is a preview: it shares one tab with the
+next file opened that way, until it is double-clicked or edited. This is
+VS Code's behaviour, and a setting turns it off.
+
 A buffer exists while at least one window has the file open. If the file
 changes on disk while it has no unsaved changes, the buffer reloads it and
 the editors follow.

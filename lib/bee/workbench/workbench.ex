@@ -8,7 +8,8 @@ defmodule Bee.Workbench do
   out (`BeeWeb.EditorLive.run_effects/2`):
 
     * `{:push, event, payload}` – event to the browser (CodeMirror etc.)
-    * `{:open_file, path}` – open a `Bee.Editor.Buffer`, then `editor_opened/3`
+    * `{:open_file, path}`, `{:open_file, path, :preview}` – open a
+      `Bee.Editor.Buffer`, then `editor_opened/5`
     * `{:close_buffer, path}` – detach from the file's `Bee.Editor.Buffer`
     * `:new_terminal` – start a `Bee.Terminal`, then `terminal_started/3`
     * `:start_console` – start the window's `Bee.Console`, then `console_started/2`
@@ -209,15 +210,50 @@ defmodule Bee.Workbench do
     %{wb | tabs: Enum.map(wb.tabs, &if(&1.path == path, do: %{&1 | title: title}, else: &1))}
   end
 
-  @doc "Shows `path`: activates its tab, or asks for the file to be opened."
-  def open_editor(wb, path) do
-    if open?(wb, path), do: activate_editor(wb, path), else: {wb, [{:open_file, path}]}
+  @doc """
+  Shows `path`: activates its tab, or asks for the file to be opened.
+
+  With `preview: true` it opens as VS Code's preview editor does (a single
+  click in the Explorer): in the one tab that is reused by the next file
+  opened that way, until it is kept (`keep_editor/2`: a double click, an
+  edit). Without it the file's tab is kept – also one that was a preview.
+  """
+  def open_editor(wb, path, opts \\ []) do
+    preview? = Keyword.get(opts, :preview, false)
+
+    cond do
+      open?(wb, path) and preview? -> activate_editor(wb, path)
+      open?(wb, path) -> wb |> keep_editor(path) |> activate_editor(path)
+      preview? -> {wb, [{:open_file, path, :preview}]}
+      true -> {wb, [{:open_file, path}]}
+    end
   end
 
-  @doc "Called once the buffer for `path` is open; `lang` is its language id."
-  def editor_opened(wb, path, dirty, lang) do
-    %{wb | tabs: wb.tabs ++ [%{path: path, kind: :file, dirty: dirty, lang: lang}], active: path}
+  @doc """
+  Called once the buffer for `path` is open; `lang` is its language id.
+  As a preview (`preview?`, and nothing unsaved in it) it takes the place
+  of the tab that is one, whose file is closed.
+  """
+  def editor_opened(wb, path, dirty, lang, preview? \\ false) do
+    tab = %{path: path, kind: :file, dirty: dirty, lang: lang, preview: preview? and not dirty}
+
+    case tab.preview && Enum.find_index(wb.tabs, &preview?/1) do
+      index when is_integer(index) ->
+        old = Enum.at(wb.tabs, index).path
+
+        {%{wb | tabs: List.replace_at(wb.tabs, index, tab), active: path},
+         [{:close_buffer, old}, {:push, "cm:close", %{path: old}}]}
+
+      _ ->
+        %{wb | tabs: wb.tabs ++ [tab], active: path}
+    end
   end
+
+  @doc "Whether `tab` is a preview: the next file previewed takes its place."
+  def preview?(tab), do: Map.get(tab, :preview, false)
+
+  @doc "Keeps the editor of `path` open: it is no preview any more."
+  def keep_editor(wb, path), do: update_tab(wb, path, &Map.put(&1, :preview, false))
 
   def language(wb, path), do: Enum.find_value(wb.tabs, &(&1.path == path && &1.lang))
 
@@ -293,7 +329,13 @@ defmodule Bee.Workbench do
     %{wb | tabs: tabs}
   end
 
-  def set_dirty(wb, path, dirty), do: update_tab(wb, path, &%{&1 | dirty: dirty})
+  # (An edited file is kept, as in VS Code.)
+  def set_dirty(wb, path, dirty) do
+    update_tab(wb, path, fn tab ->
+      tab = %{tab | dirty: dirty}
+      if dirty, do: Map.put(tab, :preview, false), else: tab
+    end)
+  end
 
   def set_language(wb, path, lang), do: update_tab(wb, path, &%{&1 | lang: lang})
 
@@ -600,6 +642,8 @@ defmodule Bee.Workbench do
       "activeEditor" =>
         if(active, do: Bee.Workspace.FS.relative(wb.root, active), else: wb.active),
       "activeEditorIsDirty" => Enum.any?(wb.tabs, &(&1.path == active and &1.dirty)),
+      "activeEditorIsNotPreview" =>
+        not Enum.any?(wb.tabs, &(&1.path == wb.active and preview?(&1))),
       "resourceScheme" => wb.active && if(active, do: "file", else: "extension"),
       "resourceFilename" => active && Path.basename(active),
       "resourceExtname" => active && Path.extname(active),

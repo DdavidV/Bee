@@ -89,6 +89,9 @@ defmodule BeeWeb.EditorLive do
      |> open_file_param(params["file"])}
   end
 
+  # Whether a click opens a file as a preview (workbench.editor.enablePreview).
+  defp preview?(socket), do: socket.assigns.settings["workbench.editor.enablePreview"] != false
+
   # ?file=… or ?file[]=…: files to open (the desktop app's `bee FILE…`),
   # once connected.
   defp open_file_param(socket, files) do
@@ -232,7 +235,7 @@ defmodule BeeWeb.EditorLive do
   def handle_event("search_open", %{"path" => rel, "from" => from, "to" => to}, socket) do
     case Workspace.resolve(socket.assigns.root, rel) do
       {:ok, path} ->
-        socket = change(socket, &Workbench.open_editor(&1, path))
+        socket = change(socket, &Workbench.open_editor(&1, path, preview: preview?(socket)))
 
         if Workbench.open?(workbench(socket), path),
           do:
@@ -674,8 +677,12 @@ defmodule BeeWeb.EditorLive do
   @impl true
   def handle_info({:open_file, rel}, socket) do
     case Workspace.resolve(socket.assigns.root, rel) do
-      {:ok, abs} -> {:noreply, change(socket, &Workbench.open_editor(&1, abs))}
-      {:error, _} -> {:noreply, put_flash(socket, :error, "Path outside workspace")}
+      # A click in the Explorer: a preview, as in VS Code.
+      {:ok, abs} ->
+        {:noreply, change(socket, &Workbench.open_editor(&1, abs, preview: preview?(socket)))}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, "Path outside workspace")}
     end
   end
 
@@ -1167,6 +1174,7 @@ defmodule BeeWeb.EditorLive do
   defp run_effect({:push, event, payload}, socket), do: push_event(socket, event, payload)
 
   defp run_effect({:open_file, path}, socket), do: open_buffer(socket, path)
+  defp run_effect({:open_file, path, :preview}, socket), do: open_buffer(socket, path, nil, true)
   defp run_effect({:format, path, what}, socket), do: format(socket, path, what, false)
 
   defp run_effect({:webview_closed, id}, socket) do
@@ -1445,14 +1453,15 @@ defmodule BeeWeb.EditorLive do
 
   # Opens `path` in a new tab. `text`: unsaved text to carry over (a file
   # that was moved with unsaved changes).
-  defp open_buffer(socket, path, text \\ nil) do
+  # `preview?`: in the tab that the next previewed file reuses.
+  defp open_buffer(socket, path, text \\ nil, preview? \\ false) do
     with {:ok, buffer} <- Buffer.open(path) do
       buffer = if text, do: Buffer.update(path, text), else: buffer
       RecentFiles.add(socket.assigns.root, path)
       lang = Languages.detect(path, first_line: Languages.first_line(buffer.text))
 
       socket
-      |> change(&Workbench.editor_opened(&1, path, Buffer.dirty?(buffer), lang))
+      |> change(&Workbench.editor_opened(&1, path, Buffer.dirty?(buffer), lang, preview?))
       |> push_event(
         "cm:open",
         Map.merge(%{path: path, text: buffer.text, lang: lang}, highlight(lang))
@@ -3111,16 +3120,19 @@ defmodule BeeWeb.EditorLive do
 
   @doc false
   # `when` keys of a tab's right-click menu (editor/title/context).
-  def tab_menu_context(%{kind: :file, path: path}) do
+  def tab_menu_context(%{kind: :file, path: path} = tab) do
     %{
       "resourceScheme" => "file",
       "resourcePath" => path,
       "resourceFilename" => Path.basename(path),
-      "resourceExtname" => Path.extname(path)
+      "resourceExtname" => Path.extname(path),
+      # (VS Code's name for it: Keep Open is offered for previews.)
+      "activeEditorIsNotPreview" => not Workbench.preview?(tab)
     }
   end
 
-  def tab_menu_context(_tab), do: %{"resourceScheme" => "extension"}
+  def tab_menu_context(_tab),
+    do: %{"resourceScheme" => "extension", "activeEditorIsNotPreview" => true}
 
   # A tab's name: the file's, or "Extension: <plugin>".
   defp tab_label(%{kind: :file, path: path}, _details), do: Path.basename(path)

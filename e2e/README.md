@@ -81,6 +81,7 @@ A failed test leaves a screenshot and a description of the page in
 | `palette.spec.mjs` | the command palette: finding, choosing, what it leaves out; recent files in Quick Open |
 | `quick-open.spec.mjs` | Quick Open: recent files, file search, `>` for commands |
 | `tabs.spec.mjs` | editor tabs: dragging, middle click, the right-click menu |
+| `preview.spec.mjs` | preview editors: a click reuses one tab; a double click, an edit or Keep Open keeps it; the setting that turns it off |
 | `workbench.spec.mjs` | the window: title, menu bar, sidebar and panel (shown, hidden, resized, remembered), activity bar, opening folders, two windows |
 | `workspaces.spec.mjs` | two windows on two folders: files, terminal, search, git |
 | `panel.spec.mjs` | the bottom panel: sections, the terminal list (rename, colour, drag), maximize |

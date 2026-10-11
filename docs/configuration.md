@@ -108,6 +108,7 @@ the formatter is told it.
 |---|---|---|
 | `workbench.colorTheme` | `"dark"` | The color theme of the workbench, editor and terminal: `"dark"`, `"light"`, or the id of one a plugin or extension contributes |
 | `workbench.iconTheme` | `null` | The file icon theme, by id. `null` uses Bee's own icons |
+| `workbench.editor.enablePreview` | `true` | A single click on a file, in the Explorer or on a search result, opens it as a preview: a tab with its name in italics that the next file opened that way reuses. Double-click the file or its tab, or edit it, to keep it open. `false` gives every file its own tab |
 | `workbench.quickOpen.recentFiles` | `10` | How many recently opened files Quick Open lists before you type (0–100) |
 
 Themes can also be picked from a list: **Preferences: Color Theme**
@@ -220,6 +221,7 @@ On macOS, `Ctrl` is `Cmd` for the entries below unless noted.
 | `Ctrl+P`, `Ctrl+E` | Go to File |
 | `Ctrl+K Ctrl+O` | Open Folder |
 | `Ctrl+S` | Save |
+| `Ctrl+K Enter` | Keep Open (a preview tab stays) |
 | `Ctrl+,` | Open User Settings |
 | `Ctrl+K Ctrl+S` | Open Keyboard Shortcuts |
 | `Ctrl+K Ctrl+T` | Color Theme |
@@ -304,6 +306,7 @@ Values are bare words or `'single quoted'` strings.
 |---|---|
 | `activeEditor` | Set when an editor is open and in front |
 | `activeEditorIsDirty` | The active file has unsaved changes |
+| `activeEditorIsNotPreview` | The active editor is kept open, not a preview |
 | `editorIsOpen` | Any editor is open |
 | `resourceScheme` | `file` for a file, `extension` for a plugin's details page |
 | `resourcePath`, `resourceFilename`, `resourceExtname`, `resourceDirname` | Parts of the active file's path |

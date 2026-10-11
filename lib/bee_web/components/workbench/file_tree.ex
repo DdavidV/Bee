@@ -225,6 +225,7 @@ defmodule BeeWeb.Workbench.FileTree do
           phx-target={@tree.myself}
           title={title(entry.path, decoration(@tree.decorations, entry.path))}
           data-decoration={(d = decoration(@tree.decorations, entry.path)) && d.color}
+          data-keep={entry.type != :dir && abs(@tree.root, entry.path)}
           data-menu={menu()}
           data-menu-args={Jason.encode!([abs(@tree.root, entry.path)])}
           data-menu-context={

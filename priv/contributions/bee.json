@@ -183,6 +183,12 @@
         "enablement": "canRedo"
       },
       {
+        "command": "workbench.action.keepEditor",
+        "category": "View",
+        "title": "Keep Open",
+        "runtime": "server"
+      },
+      {
         "command": "workbench.action.closeActiveEditor",
         "category": "View",
         "title": "Close Editor",
@@ -601,6 +607,7 @@
       {"key": "ctrl+t", "mac": "cmd+t", "command": "workbench.action.showAllSymbols"},
       {"key": "f12", "command": "editor.action.revealDefinition", "when": "editorTextFocus && editorHasDefinitionProvider"},
       {"key": "ctrl+f12", "mac": "cmd+f12", "command": "editor.action.goToImplementation", "when": "editorTextFocus && editorHasImplementationProvider"},
+      {"key": "ctrl+k enter", "mac": "cmd+k enter", "command": "workbench.action.keepEditor", "when": "activeEditor && !activeEditorIsNotPreview"},
       {"key": "ctrl+b", "mac": "cmd+b", "command": "workbench.action.toggleSidebarVisibility"},
       {"key": "ctrl+j", "mac": "cmd+j", "command": "workbench.action.togglePanel"},
       {"key": "ctrl+shift+e", "mac": "cmd+shift+e", "command": "workbench.view.explorer"},
@@ -725,6 +732,7 @@
         {"command": "workbench.action.closeEditor", "group": "1_close@1"},
         {"command": "workbench.action.closeOtherEditors", "group": "1_close@2"},
         {"command": "workbench.action.closeAllEditors", "group": "1_close@3"},
+        {"command": "workbench.action.keepEditor", "group": "1_close@4", "when": "!activeEditorIsNotPreview"},
         {"command": "copyFilePath", "group": "2_copy@1", "when": "resourceScheme == file"}
       ],
       "explorer/context": [
@@ -737,6 +745,7 @@
         {"command": "deleteFile", "group": "7_modification@2", "when": "!explorerResourceIsRoot"}
       ],
       "commandPalette": [
+        {"command": "workbench.action.keepEditor", "when": "activeEditor && !activeEditorIsNotPreview"},
         {"command": "editor.action.clipboardCutAction", "when": "false"},
         {"command": "editor.action.clipboardCopyAction", "when": "false"},
         {"command": "editor.action.clipboardPasteAction", "when": "false"},

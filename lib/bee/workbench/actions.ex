@@ -57,6 +57,19 @@ defmodule Bee.Workbench.Actions do
   @command "workbench.action.closeAllEditors"
   def close_all_editors(wb), do: close_editors(wb, Workbench.tab_paths(wb))
 
+  # Keep Open: the editor of `path` (a double click on its tab, or on the
+  # file in the Explorer), or the active one, is no preview any more. A file
+  # that isn't open yet is opened to stay.
+  @command "workbench.action.keepEditor"
+  def keep_editor(wb, [path | _]) when is_binary(path) do
+    if Workbench.open?(wb, path),
+      do: Workbench.keep_editor(wb, path),
+      else: Workbench.open_editor(wb, path)
+  end
+
+  def keep_editor(%{active: nil} = wb, _args), do: wb
+  def keep_editor(wb, _args), do: Workbench.keep_editor(wb, wb.active)
+
   # The confirmation's answer: [paths] ("" is Cancel).
   @command "workbench.action.closeEditors.confirmed"
   def close_editors_confirmed(wb, [paths]) when is_list(paths),

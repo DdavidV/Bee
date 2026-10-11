@@ -93,6 +93,8 @@
           data-path={tab.path}
           data-active={to_string(tab.path == @active)}
           data-dirty={tab.dirty && "true"}
+          data-preview={Workbench.preview?(tab) && "true"}
+          data-keep={tab.path}
           data-menu="editor/title/context"
           data-menu-args={Jason.encode!([tab.path])}
           data-menu-context={Jason.encode!(tab_menu_context(tab))}
@@ -130,7 +132,7 @@
           />
           <span class={[
             tab.kind == :file && tab_color(@file_decorations, @root, tab.path),
-            tab.kind == :extension && "italic"
+            (tab.kind == :extension or Workbench.preview?(tab)) && "italic"
           ]}>
             {tab_label(tab, @extension_details)}
           </span>

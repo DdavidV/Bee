@@ -26,6 +26,41 @@ defmodule Bee.WorkbenchTest do
                Workbench.open_editor(wb, "/ws/a")
     end
 
+    test "a preview takes the place of the one before it; a kept or edited one stays" do
+      assert {_, [{:open_file, "/ws/a", :preview}]} =
+               Workbench.open_editor(wb(), "/ws/a", preview: true)
+
+      wb = with_editors(["a"])
+      {wb, []} = Workbench.wrap(Workbench.editor_opened(wb, "/ws/b", false, "plaintext", true))
+      assert [%{path: "/ws/a"}, %{path: "/ws/b", preview: true}] = wb.tabs
+
+      # The next preview replaces it, where it was; its file is closed.
+      {wb, effects} = Workbench.editor_opened(wb, "/ws/c", false, "plaintext", true)
+      assert [%{path: "/ws/a"}, %{path: "/ws/c", preview: true}] = wb.tabs
+      assert wb.active == "/ws/c"
+      assert {:close_buffer, "/ws/b"} in effects
+      assert {:push, "cm:close", %{path: "/ws/b"}} in effects
+
+      # Kept: the next one is added.
+      wb = Workbench.keep_editor(wb, "/ws/c")
+      wb = Workbench.editor_opened(wb, "/ws/d", false, "plaintext", true)
+      assert Enum.map(wb.tabs, & &1.path) == ["/ws/a", "/ws/c", "/ws/d"]
+
+      # Edited: kept. Opened to stay (not as a preview): kept.
+      assert %{preview: false} =
+               wb |> Workbench.set_dirty("/ws/d", true) |> Workbench.tab("/ws/d")
+
+      {kept, _} = Workbench.open_editor(wb, "/ws/d")
+      assert %{preview: false} = Workbench.tab(kept, "/ws/d")
+      # Previewed again while open: still a preview, only shown.
+      {shown, _} = Workbench.open_editor(wb, "/ws/d", preview: true)
+      assert %{preview: true} = Workbench.tab(shown, "/ws/d")
+
+      # A file with unsaved changes is never a preview.
+      wb = Workbench.editor_opened(wb(), "/ws/e", true, "plaintext", true)
+      assert [%{preview: false}] = wb.tabs
+    end
+
     test "closing the active editor activates its right neighbour, else the left one" do
       wb = with_editors(["a", "b", "c"]) |> Workbench.activate_editor("/ws/b") |> elem(0)
 

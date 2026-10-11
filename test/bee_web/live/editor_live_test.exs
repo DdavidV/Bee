@@ -127,6 +127,44 @@ defmodule BeeWeb.EditorLiveTest do
       refute has_element?(view, "#tabs > div:nth-child(3)")
     end
 
+    test "a click previews a file in the tab the next click reuses; kept files stay", %{
+      view: view,
+      path: path
+    } do
+      readme = Path.join(Path.dirname(path), "README.md")
+
+      preview_file(view, "mix.exs")
+      assert has_element?(view, "#tabs [data-tab][data-preview][data-path='#{path}']")
+
+      # The next file takes the preview's tab: its file is closed.
+      preview_file(view, "README.md")
+      assert_push_event(view, "cm:close", %{path: ^path})
+      assert has_element?(view, "#tabs [data-tab][data-preview][data-path='#{readme}']")
+      refute has_element?(view, "#tabs > div:nth-child(2)")
+
+      # Kept (a double click): the next preview gets a tab of its own.
+      run(view, "workbench.action.keepEditor", [readme])
+      refute has_element?(view, "#tabs [data-preview]")
+      preview_file(view, "mix.exs")
+      assert has_element?(view, "#tabs > div:nth-child(2)[data-preview]")
+
+      # An edit keeps it too.
+      render_hook(view, "doc_changed", %{"path" => path, "text" => "changed"})
+      refute has_element?(view, "#tabs [data-preview]")
+    end
+
+    test "workbench.editor.enablePreview: false opens every file in its own tab", %{view: view} do
+      File.write!(Bee.Settings.user_path(), ~s({"workbench.editor.enablePreview": false}))
+      Bee.Settings.reload()
+      on_exit(fn -> File.rm(Bee.Settings.user_path()) && Bee.Settings.reload() end)
+      render(view)
+
+      preview_file(view, "mix.exs")
+      preview_file(view, "README.md")
+      assert has_element?(view, "#tabs > div:nth-child(2)")
+      refute has_element?(view, "#tabs [data-preview]")
+    end
+
     test "changes mark the tab dirty and save writes them", %{view: view, path: path} do
       open_file(view, "mix.exs")
 
@@ -2276,7 +2314,15 @@ defmodule BeeWeb.EditorLiveTest do
     if acc =~ expected, do: acc, else: await_term_output(view, id, expected, acc)
   end
 
+  # A double click in the Explorer: the click opens the file (as a preview),
+  # the double click keeps it open.
   defp open_file(view, rel) do
+    preview_file(view, rel)
+    render_hook(view, "run_command", %{"command" => "workbench.action.keepEditor"})
+  end
+
+  # A single click in the Explorer.
+  defp preview_file(view, rel) do
     view |> element("#explorer button[phx-value-path='#{rel}']") |> render_click()
   end
 end
