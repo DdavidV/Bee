@@ -117,7 +117,15 @@ cd e2e
 npm test
 ```
 
-The desktop app has a self-test that drives its window. It opens, edits and
+The desktop app's own tests (`desktop/tests/`) cover its parts without a
+window or a running Bee:
+
+```sh
+cd desktop
+cargo test
+```
+
+It also has a self-test that drives its window. It opens, edits and
 saves `lib/a.ex`, checks the git plugin, and runs a terminal command, so
 point it at a git repository with that file:
 
