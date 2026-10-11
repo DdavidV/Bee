@@ -1,0 +1,6 @@
+node_modules/
+work/
+libs/
+test-results/
+playwright-report/
+.cache/

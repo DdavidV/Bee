@@ -108,6 +108,15 @@ Remove the function with `scripts/install-bee-command.sh --uninstall`.
 mix precommit
 ```
 
+End-to-end tests drive Bee's UI in a real browser (Playwright), see
+[e2e/](e2e/README.md):
+
+```sh
+cd e2e
+./setup.sh   # once
+npm test
+```
+
 The desktop app has a self-test that drives its window. It opens, edits and
 saves `lib/a.ex`, checks the git plugin, and runs a terminal command, so
 point it at a git repository with that file:

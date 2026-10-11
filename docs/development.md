@@ -47,6 +47,24 @@ folder, with no token, no file watching and no built-in plugins, so they
 never touch your own setup. Open VSX and remote JSON schemas are replaced by
 stand-ins, so the tests need no network.
 
+### End-to-end tests
+
+The `e2e` folder holds tests that drive Bee's interface in a real browser,
+as a user would: clicking, dragging, typing, right-clicking, and checking
+the result on screen and on disk. They know nothing of Bee's code. They
+cover what the unit tests cannot see, such as the editor's behaviour, the
+terminal, the clipboard, Git, extension pages and highlighting, and one
+set of them speaks to Bee in desktop mode directly, over its standard input
+and output.
+
+They run against a release of Bee, built from the checkout when its sources
+changed. Every test file gets a Bee of its own, started on freshly made
+folders with its own configuration folder and a stand-in for Open VSX, so
+the files run side by side and none depends on another. Nothing of your own
+setup is used or touched. One real language extension is downloaded on the
+first run and kept. They need Node.js and are not part of the pre-commit
+check. See the [folder's README](../e2e/README.md).
+
 ### The desktop self-test
 
 The desktop app can be built to test itself. The first window then drives
