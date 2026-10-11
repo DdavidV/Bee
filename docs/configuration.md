@@ -222,6 +222,9 @@ On macOS, `Ctrl` is `Cmd` for the entries below unless noted.
 | `Ctrl+K Ctrl+O` | Open Folder |
 | `Ctrl+S` | Save |
 | `Ctrl+K Enter` | Keep Open (a preview tab stays) |
+| `Ctrl+\` | Split Editor Right |
+| `Ctrl+K Ctrl+\` | Split Editor Down |
+| `Ctrl+K Ctrl+Right`, `Ctrl+K Ctrl+Left` | Focus the next, the previous editor group |
 | `Ctrl+,` | Open User Settings |
 | `Ctrl+K Ctrl+S` | Open Keyboard Shortcuts |
 | `Ctrl+K Ctrl+T` | Color Theme |
@@ -307,6 +310,7 @@ Values are bare words or `'single quoted'` strings.
 | `activeEditor` | Set when an editor is open and in front |
 | `activeEditorIsDirty` | The active file has unsaved changes |
 | `activeEditorIsNotPreview` | The active editor is kept open, not a preview |
+| `multipleEditorGroups` | The editor area is split into more than one group |
 | `editorIsOpen` | Any editor is open |
 | `resourceScheme` | `file` for a file, `extension` for a plugin's details page |
 | `resourcePath`, `resourceFilename`, `resourceExtname`, `resourceDirname` | Parts of the active file's path |

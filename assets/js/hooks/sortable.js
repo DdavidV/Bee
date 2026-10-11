@@ -14,13 +14,17 @@
 // app.css), which LiveView doesn't render, and they are dropped once the
 // server has rendered the new order.
 //
-// sortable({item, key, event, axis, save, ignore}) makes a hook:
+// sortable({item, key, event, axis, save, ignore, params, over, drop}) makes a hook:
 //   item    the items are the children with a data-<item> attribute
 //   key     the dataset property with an item's id (default: item)
 //   event   the server event for the new order
 //   axis    "y" (a column, the default) or "x" (a row)
 //   save    also gets the new order (optional; e.g. to remember it)
 //   ignore  a selector: pressing such a control in an item isn't a drag
+//   params  more for the event (optional): hook => {…}
+//   over    told where a dragged item is (optional): (hook, pointer event, item)
+//   drop    asked when one is released (optional): (hook, pointer event, item)
+//           => true when it took the item elsewhere – its order stays
 
 import {saveLayout} from "../layout/storage"
 
@@ -28,7 +32,7 @@ const HOLD_MS = 180
 const MOVE_PX = 4
 const SETTLE_MS = 150
 
-export const sortable = ({item, key = item, event, axis = "y", save, ignore}) => {
+export const sortable = ({item, key = item, event, axis = "y", save, ignore, params, over, drop}) => {
   const [start, end, size, coord] =
     axis === "x" ? ["left", "right", "width", "clientX"] : ["top", "bottom", "height", "clientY"]
   const translate = px => (axis === "x" ? `${px}px 0` : `0 ${px}px`)
@@ -113,6 +117,7 @@ export const sortable = ({item, key = item, event, axis = "y", save, ignore}) =>
         const offset = Math.max(min, Math.min(max, delta))
         el.style.translate = translate(offset)
         to = target(offset)
+        over?.(this, ev, el)
 
         // Those between its old and new place shift by its size.
         items.forEach((other, i) => {
@@ -123,7 +128,7 @@ export const sortable = ({item, key = item, event, axis = "y", save, ignore}) =>
         })
       }
 
-      const release = () => {
+      const release = ev => {
         clearTimeout(holdTimer)
         document.removeEventListener("pointermove", move)
         document.removeEventListener("pointerup", release)
@@ -137,6 +142,12 @@ export const sortable = ({item, key = item, event, axis = "y", save, ignore}) =>
         }
 
         this.dragged = true
+        // Taken somewhere else (another list): back as it was here.
+        if (ev && drop?.(this, ev, el)) {
+          delete el.dataset.lifted
+          this.reset()
+          return
+        }
         this.settling = true
         // Settle into its place, then let the server put it there for real.
         el.style.translate = translate(settleOffset(to))
@@ -146,7 +157,7 @@ export const sortable = ({item, key = item, event, axis = "y", save, ignore}) =>
           const order = items.map(i => i.dataset[key])
           order.splice(to, 0, ...order.splice(from, 1))
           save?.(order)
-          this.pushEvent(event, {order}, () => this.reset())
+          this.pushEvent(event, {order, ...(params?.(this) || {})}, () => this.reset())
         }, SETTLE_MS)
       }
 

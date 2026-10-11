@@ -13,7 +13,7 @@ const file = "snip.tml"
 const open = async (page, text) => {
   writeFileSync(join(dws, file), text)
   await openBee(page, `/?file=${encodeURIComponent(join(dws, file))}`)
-  await expect(page.locator(`#tabs [data-path$='/${file}']`)).toBeVisible()
+  await expect(page.locator(`[data-tabs] [data-path$='/${file}']`)).toBeVisible()
   await page.locator(".cm-line").first().click()
   await page.keyboard.press("Control+End")
 }

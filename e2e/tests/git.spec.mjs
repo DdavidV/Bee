@@ -146,7 +146,7 @@ test("a click on a changed file opens it", async ({page}) => {
   await openBee(page)
   await showView(page, "Source Control")
   await row(page, "one.txt").click()
-  await expect(page.locator("#tabs")).toContainText("one.txt")
+  await expect(page.locator("[data-tabs]")).toContainText("one.txt")
   await expect(page.locator("#editor .cm-line").first()).toHaveText("one changed")
 })
 

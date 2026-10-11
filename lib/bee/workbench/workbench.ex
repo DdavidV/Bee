@@ -40,8 +40,18 @@ defmodule Bee.Workbench do
   """
 
   defstruct root: nil,
+            # The focused editor group's editors, and the one shown in it.
             tabs: [],
             active: nil,
+            # Editor groups (the editor area split, as in VS Code): the
+            # focused one's id, the others (`%{id, tabs, active}`), how they
+            # are laid out (`editor_layout`), and the next new one's id. See "Editor groups".
+            group: 1,
+            others: [],
+            editor_layout: {:leaf, 1},
+            next_group: 2,
+            # Where the next file opened goes among the tabs: `{path, index}`.
+            insert_at: nil,
             status: nil,
             sidebar_open: true,
             sidebar_view: "explorer",
@@ -75,6 +85,11 @@ defmodule Bee.Workbench do
   @fields [
     :tabs,
     :active,
+    :group,
+    :others,
+    :editor_layout,
+    :next_group,
+    :insert_at,
     :status,
     :sidebar_open,
     :sidebar_view,
@@ -130,16 +145,225 @@ defmodule Bee.Workbench do
   # of a VS Code extension (`kind: :webview`, path "webview:<id>", see
   # `Bee.Webviews`).
 
-  def open?(wb, path), do: Enum.any?(wb.tabs, &(&1.path == path))
+  @doc "Whether `path` has an editor, in any group."
+  def open?(wb, path), do: Enum.any?(all_tabs(wb), &(&1.path == path))
 
-  @doc "The tab of `path`, or nil."
-  def tab(wb, path), do: Enum.find(wb.tabs, &(&1.path == path))
+  @doc "Whether `path` has an editor in the focused group."
+  def here?(wb, path), do: Enum.any?(wb.tabs, &(&1.path == path))
+
+  @doc "Whether a group other than the focused one has an editor of `path`."
+  def elsewhere?(wb, path),
+    do: Enum.any?(wb.others, fn group -> Enum.any?(group.tabs, &(&1.path == path)) end)
+
+  @doc "The tab of `path` (the focused group's, else another group's), or nil."
+  def tab(wb, path), do: Enum.find(all_tabs(wb), &(&1.path == path))
 
   @doc "The active editor's file, or nil (none, or not a file)."
   def active_file(wb) do
-    case tab(wb, wb.active) do
+    case Enum.find(wb.tabs, &(&1.path == wb.active)) do
       %{kind: :file, path: path} -> path
       _ -> nil
+    end
+  end
+
+  ## Editor groups
+  #
+  # The editor area can be split, as in VS Code: each group has its own
+  # tabs and its own editor shown. `editor_layout` says where they are: a tree of
+  # `{:row, [node]}` (side by side) and `{:col, [node]}` (one above the
+  # other) with `{:leaf, group_id}` leaves. One group is focused: commands
+  # act on it, and its tabs are `tabs` / `active` (the other groups are in
+  # `others`), so that everything about "the editors" means the focused
+  # group's unless it says otherwise. A file can be open in several groups
+  # (the browser keeps their text the same); its buffer is closed with the
+  # last of them. Editors that aren't files are open once.
+
+  @doc "The groups, `[%{id, tabs, active}]`, in layout order."
+  def groups(wb), do: wb.editor_layout |> leaves() |> Enum.map(&group(wb, &1))
+
+  @doc "Group `id`, or nil."
+  def group(%{group: id} = wb, id), do: %{id: id, tabs: wb.tabs, active: wb.active}
+  def group(wb, id), do: Enum.find(wb.others, &(&1.id == id))
+
+  @doc "Every group's tabs, the focused group's first."
+  def all_tabs(wb), do: wb.tabs ++ Enum.flat_map(wb.others, & &1.tabs)
+
+  @doc "Focuses group `id`: commands act on it, keys go to its editor."
+  def focus_group(%{group: id} = wb, id), do: wb
+
+  def focus_group(wb, id) do
+    if group(wb, id), do: {swap(wb, id), [{:push, "cm:focus", %{group: id}}]}, else: wb
+  end
+
+  @doc """
+  Splits the focused group: a new one to its right (`:right`) or below it
+  (`:down`), focused, showing the same file. Nothing to split without a
+  file shown.
+  """
+  def split(wb, direction) when direction in [:right, :down] do
+    case active_file(wb) do
+      nil ->
+        wb
+
+      path ->
+        {wb, id} = add_group(wb, wb.group, direction)
+        wb |> focus_group(id) |> wrap() |> chain(&{&1, [{:open_file, path}]})
+    end
+  end
+
+  @doc """
+  Moves the editor of `path` from group `from` to group `to` (a tab that
+  was dragged), at `index` among its tabs (default: last). `zone` `:right`
+  or `:down` puts it into a new group beside `to` instead. The group it
+  leaves goes away when it was its last editor.
+  """
+  def move_tab(wb, path, from, to, index \\ nil, zone \\ :center) do
+    source = group(wb, from)
+    tab = source && Enum.find(source.tabs, &(&1.path == path))
+
+    cond do
+      tab == nil or group(wb, to) == nil ->
+        wb
+
+      zone == :center and from == to ->
+        wb
+
+      zone in [:right, :down] and from == to and length(source.tabs) == 1 ->
+        wb
+
+      zone in [:right, :down] ->
+        {wb, id} = add_group(wb, to, zone)
+        move(wb, tab, from, id, nil)
+
+      true ->
+        move(wb, tab, from, to, index)
+    end
+  end
+
+  defp move(wb, tab, from, to, index) do
+    wb
+    |> in_group(from, &close_here(&1, tab.path, false))
+    |> chain(&focus_group(&1, to))
+    |> chain(fn wb ->
+      cond do
+        here?(wb, tab.path) ->
+          activate_editor(wb, tab.path)
+
+        tab.kind == :file ->
+          {%{wb | insert_at: {tab.path, index}}, [{:open_file, tab.path}]}
+
+        true ->
+          activate_editor(%{wb | tabs: insert(wb.tabs, tab, index)}, tab.path)
+      end
+    end)
+  end
+
+  defp insert(tabs, tab, nil), do: tabs ++ [tab]
+  defp insert(tabs, tab, index), do: List.insert_at(tabs, min(max(index, 0), length(tabs)), tab)
+
+  # A new, empty group beside `beside`: `{wb, its id}`.
+  defp add_group(wb, beside, direction) do
+    id = wb.next_group
+
+    {%{
+       wb
+       | others: wb.others ++ [%{id: id, tabs: [], active: nil}],
+         editor_layout: layout_split(wb.editor_layout, beside, id, direction),
+         next_group: id + 1
+     }, id}
+  end
+
+  # The focused group is `id` now (no effects).
+  defp swap(wb, id) do
+    target = group(wb, id)
+    here = %{id: wb.group, tabs: wb.tabs, active: wb.active}
+
+    %{
+      wb
+      | group: id,
+        tabs: target.tabs,
+        active: target.active,
+        others: Enum.map(wb.others, &if(&1.id == id, do: here, else: &1))
+    }
+  end
+
+  # Runs `fun` with group `id` as the focused one, then focuses the group
+  # that was (if it is still there): `{wb, effects}`.
+  defp in_group(wb, id, fun) do
+    focused = wb.group
+
+    cond do
+      id == focused ->
+        wrap(fun.(wb))
+
+      group(wb, id) == nil ->
+        {wb, []}
+
+      true ->
+        {wb, effects} = wrap(fun.(swap(wb, id)))
+        wb = if wb.group != focused and group(wb, focused), do: swap(wb, focused), else: wb
+        # (What `fun` said about the focus isn't true any more.)
+        effects = Enum.reject(effects, &match?({:push, "cm:focus", _}, &1))
+        {wb, effects ++ [{:push, "cm:focus", %{group: wb.group}}]}
+    end
+  end
+
+  # The focused group has no editors left: it goes, unless it is the only
+  # one; the first of the others is focused.
+  defp drop_group(%{others: []} = wb), do: wb
+
+  defp drop_group(wb) do
+    layout = layout_remove(wb.editor_layout, wb.group)
+    next = group(wb, hd(leaves(layout)))
+
+    {%{
+       wb
+       | editor_layout: layout,
+         group: next.id,
+         tabs: next.tabs,
+         active: next.active,
+         others: Enum.reject(wb.others, &(&1.id == next.id))
+     }, [{:push, "cm:focus", %{group: next.id}}]}
+  end
+
+  defp leaves({:leaf, id}), do: [id]
+  defp leaves({_axis, nodes}), do: Enum.flat_map(nodes, &leaves/1)
+
+  defp axis(:right), do: :row
+  defp axis(:down), do: :col
+
+  # `new` beside leaf `target`: in its row (column) when that runs the
+  # right way, else in a row (column) of the two in its place.
+  defp layout_split({:leaf, target}, target, new, direction),
+    do: {axis(direction), [{:leaf, target}, {:leaf, new}]}
+
+  defp layout_split({:leaf, _} = leaf, _target, _new, _direction), do: leaf
+
+  defp layout_split({axis, nodes}, target, new, direction) do
+    if axis == axis(direction) and {:leaf, target} in nodes do
+      {axis, Enum.flat_map(nodes, &if(&1 == {:leaf, target}, do: [&1, {:leaf, new}], else: [&1]))}
+    else
+      {axis, Enum.map(nodes, &layout_split(&1, target, new, direction))}
+    end
+  end
+
+  defp layout_remove({:leaf, id}, id), do: nil
+  defp layout_remove({:leaf, _} = leaf, _id), do: leaf
+
+  defp layout_remove({axis, nodes}, id) do
+    case nodes |> Enum.map(&layout_remove(&1, id)) |> Enum.reject(&is_nil/1) do
+      [] -> nil
+      [only] -> only
+      nodes -> {axis, nodes}
+    end
+  end
+
+  # Shows the editor of `path` where it is: its group focused, its tab
+  # activated.
+  defp reveal(wb, path) do
+    case Enum.find(groups(wb), fn group -> Enum.any?(group.tabs, &(&1.path == path)) end) do
+      nil -> wb
+      %{id: id} -> wb |> focus_group(id) |> wrap() |> chain(&activate_editor(&1, path))
     end
   end
 
@@ -148,7 +372,7 @@ defmodule Bee.Workbench do
     path = "extension:" <> name
 
     if open?(wb, path),
-      do: activate_editor(wb, path),
+      do: reveal(wb, path),
       else:
         activate_editor(
           %{
@@ -168,7 +392,7 @@ defmodule Bee.Workbench do
     path = "live:#{plugin}/#{id}" <> if(spec[:key], do: "#" <> spec.key, else: "")
 
     if open?(wb, path) do
-      activate_editor(wb, path)
+      reveal(wb, path)
     else
       tab = %{
         path: path,
@@ -195,7 +419,7 @@ defmodule Bee.Workbench do
 
     cond do
       open?(wb, path) ->
-        if activate?, do: activate_editor(wb, path), else: wb
+        if activate?, do: reveal(wb, path), else: wb
 
       true ->
         tab = %{path: path, kind: :webview, webview: id, title: title, dirty: false, lang: nil}
@@ -205,13 +429,12 @@ defmodule Bee.Workbench do
   end
 
   @doc "The title of webview panel `id`'s tab is `title` now."
-  def set_webview_title(wb, id, title) do
-    path = "webview:" <> id
-    %{wb | tabs: Enum.map(wb.tabs, &if(&1.path == path, do: %{&1 | title: title}, else: &1))}
-  end
+  def set_webview_title(wb, id, title),
+    do: update_tab(wb, "webview:" <> id, &%{&1 | title: title})
 
   @doc """
-  Shows `path`: activates its tab, or asks for the file to be opened.
+  Shows `path` in the focused group: activates its tab there, or asks for
+  the file to be opened (also when another group has it open).
 
   With `preview: true` it opens as VS Code's preview editor does (a single
   click in the Explorer): in the one tab that is reused by the next file
@@ -222,31 +445,57 @@ defmodule Bee.Workbench do
     preview? = Keyword.get(opts, :preview, false)
 
     cond do
-      open?(wb, path) and preview? -> activate_editor(wb, path)
-      open?(wb, path) -> wb |> keep_editor(path) |> activate_editor(path)
+      here?(wb, path) and preview? -> activate_editor(wb, path)
+      here?(wb, path) -> wb |> keep_here(path) |> activate_editor(path)
       preview? -> {wb, [{:open_file, path, :preview}]}
+      opts[:replace] -> {wb, [{:open_file, path, :replace}]}
       true -> {wb, [{:open_file, path}]}
     end
   end
 
   @doc """
-  Called once the buffer for `path` is open; `lang` is its language id.
-  As a preview (`preview?`, and nothing unsaved in it) it takes the place
-  of the tab that is one, whose file is closed.
+  Called once the buffer for `path` is open; `lang` is its language id: a
+  tab for it in the focused group. As a preview (`preview?`, and nothing
+  unsaved in it) it takes the place of the group's tab that is one, whose
+  file is closed.
   """
   def editor_opened(wb, path, dirty, lang, preview? \\ false) do
-    tab = %{path: path, kind: :file, dirty: dirty, lang: lang, preview: preview? and not dirty}
+    tab = %{
+      path: path,
+      kind: :file,
+      dirty: dirty,
+      lang: lang,
+      preview: preview? == true and not dirty
+    }
 
-    case tab.preview && Enum.find_index(wb.tabs, &preview?/1) do
-      index when is_integer(index) ->
-        old = Enum.at(wb.tabs, index).path
+    {index, wb} = insert_index(wb, path)
 
-        {%{wb | tabs: List.replace_at(wb.tabs, index, tab), active: path},
-         [{:close_buffer, old}, {:push, "cm:close", %{path: old}}]}
+    cond do
+      here?(wb, path) ->
+        activate_editor(wb, path)
 
-      _ ->
-        %{wb | tabs: wb.tabs ++ [tab], active: path}
+      # (`:replace`: kept, but where the preview is – a double click whose
+      # second click came before the first one's file was open.)
+      old = (tab.preview or preview? == :replace) && Enum.find_index(wb.tabs, &preview?/1) ->
+        closed = Enum.at(wb.tabs, old).path
+
+        {%{wb | tabs: List.replace_at(wb.tabs, old, tab), active: path},
+         file_closed(wb, closed, true)}
+
+      true ->
+        %{wb | tabs: insert(wb.tabs, tab, index), active: path}
     end
+  end
+
+  defp insert_index(%{insert_at: {path, index}} = wb, path), do: {index, %{wb | insert_at: nil}}
+  defp insert_index(wb, _path), do: {nil, %{wb | insert_at: nil}}
+
+  # The effects of the focused group's editor of file `path` going: the
+  # browser's, and – unless another group shows the file (or `buffer?` is
+  # false: the file is only moving) – its buffer's.
+  defp file_closed(wb, path, buffer?) do
+    if(buffer? and not elsewhere?(wb, path), do: [{:close_buffer, path}], else: []) ++
+      [{:push, "cm:close", %{path: path, group: wb.group}}]
   end
 
   @doc "Whether `tab` is a preview: the next file previewed takes its place."
@@ -255,18 +504,64 @@ defmodule Bee.Workbench do
   @doc "Keeps the editor of `path` open: it is no preview any more."
   def keep_editor(wb, path), do: update_tab(wb, path, &Map.put(&1, :preview, false))
 
-  def language(wb, path), do: Enum.find_value(wb.tabs, &(&1.path == path && &1.lang))
+  defp keep_here(wb, path) do
+    %{
+      wb
+      | tabs: Enum.map(wb.tabs, &if(&1.path == path, do: Map.put(&1, :preview, false), else: &1))
+    }
+  end
 
+  def language(wb, path), do: Enum.find_value(all_tabs(wb), &(&1.path == path && &1.lang))
+
+  @doc "Shows the focused group's editor of `path`."
   def activate_editor(wb, path) do
-    case tab(wb, path) do
-      %{kind: :file} -> {%{wb | active: path}, [{:push, "cm:activate", %{path: path}}]}
+    case Enum.find(wb.tabs, &(&1.path == path)) do
+      %{kind: :file} ->
+        {%{wb | active: path}, [{:push, "cm:activate", %{path: path, group: wb.group}}]}
+
       # Not a file: CodeMirror puts its file away (and its focus).
-      %{} -> {%{wb | active: path}, [{:push, "cm:deactivate", %{}}]}
-      nil -> wb
+      %{} ->
+        {%{wb | active: path}, [{:push, "cm:deactivate", %{group: wb.group}}]}
+
+      nil ->
+        wb
     end
   end
 
+  @doc "Shows group `group`'s editor of `path` (a click on its tab), focusing the group."
+  def activate_editor(wb, group, path),
+    do: wb |> focus_group(group) |> wrap() |> chain(&activate_editor(&1, path))
+
+  @doc """
+  Closes the editor of `path`: the focused group's, else the one of the
+  group that has it.
+  """
   def close_editor(wb, path) do
+    cond do
+      here?(wb, path) ->
+        close_here(wb, path, true)
+
+      holder = Enum.find(wb.others, fn group -> Enum.any?(group.tabs, &(&1.path == path)) end) ->
+        in_group(wb, holder.id, &close_here(&1, path, true))
+
+      true ->
+        wb
+    end
+  end
+
+  @doc "Closes group `group`'s editor of `path`."
+  def close_editor(wb, group, path), do: in_group(wb, group, &close_here(&1, path, true))
+
+  @doc "Closes every group's editor of `path` (its file is gone)."
+  def close_everywhere(wb, path) do
+    if open?(wb, path),
+      do: wb |> close_editor(path) |> wrap() |> chain(&close_everywhere(&1, path)),
+      else: wb
+  end
+
+  # Closes the focused group's editor of `path`; `gone?` false: it is only
+  # moving to another group (its buffer, its webview panel stay).
+  defp close_here(wb, path, gone?) do
     case Enum.find_index(wb.tabs, &(&1.path == path)) do
       nil ->
         wb
@@ -276,20 +571,20 @@ defmodule Bee.Workbench do
 
         effects =
           case Enum.at(wb.tabs, index) do
-            %{kind: :file} -> [{:close_buffer, path}, {:push, "cm:close", %{path: path}}]
+            %{kind: :file} -> file_closed(wb, path, gone?)
             # Its extension is told: the panel is disposed of.
-            %{kind: :webview, webview: id} -> [{:webview_closed, id}]
+            %{kind: :webview, webview: id} when gone? -> [{:webview_closed, id}]
             _ -> []
           end
 
         wb = %{wb | tabs: remaining}
 
         cond do
+          remaining == [] ->
+            chain({%{wb | active: nil}, effects}, &drop_group/1)
+
           wb.active != path ->
             {wb, effects}
-
-          remaining == [] ->
-            {%{wb | active: nil}, effects}
 
           true ->
             neighbour = Enum.at(remaining, min(index, length(remaining) - 1)).path
@@ -299,24 +594,28 @@ defmodule Bee.Workbench do
   end
 
   @doc """
-  Closes the editors of `paths` (in tab order), as `close_editor/2` does
-  one: unsaved changes are dropped – callers ask first (see
-  `Bee.Workbench.Actions`).
+  Closes the focused group's editors of `paths` (in tab order), as
+  `close_editor/2` does one: unsaved changes are dropped – callers ask
+  first (see `Bee.Workbench.Actions`).
   """
   def close_editors(wb, paths) do
-    Enum.reduce(paths, {wb, []}, fn path, acc -> chain(acc, &close_editor(&1, path)) end)
+    group = wb.group
+    Enum.reduce(paths, {wb, []}, fn path, acc -> chain(acc, &close_editor(&1, group, path)) end)
   end
 
   @doc "The open editors' paths, in tab order."
   def tab_paths(wb), do: Enum.map(wb.tabs, & &1.path)
 
   @doc "The paths of `paths` whose editors have unsaved changes."
-  def dirty_paths(wb, paths), do: for(%{path: p, dirty: true} <- wb.tabs, p in paths, do: p)
+  def dirty_paths(wb, paths),
+    do: Enum.uniq(for(%{path: p, dirty: true} <- all_tabs(wb), p in paths, do: p))
 
   @doc """
   Puts the tabs in `order` (paths, e.g. after one was dragged); open
   editors it doesn't name keep their order, after the others.
   """
+  def reorder_tabs(wb, group, order), do: in_group(wb, group, &reorder_tabs(&1, order)) |> elem(0)
+
   def reorder_tabs(wb, order) when is_list(order) do
     index = order |> Enum.with_index() |> Map.new()
 
@@ -342,8 +641,10 @@ defmodule Bee.Workbench do
   @doc "Whether the active editor has something to undo / redo (reported by the browser)."
   def set_history(wb, can_undo, can_redo), do: %{wb | can_undo: can_undo, can_redo: can_redo}
 
+  # Every group's tab of `path`.
   defp update_tab(wb, path, fun) do
-    %{wb | tabs: Enum.map(wb.tabs, &if(&1.path == path, do: fun.(&1), else: &1))}
+    update = fn tabs -> Enum.map(tabs, &if(&1.path == path, do: fun.(&1), else: &1)) end
+    %{wb | tabs: update.(wb.tabs), others: Enum.map(wb.others, &%{&1 | tabs: update.(&1.tabs)})}
   end
 
   ## Layout
@@ -655,6 +956,7 @@ defmodule Bee.Workbench do
       "workspaceFolderCount" => 1,
       "isWorkspaceTrusted" => true,
       "editorIsOpen" => wb.tabs != [],
+      "multipleEditorGroups" => wb.others != [],
       "canUndo" => active != nil and wb.can_undo,
       "canRedo" => active != nil and wb.can_redo,
       "sideBarVisible" => wb.sidebar_open,

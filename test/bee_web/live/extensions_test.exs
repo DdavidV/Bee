@@ -125,13 +125,13 @@ defmodule BeeWeb.ExtensionsTest do
   test "the editor's right-click menu: Bee's items, the extension's, its submenu", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/")
     # No file shown: no menu of Bee's (the browser's shows).
-    refute has_element?(view, "#editor-area[data-menu]")
+    refute has_element?(view, "#editor-area-1[data-menu]")
 
     open_file(view, "notes.txt")
     path = Path.join(Bee.Workspace.root(), "notes.txt")
-    assert json_data(view, "#editor-area", "data-menu-args") == [path]
+    assert json_data(view, "#editor-area-1", "data-menu-args") == [path]
 
-    right_click(view, "#editor-area")
+    right_click(view, "#editor-area-1")
 
     # "navigation" first, then the groups by name; hello.shout needs a
     # selection, hello.pick another language, and the empty submenu isn't shown.
@@ -158,7 +158,7 @@ defmodule BeeWeb.ExtensionsTest do
     assert has_element?(view, "#context-menu [data-command='hello.sayHello']", "Ctrl+Alt+H")
 
     # With a selection (the editor's own keys come with the right-click).
-    right_click(view, "#editor-area", %{"editorHasSelection" => true})
+    right_click(view, "#editor-area-1", %{"editorHasSelection" => true})
     assert "hello.shout" in menu(view)
 
     # An item of a submenu runs like any other.
@@ -476,7 +476,7 @@ defmodule BeeWeb.ExtensionsTest do
     render_hook(view, "palette_pick", %{"index" => to_string(index)})
     assert_push_event(view, "cm:open", %{path: ^other}, 5_000)
     assert_push_event(view, "cm:reveal", %{path: ^other, from: 6, to: 6})
-    assert has_element?(view, "#tabs [data-path='#{other}'][data-active='true']")
+    assert has_element?(view, "[data-tabs] [data-path='#{other}'][data-active='true']")
   end
 
   @tag :node
@@ -606,7 +606,7 @@ defmodule BeeWeb.ExtensionsTest do
     view |> element("[data-reference='3']") |> render_click()
     assert_push_event(view, "cm:open", %{path: ^other}, 5_000)
     assert_push_event(view, "cm:reveal", %{path: ^other, from: 19, to: 19})
-    view |> element("#tabs [data-path='#{path}']") |> render_click()
+    view |> element("[data-tabs] [data-path='#{path}']") |> render_click()
 
     # Rename Symbol: asked for the new name, the old one filled in.
     render_hook(view, "language_rename", %{"path" => path, "position" => position.(2, 5)})
@@ -653,7 +653,7 @@ defmodule BeeWeb.ExtensionsTest do
     refute has_element?(view, "#palette [data-symbol='last']")
     render_hook(view, "palette_run", %{})
     assert_push_event(view, "cm:reveal", %{path: ^other, from: 4, to: 4})
-    assert has_element?(view, "#tabs [data-path='#{other}'][data-active='true']")
+    assert has_element?(view, "[data-tabs] [data-path='#{other}'][data-active='true']")
   end
 
   @tag :node
@@ -733,7 +733,11 @@ defmodule BeeWeb.ExtensionsTest do
 
     {:ok, view, _html} = live(conn, ~p"/")
     run(view, "helloWebview.open")
-    eventually(fn -> has_element?(view, "#tabs [data-path^='webview:'][data-active='true']") end)
+
+    eventually(fn ->
+      has_element?(view, "[data-tabs] [data-path^='webview:'][data-active='true']")
+    end)
+
     [panel] = Bee.Webviews.list(root)
     path = "webview:" <> panel.id
 
@@ -764,7 +768,7 @@ defmodule BeeWeb.ExtensionsTest do
       5_000
     )
 
-    eventually(fn -> has_element?(view, "#tabs [data-path='#{path}']", "Pong 2") end)
+    eventually(fn -> has_element?(view, "[data-tabs] [data-path='#{path}']", "Pong 2") end)
 
     # What its page keeps is there for the page loaded again.
     render_hook(view, "webview_state", %{"id" => id, "state" => %{"pings" => 2}})
@@ -774,7 +778,7 @@ defmodule BeeWeb.ExtensionsTest do
 
     # Another window of the workspace shows the panel too.
     {:ok, other, _html} = live(conn, ~p"/")
-    assert has_element?(other, "#tabs [data-path='#{path}']", "Pong 2")
+    assert has_element?(other, "[data-tabs] [data-path='#{path}']", "Pong 2")
 
     # Another tab: the frame stays, hidden; its extension is told.
     open_file(view, "notes.txt")
@@ -785,7 +789,7 @@ defmodule BeeWeb.ExtensionsTest do
     run(view, "workbench.action.closeEditor", [path])
     eventually(fn -> Bee.Webviews.list(root) == [] end)
     refute has_element?(view, "#webview-#{id}")
-    eventually(fn -> not has_element?(other, "#tabs [data-path='#{path}']") end)
+    eventually(fn -> not has_element?(other, "[data-tabs] [data-path='#{path}']") end)
     assert "webview disposed" in Bee.Extensions.Host.log(root)
 
     # An address for the user's browser.

@@ -38,24 +38,66 @@ defmodule Bee.Workbench.Actions do
   def close_active_editor(wb), do: close_editors(wb, [wb.active])
 
   @command "workbench.action.closeEditor"
-  def close_editor(wb, args), do: close_editors(wb, List.wrap(tab_path(wb, args)))
+  def close_editor(wb, args) do
+    wb = in_tab_group(wb, args)
+    Workbench.chain(wb, &close_editors(&1, List.wrap(tab_path(&1, args))))
+  end
 
   @command "workbench.action.closeOtherEditors"
   def close_other_editors(wb, args) do
+    {wb, effects} = in_tab_group(wb, args)
+
     case tab_path(wb, args) do
       nil ->
-        wb
+        {wb, effects}
 
       keep ->
-        wb
-        |> Workbench.activate_editor(keep)
-        |> Workbench.wrap()
+        {wb, effects}
+        |> Workbench.chain(&Workbench.activate_editor(&1, keep))
         |> Workbench.chain(&close_editors(&1, Workbench.tab_paths(&1) -- [keep]))
     end
   end
 
+  ## Editor groups
+
+  @command "workbench.action.splitEditor"
+  def split_editor(wb, args),
+    do: wb |> in_tab_group(args) |> Workbench.chain(&show_then(&1, args, :right))
+
+  @command "workbench.action.splitEditorDown"
+  def split_editor_down(wb, args),
+    do: wb |> in_tab_group(args) |> Workbench.chain(&show_then(&1, args, :down))
+
+  # The tab named by the arguments is shown, then its group split.
+  defp show_then(wb, args, direction) do
+    case tab_path(wb, args) do
+      nil ->
+        wb
+
+      path ->
+        wb
+        |> Workbench.activate_editor(path)
+        |> Workbench.wrap()
+        |> Workbench.chain(&Workbench.split(&1, direction))
+    end
+  end
+
+  @command "workbench.action.focusNextGroup"
+  def focus_next_group(wb), do: focus_group_by(wb, 1)
+
+  @command "workbench.action.focusPreviousGroup"
+  def focus_previous_group(wb), do: focus_group_by(wb, -1)
+
+  defp focus_group_by(wb, step) do
+    ids = Enum.map(Workbench.groups(wb), & &1.id)
+    index = Enum.find_index(ids, &(&1 == wb.group))
+    Workbench.focus_group(wb, Enum.at(ids, rem(index + step + length(ids), length(ids))))
+  end
+
   @command "workbench.action.closeAllEditors"
-  def close_all_editors(wb), do: close_editors(wb, Workbench.tab_paths(wb))
+  def close_all_editors(wb, args) do
+    wb |> in_tab_group(args) |> Workbench.chain(&close_editors(&1, Workbench.tab_paths(&1)))
+  end
 
   # Keep Open: the editor of `path` (a double click on its tab, or on the
   # file in the Explorer), or the active one, is no preview any more. A file
@@ -64,7 +106,7 @@ defmodule Bee.Workbench.Actions do
   def keep_editor(wb, [path | _]) when is_binary(path) do
     if Workbench.open?(wb, path),
       do: Workbench.keep_editor(wb, path),
-      else: Workbench.open_editor(wb, path)
+      else: Workbench.open_editor(wb, path, replace: true)
   end
 
   def keep_editor(%{active: nil} = wb, _args), do: wb
@@ -77,15 +119,23 @@ defmodule Bee.Workbench.Actions do
 
   def close_editors_confirmed(wb, _args), do: wb
 
-  # The tab named by the arguments, else the active one.
+  # The tab named by the arguments (in the focused group), else the active one.
   defp tab_path(wb, [path | _]) when is_binary(path),
-    do: if(Workbench.open?(wb, path), do: path)
+    do: if(Workbench.here?(wb, path), do: path)
 
   defp tab_path(wb, _args), do: wb.active
 
+  # A tab's commands name its group after its path (its ×, its menu): that
+  # group is the one meant, and focused. `{wb, effects}`.
+  defp in_tab_group(wb, [_path, group | _]) when is_integer(group),
+    do: wb |> Workbench.focus_group(group) |> Workbench.wrap()
+
+  defp in_tab_group(wb, _args), do: {wb, []}
+
   # Closes them, asking first when some have unsaved changes.
+  # (Not for a file another group still shows: nothing is lost.)
   defp close_editors(wb, paths) do
-    case Workbench.dirty_paths(wb, paths) do
+    case wb |> Workbench.dirty_paths(paths) |> Enum.reject(&Workbench.elsewhere?(wb, &1)) do
       [] ->
         Workbench.close_editors(wb, paths)
 

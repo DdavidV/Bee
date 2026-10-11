@@ -50,7 +50,7 @@
           changes: {from: before, insert: "# typed in the desktop window\n"},
           userEvent: "input.type",
         })
-        const dirty = await waitFor(() => document.querySelector("#tabs .rounded-full"), 5000)
+        const dirty = await waitFor(() => document.querySelector("[data-tabs] .rounded-full"), 5000)
         await check(dirty, `edit reached Bee: the tab shows unsaved changes (doc ${before} → ${view.state.doc.length} chars)`)
         // Bee's keybindings match on KeyboardEvent.code.
         key(content, "s", {ctrlKey: true, code: "KeyS"})
@@ -60,7 +60,7 @@
     }
 
     // Copy Path from the tab's right-click menu reaches the clipboard.
-    const tab = document.querySelector("#tabs [data-path$='/lib/a.ex']")
+    const tab = document.querySelector("[data-tabs] [data-path$='/lib/a.ex']")
     tab?.dispatchEvent(new MouseEvent("contextmenu", {bubbles: true, clientX: 50, clientY: 50}))
     const item = await waitFor(() => document.querySelector("#context-menu [data-command='copyFilePath']"))
     item?.click()
@@ -87,14 +87,14 @@
         try { reach = String(frame.contentWindow.document.title) } catch (_e) {}
         await check(reach === "blocked", "webview: its page is another origin (Bee's page can't read it, nor it Bee's)")
         // The extension posts "hello" as it opens; the page answers each ping.
-        const tabText = () => document.querySelector("#tabs [data-path^='webview:']")?.textContent.trim() ?? ""
+        const tabText = () => document.querySelector("[data-tabs] [data-path^='webview:']")?.textContent.trim() ?? ""
         await check(await waitFor(() => tabText().includes("Hello Webview"), 5000), "webview: a tab for the panel")
         command("helloWebview.nested")
-        const nested = await waitFor(() => [...document.querySelectorAll("#tabs [data-path^='webview:']")]
+        const nested = await waitFor(() => [...document.querySelectorAll("[data-tabs] [data-path^='webview:']")]
           .map(t => t.textContent.trim()).find(t => t.startsWith("Nested:")), 15000)
         await check(nested && nested.includes("pong from its own origin"),
           `webview: a frame of the extension's local server inside it works (${nested || "no answer"})`)
-        for (const close of document.querySelectorAll("#tabs [data-path^='webview:'] [data-close]")) close.click()
+        for (const close of document.querySelectorAll("[data-tabs] [data-path^='webview:'] [data-close]")) close.click()
       } else {
         await report(true, "webview: hello-webview isn't installed, skipped")
       }

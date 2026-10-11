@@ -139,9 +139,13 @@ defmodule BeeWeb.EditorLive do
       when is_binary(menu) and is_number(x) and is_number(y) do
     args = if is_list(params["args"]), do: params["args"], else: []
     context = if is_map(params["context"]), do: params["context"], else: %{}
+    # A tab's or an editor's menu: its group is the one its commands act on.
+    group = if is_integer(context["editorGroup"]), do: context["editorGroup"]
 
     {:noreply,
-     change(socket, &Workbench.open_context_menu(&1, menu, round(x), round(y), args, context))}
+     socket
+     |> then(&if(group, do: change(&1, fn wb -> Workbench.focus_group(wb, group) end), else: &1))
+     |> change(&Workbench.open_context_menu(&1, menu, round(x), round(y), args, context))}
   end
 
   def handle_event("close_context_menu", _params, socket),
@@ -408,8 +412,28 @@ defmodule BeeWeb.EditorLive do
 
   ## Editor
 
-  def handle_event("activate_tab", %{"path" => path}, socket),
-    do: {:noreply, change(socket, &Workbench.activate_editor(&1, path))}
+  def handle_event("activate_tab", %{"path" => path} = params, socket) do
+    group = int(params["group"]) || socket.assigns.group
+    {:noreply, change(socket, &Workbench.activate_editor(&1, group, path))}
+  end
+
+  # An editor group got the focus in the page (a click into its editor).
+  def handle_event("focus_group", %{"group" => group}, socket),
+    do: {:noreply, change(socket, &Workbench.focus_group(&1, int(group)))}
+
+  # A tab was dragged to another group (`to`), or to an edge of it (`zone`
+  # "right" or "down"): a new group there.
+  def handle_event("move_tab", %{"path" => path, "from" => from, "to" => to} = params, socket) do
+    zone =
+      case params["zone"] do
+        "right" -> :right
+        "down" -> :down
+        _ -> :center
+      end
+
+    index = if is_integer(params["index"]), do: params["index"]
+    {:noreply, change(socket, &Workbench.move_tab(&1, path, int(from), int(to), index, zone))}
+  end
 
   # A panel section's tab was dragged to another place: their container ids.
   def handle_event("reorder_panel", %{"order" => order}, socket) when is_list(order),
@@ -422,8 +446,10 @@ defmodule BeeWeb.EditorLive do
   end
 
   # A tab was dragged to another place: the tabs' new order (paths).
-  def handle_event("reorder_tabs", %{"order" => order}, socket) when is_list(order),
-    do: {:noreply, change(socket, &Workbench.reorder_tabs(&1, order))}
+  def handle_event("reorder_tabs", %{"order" => order} = params, socket) when is_list(order) do
+    group = int(params["group"]) || socket.assigns.group
+    {:noreply, change(socket, &Workbench.reorder_tabs(&1, group, order))}
+  end
 
   def handle_event("doc_changed", %{"path" => path, "text" => text}, socket) do
     if Workbench.open?(workbench(socket), path) do
@@ -850,7 +876,7 @@ defmodule BeeWeb.EditorLive do
   # file's editor is told what there is for it now.
   def handle_info(:language_features_changed, socket) do
     socket =
-      Enum.reduce(socket.assigns.tabs, socket, fn
+      Enum.reduce(open_tabs(socket), socket, fn
         %{kind: :file, path: path}, socket -> push_language_features(socket, path)
         _other, socket -> socket
       end)
@@ -998,6 +1024,10 @@ defmodule BeeWeb.EditorLive do
          root: a.root,
          active: a.active,
          tabs: Enum.map(a.tabs, &Map.take(&1, [:path, :dirty, :lang])),
+         groups:
+           for group <- Workbench.groups(workbench_from(a)) do
+             %{id: group.id, active: group.active, tabs: Enum.map(group.tabs, & &1.path)}
+           end,
          sidebar: if(a.sidebar_open, do: a.sidebar_view),
          panel: a.panel_open && Enum.map(a.terminals, & &1.name),
          palette: a.palette && Map.take(a.palette, [:mode, :query]),
@@ -1139,7 +1169,7 @@ defmodule BeeWeb.EditorLive do
     cached = socket.assigns[:extension_details] || %{}
 
     details =
-      for %{kind: :extension, name: name} <- socket.assigns.tabs, into: %{} do
+      for %{kind: :extension, name: name} <- open_tabs(socket), into: %{} do
         case {String.contains?(name, "."), Map.fetch(cached, name)} do
           {true, {:ok, details}} ->
             {name, details}
@@ -1175,6 +1205,10 @@ defmodule BeeWeb.EditorLive do
 
   defp run_effect({:open_file, path}, socket), do: open_buffer(socket, path)
   defp run_effect({:open_file, path, :preview}, socket), do: open_buffer(socket, path, nil, true)
+
+  defp run_effect({:open_file, path, :replace}, socket),
+    do: open_buffer(socket, path, nil, :replace)
+
   defp run_effect({:format, path, what}, socket), do: format(socket, path, what, false)
 
   defp run_effect({:webview_closed, id}, socket) do
@@ -1329,7 +1363,7 @@ defmodule BeeWeb.EditorLive do
   # editors would be dropped.
   defp run_effect({:open_folder, path, where}, socket) do
     root = Path.expand(path, socket.assigns.root)
-    dirty = for %{dirty: true, path: p} <- socket.assigns.tabs, do: Path.basename(p)
+    dirty = for %{dirty: true, path: p} <- open_tabs(socket), do: Path.basename(p)
     url = ~p"/?#{[folder: root]}"
 
     cond do
@@ -1464,7 +1498,10 @@ defmodule BeeWeb.EditorLive do
       |> change(&Workbench.editor_opened(&1, path, Buffer.dirty?(buffer), lang, preview?))
       |> push_event(
         "cm:open",
-        Map.merge(%{path: path, text: buffer.text, lang: lang}, highlight(lang))
+        Map.merge(
+          %{path: path, text: buffer.text, lang: lang, group: socket.assigns.group},
+          highlight(lang)
+        )
       )
       |> validate_json(path, buffer.text)
       |> push_language_diagnostics(path)
@@ -1489,35 +1526,56 @@ defmodule BeeWeb.EditorLive do
   defp files_moved(socket, pairs) do
     Enum.reduce(pairs, socket, fn {from, to}, socket ->
       moved =
-        for %{path: path} = tab <- socket.assigns.tabs, under?(path, from) do
+        for %{path: path} = tab <- open_tabs(socket), under?(path, from) do
           {tab, to <> String.replace_prefix(path, from, "")}
         end
 
-      Enum.reduce(moved, socket, fn {tab, new_path}, socket ->
-        active? = socket.assigns.active == tab.path
-        text = if tab.dirty, do: Buffer.get(tab.path).text
-
-        socket
-        |> change(&Workbench.close_editor(&1, tab.path))
-        |> open_buffer(new_path, text)
-        |> then(
-          &if(active?,
-            do: change(&1, fn wb -> Workbench.activate_editor(wb, new_path) end),
-            else: &1
-          )
-        )
-      end)
+      Enum.reduce(moved, socket, &file_moved/2)
     end)
+  end
+
+  # In every group that showed it.
+  defp file_moved({tab, new_path}, socket) do
+    wb = workbench(socket)
+    focused = wb.group
+    text = if tab.dirty, do: Buffer.get(tab.path).text
+
+    holders =
+      for group <- Workbench.groups(wb), Enum.any?(group.tabs, &(&1.path == tab.path)) do
+        {group.id, group.active}
+      end
+
+    socket = change(socket, &Workbench.close_everywhere(&1, tab.path))
+
+    holders
+    |> Enum.reduce(socket, fn {group, active}, socket ->
+      # (A group whose only editor it was went with it: the focused one, then.)
+      socket
+      |> change(&Workbench.focus_group(&1, group))
+      |> open_buffer(new_path, text)
+      |> then(
+        &if(active not in [tab.path, nil],
+          do: change(&1, fn wb -> Workbench.activate_editor(wb, active) end),
+          else: &1
+        )
+      )
+    end)
+    |> change(&Workbench.focus_group(&1, focused))
   end
 
   # Tabs of deleted files close (their buffers had nothing left to save to).
   defp files_deleted(socket, path) do
-    socket.assigns.tabs
+    socket
+    |> open_tabs()
     |> Enum.filter(&under?(&1.path, path))
     |> Enum.reduce(socket, fn tab, socket ->
-      change(socket, &Workbench.close_editor(&1, tab.path))
+      change(socket, &Workbench.close_everywhere(&1, tab.path))
     end)
   end
+
+  # Every group's tabs, one per editor (a file open in two groups: once).
+  defp open_tabs(socket),
+    do: socket |> workbench() |> Workbench.all_tabs() |> Enum.uniq_by(& &1.path)
 
   defp under?(path, dir), do: path == dir or String.starts_with?(path, dir <> "/")
 
@@ -1673,6 +1731,7 @@ defmodule BeeWeb.EditorLive do
 
   defp plugin_request(socket, _unknown), do: socket
 
+  defp int(nil), do: nil
   defp int(value) when is_integer(value), do: value
   defp int(value) when is_binary(value), do: String.to_integer(value)
 
@@ -1898,7 +1957,7 @@ defmodule BeeWeb.EditorLive do
 
   # Language contributions or files.associations changed: re-detect open tabs.
   defp redetect_languages(socket) do
-    Enum.reduce(socket.assigns.tabs, socket, fn
+    Enum.reduce(open_tabs(socket), socket, fn
       %{kind: :file, path: path, lang: old}, socket ->
         text =
           try do
@@ -2497,13 +2556,20 @@ defmodule BeeWeb.EditorLive do
   # Tells the extensions which of their panels is shown now.
   defp sync_webviews(socket, before) do
     wb = workbench(socket)
+    # The panels shown: each group's active editor, when it is one.
+    shown = fn wb ->
+      for group <- Workbench.groups(wb),
+          %{kind: :webview, webview: id, path: path} <- group.tabs,
+          path == group.active,
+          into: MapSet.new(),
+          do: id
+    end
 
-    if before.active != wb.active do
-      for %{kind: :webview, webview: id, path: path} <- wb.tabs,
-          path in [before.active, wb.active] do
-        active? = path == wb.active
-        Bee.Extensions.Host.webview(socket.assigns.root, id, {:state, active?, active?})
-      end
+    {was, is} = {shown.(before), shown.(wb)}
+
+    for id <- MapSet.union(was, is), MapSet.member?(was, id) != MapSet.member?(is, id) do
+      active? = MapSet.member?(is, id)
+      Bee.Extensions.Host.webview(socket.assigns.root, id, {:state, active?, active?})
     end
 
     socket
@@ -3056,7 +3122,7 @@ defmodule BeeWeb.EditorLive do
 
   # Schemas changed: every open JSON file again.
   defp validate_open_json(socket) do
-    Enum.reduce(socket.assigns.tabs, socket, fn
+    Enum.reduce(open_tabs(socket), socket, fn
       %{kind: :file, path: path}, socket ->
         case Buffer.get(path) do
           %{text: text} -> validate_json(socket, path, text)
@@ -3120,8 +3186,12 @@ defmodule BeeWeb.EditorLive do
 
   @doc false
   # `when` keys of a tab's right-click menu (editor/title/context).
-  def tab_menu_context(%{kind: :file, path: path} = tab) do
+  def tab_menu_context(tab, group \\ nil)
+
+  def tab_menu_context(%{kind: :file, path: path} = tab, group) do
     %{
+      # (A right-click acts on the tab's group: it is focused first.)
+      "editorGroup" => group,
       "resourceScheme" => "file",
       "resourcePath" => path,
       "resourceFilename" => Path.basename(path),
@@ -3131,8 +3201,240 @@ defmodule BeeWeb.EditorLive do
     }
   end
 
-  def tab_menu_context(_tab),
-    do: %{"resourceScheme" => "extension", "activeEditorIsNotPreview" => true}
+  def tab_menu_context(_tab, group) do
+    %{
+      "editorGroup" => group,
+      "resourceScheme" => "extension",
+      "activeEditorIsNotPreview" => true
+    }
+  end
+
+  ## The editor groups
+
+  attr :node, :any, required: true, doc: "a node of the workbench's layout"
+  attr :a, :map, required: true, doc: "the window's assigns"
+
+  # A group, or groups side by side (a row) or one above the other (a column).
+  defp editor_node(%{node: {:leaf, id}} = assigns) do
+    assigns = assign(assigns, :group, Workbench.group(workbench_from(assigns.a), id))
+
+    ~H"""
+    <.editor_group group={@group} a={@a} />
+    """
+  end
+
+  defp editor_node(%{node: {axis, nodes}} = assigns) do
+    assigns = assign(assigns, axis: axis, nodes: nodes)
+
+    ~H"""
+    <div
+      data-split={@axis}
+      class={["editor-split flex flex-1 min-w-0 min-h-0", @axis == :col && "flex-col"]}
+    >
+      <.editor_node :for={node <- @nodes} node={node} a={@a} />
+    </div>
+    """
+  end
+
+  attr :group, :map, required: true, doc: "`%{id, tabs, active}`"
+  attr :a, :map, required: true
+
+  # One group: its tabs, and what its active one shows – a file in the
+  # group's pane (CodeMirror's, the CodeEditor hook), or another kind of editor.
+  defp editor_group(assigns) do
+    assigns =
+      assign(assigns,
+        focused: assigns.group.id == assigns.a.group,
+        file:
+          Enum.find_value(assigns.group.tabs, fn tab ->
+            (tab.kind == :file and tab.path == assigns.group.active) && tab.path
+          end)
+      )
+
+    ~H"""
+    <section
+      id={"group-#{@group.id}"}
+      data-group={@group.id}
+      data-focused={to_string(@focused)}
+      class="editor-group flex-1 min-w-0 min-h-0 flex flex-col relative"
+    >
+      <div class="flex bg-tabs shrink-0">
+        <%!-- Tabs: dragged to reorder, or to another group; middle-clicked to
+             close (the Tabs hook); right-clicked for the editor/title/context menu. --%>
+        <div
+          id={"tabs-#{@group.id}"}
+          data-tabs
+          data-group={@group.id}
+          phx-hook="Tabs"
+          class="flex flex-1 min-w-0 overflow-x-auto text-sm"
+        >
+          <div
+            :for={tab <- @group.tabs}
+            id={"tab-#{@group.id}-#{:erlang.phash2(tab.path)}"}
+            data-tab
+            data-path={tab.path}
+            data-active={to_string(tab.path == @group.active)}
+            data-dirty={tab.dirty && "true"}
+            data-preview={Workbench.preview?(tab) && "true"}
+            data-keep={tab.path}
+            data-menu="editor/title/context"
+            data-menu-args={Jason.encode!([tab.path])}
+            data-menu-context={Jason.encode!(tab_menu_context(tab, @group.id))}
+            class={[
+              "group flex items-center gap-1 pl-3 pr-1 py-1.5 border-r border-tab-border cursor-pointer whitespace-nowrap",
+              if(tab.path == @group.active,
+                do: "bg-tab-active text-tab-active-fg",
+                else:
+                  "bg-tab-inactive text-tab-inactive-fg hover:text-tab-active-fg hover:bg-base-content/5"
+              ),
+              (tab.path == @group.active and not @focused) && "opacity-70"
+            ]}
+            phx-click="activate_tab"
+            phx-value-path={tab.path}
+            phx-value-group={@group.id}
+            title={
+              if tab.kind == :file,
+                do: Bee.Workspace.FS.relative(@a.root, tab.path),
+                else: tab_label(tab, @a.extension_details)
+            }
+          >
+            <BeeWeb.Workbench.FileIcon.file_icon
+              :if={@a.icon_theme && tab.kind == :file}
+              theme={@a.icon_theme}
+              path={tab.path}
+              language={tab.lang}
+            />
+            <.icon
+              :if={tab.kind == :extension}
+              name="hero-puzzle-piece"
+              class="size-4 shrink-0 opacity-70"
+            />
+            <.icon
+              :if={tab.kind in [:live, :webview]}
+              name="hero-window"
+              class="size-4 shrink-0 opacity-70"
+            />
+            <span class={[
+              tab.kind == :file && tab_color(@a.file_decorations, @a.root, tab.path),
+              (tab.kind == :extension or Workbench.preview?(tab)) && "italic"
+            ]}>
+              {tab_label(tab, @a.extension_details)}
+            </span>
+            <button
+              class="size-5 grid place-items-center rounded cursor-pointer hover:bg-base-content/10"
+              title="Close"
+              data-close
+              phx-click="run_command"
+              phx-value-command="workbench.action.closeEditor"
+              phx-value-args={Jason.encode!([tab.path, @group.id])}
+            >
+              <span :if={tab.dirty} class="size-2 rounded-full bg-current group-hover:hidden" />
+              <.icon
+                name="hero-x-mark-mini"
+                class={["size-4", tab.dirty && "hidden group-hover:block"]}
+              />
+            </button>
+          </div>
+        </div>
+        <%!-- Editor actions: the "editor/title" menu (undo/redo, plugins'
+             buttons), for the focused group's editor. --%>
+        <BeeWeb.Workbench.Toolbar.toolbar
+          :if={@focused}
+          id="editor-actions"
+          actions={toolbar(@a, "editor/title")}
+          class="px-1"
+        />
+      </div>
+
+      <%!-- Right-clicking a file's text: the editor/context menu. --%>
+      <div
+        id={"editor-area-#{@group.id}"}
+        class="flex-1 min-h-0 relative"
+        data-editor-area
+        data-menu={@file && "editor/context"}
+        data-menu-args={Jason.encode!(List.wrap(@file))}
+        data-menu-context={Jason.encode!(%{"editorGroup" => @group.id})}
+      >
+        <div
+          id={"editor-pane-#{@group.id}"}
+          phx-update="ignore"
+          data-editor-pane={@group.id}
+          class="absolute inset-0"
+        >
+        </div>
+        <%!-- A plugin's details, over the (emptied) editor --%>
+        <div
+          :for={tab <- @group.tabs}
+          :if={tab.kind == :extension and tab.path == @group.active}
+          class="absolute inset-0"
+        >
+          <BeeWeb.Workbench.ExtensionEditor.extension_editor
+            name={tab.name}
+            details={@a.extension_details[tab.name]}
+            installed={@a.marketplace_installed}
+            installing={@a.marketplace.installing}
+          />
+        </div>
+        <%!-- Editors plugins draw themselves (LiveViews): each stays mounted
+             while its tab is open, shown when it is the active one. --%>
+        <div
+          :for={tab <- @group.tabs}
+          :if={tab.kind == :live}
+          id={"live-editor-#{:erlang.phash2(tab.path)}"}
+          data-live-editor={tab.editor}
+          class={[
+            "absolute inset-0 overflow-auto bg-editor text-editor-fg",
+            tab.path != @group.active && "hidden"
+          ]}
+        >
+          <BeeWeb.Workbench.PluginLive.plugin_live
+            socket={@a.socket}
+            state={@a.live[{:editor, tab.editor}]}
+            kind="editor"
+            id={tab.editor}
+            key={tab.key}
+            root={@a.root}
+            params={tab.params}
+          />
+        </div>
+        <%!-- Webview panels of extensions: each frame stays while its tab is open. --%>
+        <BeeWeb.Workbench.Webview.webview
+          :for={tab <- @group.tabs}
+          :if={tab.kind == :webview and @a.webviews[tab.webview]}
+          panel={@a.webviews[tab.webview]}
+          theme={@a.color_theme.id}
+          active={tab.path == @group.active}
+          origin={@a.webview_origin}
+        />
+        <div
+          :if={@group.tabs == []}
+          class="absolute inset-0 grid place-items-center bg-editor text-editor-fg text-sm"
+        >
+          <div class="text-center space-y-1 opacity-40">
+            <BeeWeb.Logo.logo class="size-12 mx-auto mb-2" />
+            <div>Open a file from the explorer</div>
+            <div :for={
+              {label, command} <- [
+                {"Show All Commands", "workbench.action.showCommands"},
+                {"Go to File", "workbench.action.quickOpen"},
+                {"Toggle Terminal", "workbench.action.togglePanel"},
+                {"Open Settings", "workbench.action.openSettingsJson"}
+              ]
+            }>
+              {label}
+              <kbd
+                :if={key = Bee.Commands.Keybindings.label(command, @a.keybindings)}
+                class="kbd kbd-xs ml-1"
+              >
+                {key}
+              </kbd>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+    """
+  end
 
   # A tab's name: the file's, or "Extension: <plugin>".
   defp tab_label(%{kind: :file, path: path}, _details), do: Path.basename(path)

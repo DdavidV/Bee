@@ -16,7 +16,7 @@ const parts = {
   sidebar: ["#sidebar", "sideBar.background"],
   activityBar: ["#activity-bar", "activityBar.background"],
   statusBar: ["#workbench > footer", "statusBar.background"],
-  activeTab: ["#tabs [data-tab]", "tab.activeBackground"],
+  activeTab: ["[data-tabs] [data-tab]", "tab.activeBackground"],
   panel: ["#panel", "panel.background"],
   terminal: ["#panel .xterm-scrollable-element", "terminal.background"],
 }

@@ -103,10 +103,10 @@ test("View: Close All and Close Others", async ({page}) => {
     await paletteItems(page).filter({hasText: title}).first().click()
   }
   await run("View: Close Others")
-  await expect(page.locator("#tabs [data-tab]")).toHaveCount(1)
-  await expect(page.locator("#tabs")).toContainText("b.ex")
+  await expect(page.locator("[data-tabs] [data-tab]")).toHaveCount(1)
+  await expect(page.locator("[data-tabs]")).toContainText("b.ex")
   await run("View: Close All")
-  await expect(page.locator("#tabs [data-tab]")).toHaveCount(0)
+  await expect(page.locator("[data-tabs] [data-tab]")).toHaveCount(0)
 })
 
 test("Quick Open remembers the files opened, most recent first, across windows", async ({page, context}) => {
@@ -121,5 +121,5 @@ test("Quick Open remembers the files opened, most recent first, across windows",
   await expect(files.first()).toContainText("one.txt")
   await expect(files.nth(1)).toContainText("two.txt")
   await files.first().click()
-  await expect(other.locator("#tabs")).toContainText("one.txt")
+  await expect(other.locator("[data-tabs]")).toContainText("one.txt")
 })

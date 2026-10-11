@@ -12,7 +12,7 @@ test("plugin details in an editor tab", async ({page}) => {
   await page.click("#view-extensions")
   await page.click("#plugin-test-theme")
 
-  const tab = page.locator("#tabs [data-path='extension:test-theme']")
+  const tab = page.locator("[data-tabs] [data-path='extension:test-theme']")
   await expect(tab).toHaveText(/Extension: test-theme/)
   await expect(tab).toHaveAttribute("data-active", "true")
 
@@ -40,9 +40,9 @@ test("plugin details in an editor tab", async ({page}) => {
   // Typing here doesn't edit the file behind the page.
   await page.click("#extension-test-theme h1")
   await page.keyboard.type("xyz")
-  await page.click("#tabs [data-path$='/one.txt']")
+  await page.click("[data-tabs] [data-path$='/one.txt']")
   await expect(page.locator(".cm-content")).toHaveText("one")
-  await expect(page.locator("#tabs [data-path$='/one.txt']")).not.toHaveAttribute("data-dirty", "true")
+  await expect(page.locator("[data-tabs] [data-path$='/one.txt']")).not.toHaveAttribute("data-dirty", "true")
 
   // And back: the page again; closed with its tab's x.
   await tab.click()

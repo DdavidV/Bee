@@ -87,7 +87,7 @@ test("a workspace edit of the extension's: open files in the editor, as one undo
   await expect(line).toHaveText("this is GOOD here")
   await expect(page.locator("#editor .cm-lintRange-error")).toHaveCount(0)
   // Unsaved, and undone like any edit.
-  await expect(page.locator("#tabs [data-path$='/sample.hl']")).toHaveAttribute("data-dirty", "true")
+  await expect(page.locator("[data-tabs] [data-path$='/sample.hl']")).toHaveAttribute("data-dirty", "true")
   await line.click()
   await page.keyboard.press("Control+z")
   await expect(line).toHaveText("this is BAD here")
@@ -186,13 +186,13 @@ test("go to definition: F12 and Ctrl+click, in this file or another; Alt+click a
   await page.keyboard.press("F12")
   await expect(page.locator("#palette-input")).toHaveAttribute("placeholder", "Go to definition")
   await page.locator("#palette-items li", {hasText: "other.hl:3"}).click()
-  await expect(page.locator("#tabs [data-path$='/other.hl']")).toHaveAttribute("data-active", "true")
+  await expect(page.locator("[data-tabs] [data-path$='/other.hl']")).toHaveAttribute("data-active", "true")
   await expect(page.locator("#editor .cm-activeLine")).toHaveText("def twice")
   await page.keyboard.type("Y")
   await expect(lines.nth(2)).toHaveText("def Ytwice")
 
   // The right-click menu has it too.
-  await page.locator("#tabs [data-path$='/sample.hl']").click()
+  await page.locator("[data-tabs] [data-path$='/sample.hl']").click()
   await lines.nth(1).click({button: "right"})
   await expect(page.locator("#context-menu")).toContainText("Go to Definition")
   await page.keyboard.press("Escape")
@@ -283,7 +283,7 @@ test("formatting: Format Document as one undo step, Format Selection, and on sav
   await page.keyboard.press("Control+s")
   await expect.poll(() => text(page)).toBe("one two more\nthree four\nfive six\n")
   await expect.poll(() => readFileSync(sample, "utf8")).toBe("one two more\nthree four\nfive six\n")
-  await expect(page.locator("#tabs [data-path$='/sample.hl']")).not.toHaveAttribute("data-dirty", "true")
+  await expect(page.locator("[data-tabs] [data-path$='/sample.hl']")).not.toHaveAttribute("data-dirty", "true")
   rmSync(settings, {force: true})
 })
 
@@ -340,14 +340,14 @@ test("references, highlights and rename: every place a symbol is, in this file a
   await expect(page.locator("#references [data-reference] mark")).toHaveText(["once", "once", "once", "once"])
   // A row: its file, at the place.
   await page.locator("#references [data-reference-file$='/other.hl'] [data-reference]").click()
-  await expect(page.locator("#tabs [data-path$='/other.hl']")).toHaveAttribute("data-active", "true")
+  await expect(page.locator("[data-tabs] [data-path$='/other.hl']")).toHaveAttribute("data-active", "true")
   await page.keyboard.type("X")
   await expect.poll(() => text(page)).toBe("also Xonce\n")
   await page.keyboard.press("Backspace")
   await page.keyboard.press("Control+j")
 
   // Rename Symbol (F2): the old name to type over; both files change.
-  await page.locator("#tabs [data-path$='/sample.hl']").click()
+  await page.locator("[data-tabs] [data-path$='/sample.hl']").click()
   await lines.first().click()
   await page.keyboard.press("End")
   await page.keyboard.press("F2")
@@ -360,7 +360,7 @@ test("references, highlights and rename: every place a symbol is, in this file a
   await lines.first().click()
   await page.keyboard.press("Control+z")
   await expect.poll(() => text(page)).toBe("def once\nuses once and once\ndef last\n")
-  await page.locator("#tabs [data-path$='/other.hl']").click()
+  await page.locator("[data-tabs] [data-path$='/other.hl']").click()
   await expect.poll(() => text(page)).toBe("also twice\n")
 })
 
@@ -388,7 +388,7 @@ test("go to symbol: the file's outline with @, the workspace's with #", async ({
   await page.keyboard.type("#else")
   await expect(symbols).toHaveText([/elsewhere\s*function · other\.hl\s*other\.hl:2/])
   await page.keyboard.press("Enter")
-  await expect(page.locator("#tabs [data-path$='/other.hl']")).toHaveAttribute("data-active", "true")
+  await expect(page.locator("[data-tabs] [data-path$='/other.hl']")).toHaveAttribute("data-active", "true")
   await expect(page.locator("#editor .cm-activeLine")).toHaveText("def elsewhere")
 })
 

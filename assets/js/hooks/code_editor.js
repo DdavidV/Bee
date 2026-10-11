@@ -1,8 +1,17 @@
 // CodeMirror editor for EditorLive.
 //
-// One EditorView is shared by all tabs; each open file keeps its own
-// EditorState (document, selection, undo history) in `this.states`, and
-// switching tabs swaps the state into the view.
+// The editor area is one group, or split into several (Bee.Workbench,
+// "Editor groups"): the server renders each group's pane
+// ([data-editor-pane]), and each has an EditorView of its own here
+// (`this.groups`), shared by the group's tabs – each open file keeps its
+// own EditorState (document, selection, undo history) in the group's
+// `states`, and switching tabs swaps the state into the view.
+//
+// One group is focused (`this.focused`): `this.view`, `this.active` (the
+// file it shows) and `this.states` are that group's, and commands, language
+// features and the selection sent to the server are about it. A file can
+// be open in several groups: what is typed in one is applied to the others
+// as it is typed (`mirror`), so they always show the same text.
 //
 // Settings arrive in data-settings (editor.* and the color theme) and are
 // applied through compartments to the active and all inactive states.
@@ -38,7 +47,7 @@
 // A `bee:flush` window event sends pending changes and selections at once
 // (the Keybindings hook fires it before running a command).
 
-import {EditorState, Compartment, Prec} from "@codemirror/state"
+import {EditorState, Compartment, Prec, Annotation, Transaction} from "@codemirror/state"
 import {
   EditorView, keymap, lineNumbers, highlightActiveLineGutter, highlightSpecialChars,
   drawSelection, dropCursor, rectangularSelection, crosshairCursor, highlightActiveLine,
@@ -114,6 +123,11 @@ const compartments = {
   lineNumbers: new Compartment(),
 }
 
+// On a change that didn't come from typing in this editor: "mirror" (the
+// same file's editor in another group changed) or "server" (an edit made
+// on the server, a file reloaded). Such changes aren't mirrored again.
+const remote = Annotation.define()
+
 // Per state: the file's highlighting mode.
 const languageCompartment = new Compartment()
 // Shared by all states: extensions of browser plugins.
@@ -188,8 +202,18 @@ const settingExtensions = s => ({
 
 export const CodeEditor = {
   mounted() {
-    this.states = new Map() // path -> EditorState of inactive tabs
-    this.active = null
+    // id -> {id, el, view, active, states}: `active` is the file shown,
+    // `states` path -> EditorState of the group's inactive tabs.
+    this.groups = new Map()
+    this.focused = Number(this.el.dataset.group)
+    this.serverGroup = this.focused
+    Object.defineProperty(this, "view", {configurable: true, get: () => this.cur().view})
+    Object.defineProperty(this, "active", {
+      configurable: true,
+      get: () => this.cur().active,
+      set: path => (this.cur().active = path),
+    })
+    Object.defineProperty(this, "states", {configurable: true, get: () => this.cur().states})
     this.timers = new Map() // path -> throttle timer
     this.pending = new Set() // paths with changes not yet sent
     this.modes = new Map() // path -> {mode, scope, config, snippets}
@@ -199,14 +223,22 @@ export const CodeEditor = {
     setSnippetRoot(this.el.dataset.root)
     setJsonRequester((kind, state, pos) => this.jsonRequest(kind, state, pos))
 
-    this.view = new EditorView({parent: this.el, state: EditorState.create()})
+    this.syncGroups()
+    // A press in a group: it is the focused one. (Not whenever the focus
+    // lands in one: the palette, closing, gives it back to where it was,
+    // which may be a group a command has just left.)
+    this.el.addEventListener("mousedown", e => {
+      const group = e.target.closest?.("section[data-group]")
+      if (group) this.userFocus(Number(group.dataset.group))
+    })
 
-    this.handleEvent("cm:open", ({path, text, mode, scope, config, snippets, json}) =>
-      this.open(path, text, {mode, scope, config, snippets, json}),
+    this.handleEvent("cm:open", ({group, path, text, mode, scope, config, snippets, json}) =>
+      this.open(this.groupOf(group), path, text, {mode, scope, config, snippets, json}),
     )
-    this.handleEvent("cm:activate", ({path}) => this.activate(path))
-    this.handleEvent("cm:deactivate", () => this.deactivate())
-    this.handleEvent("cm:close", ({path}) => this.close(path))
+    this.handleEvent("cm:activate", ({group, path}) => this.activate(this.groupOf(group), path))
+    this.handleEvent("cm:deactivate", ({group}) => this.deactivate(this.groupOf(group)))
+    this.handleEvent("cm:close", ({group, path}) => this.close(this.groupOf(group), path))
+    this.handleEvent("cm:focus", ({group}) => this.serverFocus(group))
     this.handleEvent("cm:reload", ({path, text}) => this.reload(path, text))
     this.handleEvent("cm:language", ({path, mode, scope, config, snippets, json}) =>
       this.setMode(path, {mode, scope, config, snippets, json}),
@@ -282,18 +314,17 @@ export const CodeEditor = {
     })
     // Grammars or token colors changed: the shown file highlights again
     // (the others when shown).
-    this.offTextMateChange = onTextMateChange(() => this.view.dispatch({}))
-    this.offExtensionsChange = onExtensionsChange(() => {
-      const effects = pluginCompartment.reconfigure(pluginExtensions())
-      this.view.dispatch({effects})
-      for (const [path, state] of this.states) this.states.set(path, state.update({effects}).state)
-    })
+    this.offTextMateChange = onTextMateChange(() => this.groups.forEach(g => g.view.dispatch({})))
+    this.offExtensionsChange = onExtensionsChange(() =>
+      this.everywhere({effects: pluginCompartment.reconfigure(pluginExtensions())}),
+    )
     this.onFlush = () => this.flushAll()
     window.addEventListener("bee:flush", this.onFlush)
   },
 
   // LiveView patches data-settings even though the content is ignored.
   updated() {
+    this.syncGroups()
     this.readTextMate()
     const settings = this.readSettings()
     if (JSON.stringify(settings) !== JSON.stringify(this.settings)) this.configure(settings)
@@ -321,7 +352,109 @@ export const CodeEditor = {
     window.removeEventListener("bee:flush", this.onFlush)
     clearTimeout(this.selectionTimer)
     this.timers.forEach(clearTimeout)
-    this.view.destroy()
+    this.groups.forEach(g => g.view.destroy())
+  },
+
+  // ---- Groups
+
+  // The focused group.
+  cur() {
+    return this.groups.get(this.focused) || this.groups.values().next().value
+  },
+
+  // Group `id` (the focused one without an id); null when it is gone.
+  groupOf(id) {
+    if (id == null) return this.cur()
+    if (!this.groups.has(id)) this.syncGroups()
+    return this.groups.get(id) || null
+  },
+
+  // An editor for every pane the server rendered, none for those gone;
+  // the focus where the server says, when it says something new.
+  syncGroups() {
+    const panes = new Map(
+      [...this.el.querySelectorAll("[data-editor-pane]")].map(el => [Number(el.dataset.editorPane), el]),
+    )
+    for (const [id, el] of panes) {
+      const group = this.groups.get(id)
+      if (!group) {
+        const view = new EditorView({parent: el, state: EditorState.create()})
+        this.groups.set(id, {id, el, view, active: null, states: new Map()})
+      } else if (group.el !== el) {
+        // (The pane was rendered anew: its editor moves in.)
+        el.appendChild(group.view.dom)
+        group.el = el
+      }
+    }
+    for (const [id, group] of this.groups) {
+      if (panes.has(id)) continue
+      const paths = [group.active, ...group.states.keys()].filter(Boolean)
+      group.view.destroy()
+      this.groups.delete(id)
+      paths.forEach(path => this.forget(path))
+    }
+    const server = Number(this.el.dataset.group)
+    if (server !== this.serverGroup) {
+      this.serverGroup = server
+      if (this.groups.has(server)) this.focused = server
+    }
+    if (!this.groups.has(this.focused)) this.focused = this.groups.keys().next().value
+  },
+
+  // The user went into group `id`: the server hears of it.
+  userFocus(id) {
+    if (id === this.focused || !this.groups.has(id)) return
+    this.flushAll()
+    this.focused = id
+    this.pushEvent("focus_group", {group: id})
+    this.pushSelection()
+    this.historyChanged()
+  },
+
+  // The server focused group `id` (a command, a file opened in it).
+  serverFocus(id) {
+    if (!this.groups.has(id)) this.syncGroups()
+    if (!this.groups.has(id)) return
+    this.focused = id
+    this.serverGroup = id
+    const group = this.cur()
+    if (group.active) group.view.focus()
+    this.selectionChanged()
+    this.historyChanged()
+  },
+
+  // `spec` for every state there is (settings, plugins' extensions).
+  everywhere(spec) {
+    for (const group of this.groups.values()) {
+      group.view.dispatch(spec)
+      for (const [path, state] of group.states) group.states.set(path, state.update(spec).state)
+    }
+  },
+
+  // What was typed into `path` in `group`: the same change for the file's
+  // editors in the other groups (not part of their undo history).
+  mirror(group, path, transaction) {
+    const spec = {
+      changes: transaction.changes,
+      annotations: [remote.of("mirror"), Transaction.addToHistory.of(false)],
+    }
+    for (const other of this.groups.values()) {
+      if (other === group) continue
+      if (other.active === path) other.view.dispatch(spec)
+      else if (other.states.has(path)) other.states.set(path, other.states.get(path).update(spec).state)
+    }
+  },
+
+  // No group has `path` any more: what was kept about it goes.
+  forget(path) {
+    if (this.stateOf(path)) return
+    clearTimeout(this.timers.get(path))
+    this.timers.delete(path)
+    this.pending.delete(path)
+    this.modes.delete(path)
+    this.jsonDiagnostics.delete(path)
+    this.languageDiagnostics.delete(path)
+    this.languageFeatures.delete(path)
   },
 
   readSettings() {
@@ -331,12 +464,11 @@ export const CodeEditor = {
   configure(settings) {
     this.settings = settings
     const exts = settingExtensions(settings)
-    const effects = Object.entries(compartments).map(([name, c]) => c.reconfigure(exts[name]))
-    this.view.dispatch({effects})
-    for (const [path, state] of this.states) this.states.set(path, state.update({effects}).state)
+    this.everywhere({effects: Object.entries(compartments).map(([name, c]) => c.reconfigure(exts[name]))})
   },
 
-  createState(path, text, highlight) {
+  // `text`: a string, or another state's document.
+  createState(group, path, text, highlight) {
     const exts = settingExtensions(this.settings)
     return EditorState.create({
       doc: text,
@@ -351,7 +483,13 @@ export const CodeEditor = {
         // text before it hears of what was clicked.
         EditorView.domEventHandlers({blur: () => void this.flushAll()}),
         EditorView.updateListener.of(update => {
-          if (update.docChanged) this.changed(path)
+          if (update.docChanged) {
+            for (const tr of update.transactions) {
+              if (tr.docChanged && !tr.annotation(remote)) this.mirror(group, path, tr)
+            }
+            if (update.transactions.some(tr => tr.docChanged && tr.annotation(remote) !== "mirror")) this.changed(path)
+          }
+          if (group.id !== this.focused) return
           if (update.transactions.length) this.historyChanged()
           if (update.docChanged || update.selectionSet) this.selectionChanged()
         }),
@@ -441,12 +579,12 @@ export const CodeEditor = {
     this.pushEvent("history_changed", history)
   },
 
-  // Applies `spec` to the state of `path`, whether shown or not.
+  // Applies `spec` to the states of `path` (one in every group that has
+  // the file), whether shown or not.
   updateState(path, spec) {
-    if (path === this.active) {
-      this.view.dispatch(spec)
-    } else if (this.states.has(path)) {
-      this.states.set(path, this.states.get(path).update(spec).state)
+    for (const group of this.groups.values()) {
+      if (group.active === path) group.view.dispatch(spec)
+      else if (group.states.has(path)) group.states.set(path, group.states.get(path).update(spec).state)
     }
   },
 
@@ -460,67 +598,74 @@ export const CodeEditor = {
     this.updateState(path, {effects: languageCompartment.reconfigure(highlighting(highlight))})
   },
 
+  // A state of `path`: the focused group's when it has the file (they all
+  // have the same text).
   stateOf(path) {
-    return path === this.active ? this.view.state : this.states.get(path)
+    for (const group of [this.cur(), ...this.groups.values()]) {
+      if (!group) continue
+      if (group.active === path) return group.view.state
+      if (group.states.has(path)) return group.states.get(path)
+    }
   },
 
-  open(path, text, highlight) {
-    // Always start from the server's text, even if we had a stale state.
-    const state = this.createState(path, text, highlight)
+  open(group, path, text, highlight) {
+    if (!group) return
+    // Another group's editor of the file has its text as it is now; else
+    // always start from the server's, even if we had a stale state.
+    const sibling = [...this.groups.values()].find(g => g !== group && (g.active === path || g.states.has(path)))
+    const doc = sibling ? (sibling.active === path ? sibling.view.state : sibling.states.get(path)).doc : text
+    const state = this.createState(group, path, doc, highlight)
     this.modes.set(path, highlight)
-    this.stash()
-    this.active = path
-    this.states.delete(path)
-    this.view.setState(state)
-    this.view.focus()
+    this.stash(group)
+    group.active = path
+    group.states.delete(path)
+    group.view.setState(state)
+    this.focused = group.id
+    group.view.focus()
     this.selectionChanged()
     this.historyChanged()
     // Problems that came before the file did.
-    this.jsonDiagnostics.delete(path)
+    if (!sibling) this.jsonDiagnostics.delete(path)
     this.applyDiagnostics(path)
   },
 
-  activate(path) {
-    if (path === this.active || !this.states.has(path)) return
-    this.stash()
-    this.active = path
-    this.view.setState(this.states.get(path))
-    this.states.delete(path)
-    this.view.focus()
+  activate(group, path) {
+    if (!group || path === group.active || !group.states.has(path)) return
+    this.stash(group)
+    group.active = path
+    group.view.setState(group.states.get(path))
+    group.states.delete(path)
+    if (group.id === this.focused) group.view.focus()
     this.selectionChanged()
     this.historyChanged()
   },
 
   // Another kind of editor is shown: the file is put away until activated.
-  deactivate() {
-    if (this.active === null) return
-    this.stash()
-    this.active = null
-    this.view.setState(EditorState.create())
-    this.view.contentDOM.blur()
+  deactivate(group) {
+    if (!group || group.active === null) return
+    this.stash(group)
+    group.active = null
+    group.view.setState(EditorState.create())
+    group.view.contentDOM.blur()
     this.historyChanged()
   },
 
-  close(path) {
-    clearTimeout(this.timers.get(path))
-    this.timers.delete(path)
-    this.pending.delete(path)
-    this.states.delete(path)
-    this.modes.delete(path)
-    this.jsonDiagnostics.delete(path)
-    this.languageDiagnostics.delete(path)
-    this.languageFeatures.delete(path)
-    if (path === this.active) {
-      this.active = null
-      this.view.setState(EditorState.create())
+  close(group, path) {
+    // (Its group went with it: nothing left to close.)
+    if (!group) return this.forget(path)
+    group.states.delete(path)
+    if (path === group.active) {
+      group.active = null
+      group.view.setState(EditorState.create())
       this.historyChanged()
     }
+    this.forget(path)
   },
 
   reload(path, text) {
     const state = this.stateOf(path)
     if (!state || state.doc.toString() === text) return
-    this.updateState(path, {changes: {from: 0, to: state.doc.length, insert: text}})
+    this.updateState(path, {changes: {from: 0, to: state.doc.length, insert: text}, annotations: remote.of("server")})
   },
 
   // Edits made on the server (plugins), `edits` = [[from, to, insert]] in
@@ -545,8 +690,8 @@ export const CodeEditor = {
     }
 
     if (transaction && transaction.state.doc.toString() === text) {
-      if (path === this.active) this.view.dispatch(transaction)
-      else this.states.set(path, transaction.state)
+      const changes = edits.map(([from, to, insert]) => ({from: offsets.get(from), to: offsets.get(to), insert}))
+      this.updateState(path, {changes, userEvent: "input.bee", annotations: remote.of("server")})
     } else {
       this.pushText("doc_changed", path)
     }
@@ -680,9 +825,9 @@ export const CodeEditor = {
     }
   },
 
-  // Keep the active tab's state when switching away from it.
-  stash() {
-    if (this.active) this.states.set(this.active, this.view.state)
+  // Keep a group's active tab's state when switching away from it.
+  stash(group = this.cur()) {
+    if (group.active) group.states.set(group.active, group.view.state)
   },
 
   // Throttle with a trailing call: the first change is sent right away (so the

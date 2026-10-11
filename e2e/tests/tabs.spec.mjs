@@ -16,12 +16,12 @@ test.beforeEach(async ({page, context, baseURL}) => {
 })
 
 test("a held tab lifts and drags to another place", async ({page}) => {
-  const one = await page.locator("#tabs [data-path$='/one.txt']").boundingBox()
-  const two = await page.locator("#tabs [data-path$='/two.txt']").boundingBox()
+  const one = await page.locator("[data-tabs] [data-path$='/one.txt']").boundingBox()
+  const two = await page.locator("[data-tabs] [data-path$='/two.txt']").boundingBox()
 
   await page.mouse.move(one.x + one.width / 2, one.y + one.height / 2)
   await page.mouse.down()
-  await expect(page.locator("#tabs [data-path$='/one.txt'][data-lifted]")).toBeVisible()
+  await expect(page.locator("[data-tabs] [data-path$='/one.txt'][data-lifted]")).toBeVisible()
   await page.mouse.move(two.x + two.width * 0.9, one.y + one.height / 2, {steps: 8})
   await page.mouse.up()
 
@@ -35,8 +35,8 @@ for (const [wide, narrow] of [["a_much_longer_file_name.md", "b.ex"], ["b.ex", "
     await openFile(page, wide)
     await openFile(page, narrow)
     const drag = async (name, past) => {
-      const box = await page.locator(`#tabs [data-path$='/${name}']`).boundingBox()
-      const target = await page.locator(`#tabs [data-path$='/${past}']`).boundingBox()
+      const box = await page.locator(`[data-tabs] [data-path$='/${name}']`).boundingBox()
+      const target = await page.locator(`[data-tabs] [data-path$='/${past}']`).boundingBox()
       const y = box.y + box.height / 2
       // Grabbed by its icon (an image): native image dragging mustn't take over.
       await page.mouse.move(box.x + 14, y)
@@ -54,18 +54,20 @@ for (const [wide, narrow] of [["a_much_longer_file_name.md", "b.ex"], ["b.ex", "
 }
 
 test("a middle click closes a tab", async ({page}) => {
-  await page.click("#tabs [data-path$='/two.txt']", {button: "middle"})
-  await expect(page.locator("#tabs [data-path$='/two.txt']")).toHaveCount(0)
+  await page.click("[data-tabs] [data-path$='/two.txt']", {button: "middle"})
+  await expect(page.locator("[data-tabs] [data-path$='/two.txt']")).toHaveCount(0)
 })
 
 test("the right-click menu: Copy Path, Close Others", async ({page}) => {
-  const tab = page.locator("#tabs [data-path$='/needle_file.ex']")
+  const tab = page.locator("[data-tabs] [data-path$='/needle_file.ex']")
   await tab.click({button: "right"})
   await expect(page.locator("#context-menu [data-command] > span:first-child")).toHaveText([
     "Close",
     "Close Others",
     "Close All",
     "Copy Path",
+    "Split Editor Right",
+    "Split Editor Down",
   ])
 
   await page.click("#context-menu [data-command='copyFilePath']")

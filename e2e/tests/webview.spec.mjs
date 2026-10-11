@@ -36,7 +36,7 @@ test.beforeEach(async ({page}) => {
 
 test.afterEach(async ({page}) => {
   // The panels are the workspace's: closed for the next test.
-  const tabs = page.locator("#tabs [data-path^='webview:']")
+  const tabs = page.locator("[data-tabs] [data-path^='webview:']")
   for (let left = await tabs.count(); left > 0; left--) {
     await tabs.first().locator("[data-close]").click()
     await expect(tabs).toHaveCount(left - 1)
@@ -45,7 +45,7 @@ test.afterEach(async ({page}) => {
 
 test("a panel: the extension's page in a tab, themed, with its files; messages both ways", async ({page}) => {
   await run(page, "Hello Webview: Open Panel")
-  const tab = page.locator("#tabs [data-path^='webview:']")
+  const tab = page.locator("[data-tabs] [data-path^='webview:']")
   await expect(tab).toHaveAttribute("data-active", "true")
   await expect(tab).toContainText("Hello Webview")
 
@@ -142,7 +142,7 @@ test("links to the web, and addresses the extension opens, go to the browser", a
 
 test("a page that embeds its extension's local server: the frame inside has its origin and works", async ({page}) => {
   await run(page, "Hello Webview: Open Nested Panel")
-  const tab = page.locator("#tabs [data-path^='webview:']")
+  const tab = page.locator("[data-tabs] [data-path^='webview:']")
   // The inner frame talked to its server, from its own origin (a page
   // without an origin can't: that is why webviews have one).
   await expect(tab).toContainText("Nested: pong from its own origin")

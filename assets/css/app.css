@@ -323,3 +323,17 @@ html[data-pane-drag] .view-pane {
 .markdown hr {
   border-color: color-mix(in oklab, currentColor 15%, transparent);
 }
+
+/* Editor groups: a line between them; where a dragged tab would land. */
+.editor-split > * + * { border-left: 1px solid var(--color-tab-border); }
+.editor-split[data-split="col"] > * + * { border-left: none; border-top: 1px solid var(--color-tab-border); }
+[data-editor-area][data-drop]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--color-primary) 22%, transparent);
+}
+[data-editor-area][data-drop="right"]::after { left: 50%; }
+[data-editor-area][data-drop="down"]::after { top: 50%; }

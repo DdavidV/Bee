@@ -41,7 +41,7 @@ test("search, details, install and uninstall", async ({page}) => {
 
   // Its details: the README from Open VSX, sanitized.
   await rocketRow(page).locator("span", {hasText: "Rocket"}).first().click()
-  const tab = page.locator("#tabs [data-path='extension:acme.rocket']")
+  const tab = page.locator("[data-tabs] [data-path='extension:acme.rocket']")
   await expect(tab).toHaveText(/Extension: Rocket/)
   const details = page.locator("#extension-acme\\.rocket")
   await expect(details.locator("header h1")).toHaveText("Rocket")
@@ -95,7 +95,7 @@ test("an extension without a package for this platform can't be installed", asyn
     `Not available for ${hostPlatform} (only for web).`,
   )
   await expect(page.locator("#extension-acme\\.alien button", {hasText: "Install"})).toHaveCount(0)
-  await page.locator("#tabs [data-path='extension:acme.alien'] [data-close]").click()
+  await page.locator("[data-tabs] [data-path='extension:acme.alien'] [data-close]").click()
   await page.locator("#marketplace-query").fill("")
 })
 

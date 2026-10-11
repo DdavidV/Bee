@@ -39,7 +39,7 @@ defmodule Bee.WorkbenchTest do
       assert [%{path: "/ws/a"}, %{path: "/ws/c", preview: true}] = wb.tabs
       assert wb.active == "/ws/c"
       assert {:close_buffer, "/ws/b"} in effects
-      assert {:push, "cm:close", %{path: "/ws/b"}} in effects
+      assert {:push, "cm:close", %{path: "/ws/b", group: 1}} in effects
 
       # Kept: the next one is added.
       wb = Workbench.keep_editor(wb, "/ws/c")
@@ -56,9 +56,128 @@ defmodule Bee.WorkbenchTest do
       {shown, _} = Workbench.open_editor(wb, "/ws/d", preview: true)
       assert %{preview: true} = Workbench.tab(shown, "/ws/d")
 
+      # Kept before it was open (a quick double click): where the preview is.
+      {replaced, _} = Workbench.editor_opened(wb, "/ws/f", false, "plaintext", :replace)
+      assert Enum.map(replaced.tabs, & &1.path) == ["/ws/a", "/ws/c", "/ws/f"]
+      assert %{preview: false} = Workbench.tab(replaced, "/ws/f")
+
       # A file with unsaved changes is never a preview.
       wb = Workbench.editor_opened(wb(), "/ws/e", true, "plaintext", true)
       assert [%{preview: false}] = wb.tabs
+    end
+
+    test "split: a new group beside the focused one, focused, asking for the same file" do
+      wb = with_editors(["a", "b"])
+      {wb, effects} = Workbench.split(wb, :right)
+      assert wb.group == 2
+      assert wb.tabs == []
+      assert wb.editor_layout == {:row, [{:leaf, 1}, {:leaf, 2}]}
+      assert effects == [{:push, "cm:focus", %{group: 2}}, {:open_file, "/ws/b"}]
+      assert [%{id: 1, active: "/ws/b"}, %{id: 2, tabs: []}] = Workbench.groups(wb)
+
+      wb = Workbench.editor_opened(wb, "/ws/b", false, "plaintext")
+
+      assert [%{id: 1}, %{id: 2, tabs: [%{path: "/ws/b"}], active: "/ws/b"}] =
+               Workbench.groups(wb)
+
+      assert Enum.map(Workbench.all_tabs(wb), & &1.path) == ["/ws/b", "/ws/a", "/ws/b"]
+
+      # Down from the second: a column in its place. Right again from the
+      # first: into the row.
+      {wb, _} = Workbench.split(wb, :down)
+      assert wb.editor_layout == {:row, [{:leaf, 1}, {:col, [{:leaf, 2}, {:leaf, 3}]}]}
+      {wb, _} = Workbench.focus_group(wb, 1)
+      {wb, _} = Workbench.split(wb, :right)
+
+      assert wb.editor_layout ==
+               {:row, [{:leaf, 1}, {:leaf, 4}, {:col, [{:leaf, 2}, {:leaf, 3}]}]}
+
+      # Nothing to split without a file shown.
+      assert Workbench.split(wb(), :right) == wb()
+    end
+
+    test "a file open in two groups: closed in one, its buffer stays; the empty group goes" do
+      {wb, _} = with_editors(["a"]) |> Workbench.split(:right)
+      wb = Workbench.editor_opened(wb, "/ws/a", false, "plaintext")
+
+      # Unsaved in one is unsaved in both.
+      wb = Workbench.set_dirty(wb, "/ws/a", true)
+      assert [%{tabs: [%{dirty: true}]}, %{tabs: [%{dirty: true}]}] = Workbench.groups(wb)
+
+      {wb, effects} = Workbench.close_editor(wb, "/ws/a")
+      refute {:close_buffer, "/ws/a"} in effects
+      assert {:push, "cm:close", %{path: "/ws/a", group: 2}} in effects
+      assert {:push, "cm:focus", %{group: 1}} in effects
+      assert wb.editor_layout == {:leaf, 1}
+      assert wb.group == 1 and wb.others == []
+
+      {wb, effects} = Workbench.close_editor(wb, "/ws/a")
+      assert {:close_buffer, "/ws/a"} in effects
+      # The last group stays, empty.
+      assert wb.editor_layout == {:leaf, 1} and wb.tabs == []
+    end
+
+    test "Close doesn't ask about unsaved changes another group still shows" do
+      {wb, _} = with_editors(["a"]) |> Workbench.split(:right)
+
+      wb =
+        wb
+        |> Workbench.editor_opened("/ws/a", false, "plaintext")
+        |> Workbench.set_dirty("/ws/a", true)
+
+      {wb, effects} = Bee.Workbench.Actions.close_active_editor(wb)
+      assert wb.palette == nil and wb.others == []
+      refute {:close_buffer, "/ws/a"} in effects
+
+      # The last one showing it: asked first.
+      assert %{palette: %{}} = Bee.Workbench.Actions.close_active_editor(wb)
+    end
+
+    test "closing a tab of a group that isn't focused leaves the focus where it is" do
+      {wb, _} = with_editors(["a", "b"]) |> Workbench.split(:right)
+      wb = Workbench.editor_opened(wb, "/ws/b", false, "plaintext")
+
+      {wb, effects} = Workbench.close_editor(wb, 1, "/ws/a")
+      assert wb.group == 2
+      assert {:close_buffer, "/ws/a"} in effects
+      assert [%{id: 1, tabs: [%{path: "/ws/b"}]}, %{id: 2}] = Workbench.groups(wb)
+
+      # Its last one: the group goes, the focused one stays focused.
+      {wb, _} = Workbench.close_editor(wb, 1, "/ws/b")
+      assert wb.group == 2 and wb.editor_layout == {:leaf, 2}
+    end
+
+    test "move_tab: to another group at a place, to a new group, leaving none empty" do
+      {wb, _} = with_editors(["a", "b"]) |> Workbench.split(:right)
+      wb = Workbench.editor_opened(wb, "/ws/b", false, "plaintext")
+      wb = Workbench.editor_opened(wb, "/ws/c", false, "plaintext")
+
+      # a: from group 1 to the front of group 2 (its buffer isn't closed).
+      {wb, effects} = Workbench.move_tab(wb, "/ws/a", 1, 2, 0)
+      refute Enum.any?(effects, &match?({:close_buffer, _}, &1))
+      assert {:push, "cm:close", %{path: "/ws/a", group: 1}} in effects
+      assert List.last(effects) == {:open_file, "/ws/a"}
+      wb = Workbench.editor_opened(wb, "/ws/a", false, "plaintext")
+      assert Enum.map(wb.tabs, & &1.path) == ["/ws/a", "/ws/b", "/ws/c"]
+      assert wb.group == 2 and wb.active == "/ws/a"
+
+      # b is in both: moved from group 1, group 2's is shown; group 1 is empty and goes.
+      {wb, effects} = Workbench.move_tab(wb, "/ws/b", 1, 2)
+      refute Enum.any?(effects, &match?({:open_file, _}, &1))
+      assert wb.editor_layout == {:leaf, 2}
+      assert wb.active == "/ws/b"
+
+      # To the right edge of its own group: a new group there.
+      {wb, effects} = Workbench.move_tab(wb, "/ws/c", 2, 2, nil, :right)
+      assert wb.editor_layout == {:row, [{:leaf, 2}, {:leaf, 3}]}
+      assert wb.group == 3
+      assert List.last(effects) == {:open_file, "/ws/c"}
+
+      # A group's only tab stays where it is; so does a tab dropped on its own group.
+      wb = Workbench.editor_opened(wb, "/ws/c", false, "plaintext")
+      assert Workbench.move_tab(wb, "/ws/c", 3, 3, nil, :down) == wb
+      assert Workbench.move_tab(wb, "/ws/c", 3, 3) == wb
+      assert Workbench.move_tab(wb, "/ws/nope", 3, 2) == wb
     end
 
     test "closing the active editor activates its right neighbour, else the left one" do
@@ -69,8 +188,8 @@ defmodule Bee.WorkbenchTest do
 
       assert effects == [
                {:close_buffer, "/ws/b"},
-               {:push, "cm:close", %{path: "/ws/b"}},
-               {:push, "cm:activate", %{path: "/ws/c"}}
+               {:push, "cm:close", %{path: "/ws/b", group: 1}},
+               {:push, "cm:activate", %{path: "/ws/c", group: 1}}
              ]
 
       {wb, _} = Workbench.close_editor(with_editors(["a", "b"]), "/ws/b")

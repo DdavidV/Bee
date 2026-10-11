@@ -127,6 +127,15 @@ A file opened with a single click is a preview: it shares one tab with the
 next file opened that way, until it is double-clicked or edited. This is
 VS Code's behaviour, and a setting turns it off.
 
+The editor area can be split into groups, to the right and down, each with
+its own tabs. One group is focused: commands, the status bar and plugins
+are about the file it shows. A file can be open in several groups. The
+browser keeps one editor per group and applies what is typed in one to the
+others as it is typed, so they never differ, while Bee still holds a single
+buffer for the file. A tab can be dragged to another group, or onto the
+right or bottom part of an editor to split it there. A group goes away with
+its last tab.
+
 A buffer exists while at least one window has the file open. If the file
 changes on disk while it has no unsaved changes, the buffer reloads it and
 the editors follow.

@@ -95,7 +95,7 @@ defmodule BeeWeb.PluginLiveTest do
     # A click runs a command of the plugin's in the window: the file opens.
     list |> element("li", "off by one") |> render_click()
     path = Path.join(root, "lib/a.ex")
-    eventually(fn -> has_element?(view, "#tabs [data-path='#{path}']") end)
+    eventually(fn -> has_element?(view, "[data-tabs] [data-path='#{path}']") end)
     assert_push_event(view, "cm:reveal", %{path: ^path, line: 2})
   end
 
@@ -114,10 +114,10 @@ defmodule BeeWeb.PluginLiveTest do
     run(view, "todosLive.openBoard")
 
     eventually(fn ->
-      has_element?(view, "#tabs [data-path='live:todos-live/todosLive.board']")
+      has_element?(view, "[data-tabs] [data-path='live:todos-live/todosLive.board']")
     end)
 
-    assert has_element?(view, "#tabs [data-active=true]", "TODO Board")
+    assert has_element?(view, "[data-tabs] [data-active=true]", "TODO Board")
     board = child(view, "todos-live-board")
 
     # Its template is the .html.heex file next to the module.
@@ -136,7 +136,7 @@ defmodule BeeWeb.PluginLiveTest do
 
     # Running the command again shows the open tab.
     run(view, "todosLive.openBoard")
-    assert has_element?(view, "#tabs [data-active=true]", "TODO Board")
+    assert has_element?(view, "[data-tabs] [data-active=true]", "TODO Board")
     refute has_element?(view, "[data-live-editor='todosLive.board'].hidden")
     assert length(live_children(view)) == 1
 

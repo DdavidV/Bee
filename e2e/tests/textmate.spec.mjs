@@ -23,7 +23,7 @@ const colorOf = (page, text) =>
 
 const openInBee = async (page, rel) => {
   await openBee(page, `/?file=${encodeURIComponent(join(dws, rel))}`)
-  await expect(page.locator(`#tabs [data-path$='/${rel}']`)).toBeVisible()
+  await expect(page.locator(`[data-tabs] [data-path$='/${rel}']`)).toBeVisible()
 }
 
 const write = (rel, text) => {

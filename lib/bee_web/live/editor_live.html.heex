@@ -82,171 +82,19 @@
       class="sash absolute inset-y-0 left-0 w-1 -translate-x-1/2 z-30 cursor-col-resize"
     >
     </div>
-    <div class="flex bg-tabs shrink-0">
-      <%!-- Tabs: dragged to reorder, middle-clicked to close (the Tabs hook);
-           right-clicked for the editor/title/context menu. --%>
-      <div id="tabs" phx-hook="Tabs" class="flex flex-1 min-w-0 overflow-x-auto text-sm">
-        <div
-          :for={tab <- @tabs}
-          id={"tab-#{:erlang.phash2(tab.path)}"}
-          data-tab
-          data-path={tab.path}
-          data-active={to_string(tab.path == @active)}
-          data-dirty={tab.dirty && "true"}
-          data-preview={Workbench.preview?(tab) && "true"}
-          data-keep={tab.path}
-          data-menu="editor/title/context"
-          data-menu-args={Jason.encode!([tab.path])}
-          data-menu-context={Jason.encode!(tab_menu_context(tab))}
-          class={[
-            "group flex items-center gap-1 pl-3 pr-1 py-1.5 border-r border-tab-border cursor-pointer whitespace-nowrap",
-            if(tab.path == @active,
-              do: "bg-tab-active text-tab-active-fg",
-              else:
-                "bg-tab-inactive text-tab-inactive-fg hover:text-tab-active-fg hover:bg-base-content/5"
-            )
-          ]}
-          phx-click="activate_tab"
-          phx-value-path={tab.path}
-          title={
-            if tab.kind == :file,
-              do: Bee.Workspace.FS.relative(@root, tab.path),
-              else: tab_label(tab, @extension_details)
-          }
-        >
-          <BeeWeb.Workbench.FileIcon.file_icon
-            :if={@icon_theme && tab.kind == :file}
-            theme={@icon_theme}
-            path={tab.path}
-            language={tab.lang}
-          />
-          <.icon
-            :if={tab.kind == :extension}
-            name="hero-puzzle-piece"
-            class="size-4 shrink-0 opacity-70"
-          />
-          <.icon
-            :if={tab.kind in [:live, :webview]}
-            name="hero-window"
-            class="size-4 shrink-0 opacity-70"
-          />
-          <span class={[
-            tab.kind == :file && tab_color(@file_decorations, @root, tab.path),
-            (tab.kind == :extension or Workbench.preview?(tab)) && "italic"
-          ]}>
-            {tab_label(tab, @extension_details)}
-          </span>
-          <button
-            class="size-5 grid place-items-center rounded cursor-pointer hover:bg-base-content/10"
-            title="Close"
-            data-close
-            phx-click="run_command"
-            phx-value-command="workbench.action.closeEditor"
-            phx-value-args={Jason.encode!([tab.path])}
-          >
-            <span :if={tab.dirty} class="size-2 rounded-full bg-current group-hover:hidden" />
-            <.icon
-              name="hero-x-mark-mini"
-              class={["size-4", tab.dirty && "hidden group-hover:block"]}
-            />
-          </button>
-        </div>
-      </div>
-      <%!-- Editor actions: the "editor/title" menu (undo/redo, plugins' buttons) --%>
-      <BeeWeb.Workbench.Toolbar.toolbar
-        id="editor-actions"
-        actions={toolbar(assigns, "editor/title")}
-        class="px-1"
-      />
-    </div>
-
-    <%!-- Right-clicking a file's text: the editor/context menu. --%>
+    <%!-- The editor groups (Workbench "Editor groups"): one, or the area split.
+         The CodeEditor hook has an editor in every group's pane. --%>
     <div
-      id="editor-area"
-      class="flex-1 min-h-0 relative"
-      data-menu={editor_menu(assigns) && "editor/context"}
-      data-menu-args={Jason.encode!(List.wrap(editor_menu(assigns)))}
+      id="editor"
+      phx-hook="CodeEditor"
+      data-settings={Jason.encode!(@editor_settings)}
+      data-grammars={Jason.encode!(@grammars)}
+      data-root={@root}
+      data-token-colors={Jason.encode!(@token_colors)}
+      data-group={@group}
+      class="flex-1 min-h-0 min-w-0 flex"
     >
-      <div
-        id="editor"
-        phx-hook="CodeEditor"
-        phx-update="ignore"
-        data-settings={Jason.encode!(@editor_settings)}
-        data-grammars={Jason.encode!(@grammars)}
-        data-root={@root}
-        data-token-colors={Jason.encode!(@token_colors)}
-        class="absolute inset-0"
-      >
-      </div>
-      <%!-- A plugin's details, over the (emptied) editor --%>
-      <div
-        :for={tab <- @tabs}
-        :if={tab.kind == :extension and tab.path == @active}
-        class="absolute inset-0"
-      >
-        <BeeWeb.Workbench.ExtensionEditor.extension_editor
-          name={tab.name}
-          details={@extension_details[tab.name]}
-          installed={@marketplace_installed}
-          installing={@marketplace.installing}
-        />
-      </div>
-      <%!-- Editors plugins draw themselves (LiveViews): each stays mounted
-           while its tab is open, shown when it is the active one. --%>
-      <div
-        :for={tab <- @tabs}
-        :if={tab.kind == :live}
-        id={"live-editor-#{:erlang.phash2(tab.path)}"}
-        data-live-editor={tab.editor}
-        class={[
-          "absolute inset-0 overflow-auto bg-editor text-editor-fg",
-          tab.path != @active && "hidden"
-        ]}
-      >
-        <BeeWeb.Workbench.PluginLive.plugin_live
-          socket={@socket}
-          state={@live[{:editor, tab.editor}]}
-          kind="editor"
-          id={tab.editor}
-          key={tab.key}
-          root={@root}
-          params={tab.params}
-        />
-      </div>
-      <%!-- Webview panels of extensions: each frame stays while its tab is open. --%>
-      <BeeWeb.Workbench.Webview.webview
-        :for={tab <- @tabs}
-        :if={tab.kind == :webview and @webviews[tab.webview]}
-        panel={@webviews[tab.webview]}
-        theme={@color_theme.id}
-        active={tab.path == @active}
-        origin={@webview_origin}
-      />
-      <div
-        :if={@tabs == []}
-        class="absolute inset-0 grid place-items-center bg-editor text-editor-fg text-sm"
-      >
-        <div class="text-center space-y-1 opacity-40">
-          <BeeWeb.Logo.logo class="size-12 mx-auto mb-2" />
-          <div>Open a file from the explorer</div>
-          <div :for={
-            {label, command} <- [
-              {"Show All Commands", "workbench.action.showCommands"},
-              {"Go to File", "workbench.action.quickOpen"},
-              {"Toggle Terminal", "workbench.action.togglePanel"},
-              {"Open Settings", "workbench.action.openSettingsJson"}
-            ]
-          }>
-            {label}
-            <kbd
-              :if={key = Bee.Commands.Keybindings.label(command, @keybindings)}
-              class="kbd kbd-xs ml-1"
-            >
-              {key}
-            </kbd>
-          </div>
-        </div>
-      </div>
+      <.editor_node node={@editor_layout} a={assigns} />
     </div>
 
     <%!-- The bottom panel: Terminal, Bee Console, plugins' sections --%>

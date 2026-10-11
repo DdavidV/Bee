@@ -70,13 +70,13 @@ test("a view drawn by the plugin's LiveView, in the plugin's styles", async ({pa
 
   // A click runs the plugin's command in the window: the file, at the line.
   await items(page).nth(1).click()
-  await expect(page.locator("#tabs [data-path$='/todo-notes.md']")).toHaveAttribute("data-active", "true")
+  await expect(page.locator("[data-tabs] [data-path$='/todo-notes.md']")).toHaveAttribute("data-active", "true")
   await expect(page.locator("#editor .cm-activeLine")).toHaveText("- FIXME: the door squeaks")
 })
 
 test("an editor tab drawn by the plugin's LiveView", async ({page}) => {
   await page.click("#todos-live-list button:has-text('Open Board')")
-  const tab = page.locator("#tabs [data-path='live:todos-live/todosLive.board']")
+  const tab = page.locator("[data-tabs] [data-path='live:todos-live/todosLive.board']")
   await expect(tab).toHaveText(/TODO Board/)
   await expect(tab).toHaveAttribute("data-active", "true")
 
@@ -140,7 +140,7 @@ test("a crash in the plugin's LiveView is its own: the window goes on", async ({
   await expect(page.locator("#sidebar-title")).toHaveText("TODOs (LiveView)")
   await page.click("#view-explorer")
   await page.click("#explorer button[phx-value-path='two.txt']")
-  await expect(page.locator("#tabs [data-path$='/two.txt']")).toBeVisible()
+  await expect(page.locator("[data-tabs] [data-path$='/two.txt']")).toBeVisible()
   expect(errors).toEqual([])
 })
 

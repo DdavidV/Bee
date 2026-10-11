@@ -12,7 +12,7 @@ freshBee()
 const open = async (page, file, text) => {
   writeFileSync(join(dws, file), text)
   await openBee(page, `/?file=${encodeURIComponent(join(dws, file))}`)
-  await expect(page.locator(`#tabs [data-path$='/${file}']`)).toBeVisible()
+  await expect(page.locator(`[data-tabs] [data-path$='/${file}']`)).toBeVisible()
 }
 
 test.afterEach(() => {

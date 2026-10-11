@@ -183,6 +183,36 @@
         "enablement": "canRedo"
       },
       {
+        "command": "workbench.action.splitEditor",
+        "category": "View",
+        "title": "Split Editor Right",
+        "icon": "$(split-horizontal)",
+        "runtime": "server",
+        "enablement": "resourceScheme == file"
+      },
+      {
+        "command": "workbench.action.splitEditorDown",
+        "category": "View",
+        "title": "Split Editor Down",
+        "icon": "$(split-vertical)",
+        "runtime": "server",
+        "enablement": "resourceScheme == file"
+      },
+      {
+        "command": "workbench.action.focusNextGroup",
+        "category": "View",
+        "title": "Focus Next Editor Group",
+        "runtime": "server",
+        "enablement": "multipleEditorGroups"
+      },
+      {
+        "command": "workbench.action.focusPreviousGroup",
+        "category": "View",
+        "title": "Focus Previous Editor Group",
+        "runtime": "server",
+        "enablement": "multipleEditorGroups"
+      },
+      {
         "command": "workbench.action.keepEditor",
         "category": "View",
         "title": "Keep Open",
@@ -607,6 +637,10 @@
       {"key": "ctrl+t", "mac": "cmd+t", "command": "workbench.action.showAllSymbols"},
       {"key": "f12", "command": "editor.action.revealDefinition", "when": "editorTextFocus && editorHasDefinitionProvider"},
       {"key": "ctrl+f12", "mac": "cmd+f12", "command": "editor.action.goToImplementation", "when": "editorTextFocus && editorHasImplementationProvider"},
+      {"key": "ctrl+\\", "mac": "cmd+\\", "command": "workbench.action.splitEditor", "when": "resourceScheme == file"},
+      {"key": "ctrl+k ctrl+\\", "mac": "cmd+k cmd+\\", "command": "workbench.action.splitEditorDown", "when": "resourceScheme == file"},
+      {"key": "ctrl+k ctrl+right", "mac": "cmd+k cmd+right", "command": "workbench.action.focusNextGroup", "when": "multipleEditorGroups"},
+      {"key": "ctrl+k ctrl+left", "mac": "cmd+k cmd+left", "command": "workbench.action.focusPreviousGroup", "when": "multipleEditorGroups"},
       {"key": "ctrl+k enter", "mac": "cmd+k enter", "command": "workbench.action.keepEditor", "when": "activeEditor && !activeEditorIsNotPreview"},
       {"key": "ctrl+b", "mac": "cmd+b", "command": "workbench.action.toggleSidebarVisibility"},
       {"key": "ctrl+j", "mac": "cmd+j", "command": "workbench.action.togglePanel"},
@@ -733,6 +767,8 @@
         {"command": "workbench.action.closeOtherEditors", "group": "1_close@2"},
         {"command": "workbench.action.closeAllEditors", "group": "1_close@3"},
         {"command": "workbench.action.keepEditor", "group": "1_close@4", "when": "!activeEditorIsNotPreview"},
+        {"command": "workbench.action.splitEditor", "group": "3_split@1", "when": "resourceScheme == file"},
+        {"command": "workbench.action.splitEditorDown", "group": "3_split@2", "when": "resourceScheme == file"},
         {"command": "copyFilePath", "group": "2_copy@1", "when": "resourceScheme == file"}
       ],
       "explorer/context": [
@@ -774,7 +810,8 @@
       ],
       "editor/title": [
         {"command": "undo", "group": "navigation@1", "when": "resourceScheme == file"},
-        {"command": "redo", "group": "navigation@2", "when": "resourceScheme == file"}
+        {"command": "redo", "group": "navigation@2", "when": "resourceScheme == file"},
+        {"command": "workbench.action.splitEditor", "group": "navigation@90", "when": "resourceScheme == file"}
       ],
       "menubar/view": [
         {"command": "workbench.action.showCommands", "group": "1_commands@1"},
@@ -783,7 +820,9 @@
         {"command": "workbench.view.search", "group": "2_views@2"},
         {"command": "workbench.view.extensions", "group": "2_views@3"},
         {"command": "workbench.action.toggleSidebarVisibility", "group": "3_layout@1"},
-        {"command": "workbench.action.togglePanel", "group": "3_layout@2"}
+        {"command": "workbench.action.togglePanel", "group": "3_layout@2"},
+        {"command": "workbench.action.splitEditor", "group": "5_split@1"},
+        {"command": "workbench.action.splitEditorDown", "group": "5_split@2"}
       ],
       "menubar/terminal": [
         {"command": "workbench.action.terminal.new", "group": "1_terminal@1"},

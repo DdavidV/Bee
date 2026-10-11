@@ -52,7 +52,7 @@ export const explorerItem = (page, rel) => page.locator(`#explorer button[phx-va
 // be open) and waits for its tab.
 export const openFile = async (page, rel) => {
   await explorerItem(page, rel).dblclick()
-  const opened = page.locator(`#tabs [data-path$='/${rel}']`)
+  const opened = page.locator(`[data-tabs] [data-path$='/${rel}']`)
   await expect(opened).toBeVisible()
   await expect(preview(opened)).toHaveCount(0)
 }
@@ -60,22 +60,41 @@ export const openFile = async (page, rel) => {
 // A single click on `rel` in the Explorer: a preview of it.
 export const previewFile = async (page, rel) => {
   await explorerItem(page, rel).click()
-  await expect(page.locator(`#tabs [data-path$='/${rel}']`)).toBeVisible()
+  await expect(page.locator(`[data-tabs] [data-path$='/${rel}']`)).toBeVisible()
 }
 
 // ---- Tabs
 
-export const tabs = page => page.locator("#tabs [data-tab]")
+export const tabs = page => page.locator("[data-tabs] [data-tab]")
 // The tab of the file (or editor) called `name`.
 export const tab = (page, name) => tabs(page).filter({has: page.getByText(name, {exact: true})})
 // A tab that is a preview: the next file previewed takes its place.
 export const preview = locator => locator.and(locator.page().locator("[data-preview=true]"))
 // Whether a tab shows unsaved changes.
 export const unsaved = locator => locator.and(locator.page().locator("[data-dirty=true]"))
-export const activeTab = page => page.locator("#tabs [data-tab][data-active=true]")
+export const activeTab = page => page.locator("[data-tabs] [data-tab][data-active=true]")
 
 export const tabNames = page =>
-  page.$$eval("#tabs [data-tab]", tabs => tabs.map(t => t.dataset.path.split("/").pop()))
+  page.$$eval("[data-tabs] [data-tab]", tabs => tabs.map(t => t.dataset.path.split("/").pop()))
+
+// ---- Editor groups (the editor area, split)
+
+export const groups = page => page.locator("#editor section[data-group]")
+// The `n`th group (1-based, in reading order) and what is in it.
+export const group = (page, n) => {
+  const root = groups(page).nth(n - 1)
+  return {
+    root,
+    tabs: root.locator("[data-tabs] [data-tab]"),
+    tab: name => root.locator("[data-tabs] [data-tab]").filter({has: page.getByText(name, {exact: true})}),
+    activeTab: root.locator("[data-tabs] [data-tab][data-active=true]"),
+    lines: root.locator(".cm-line"),
+    editor: root.locator(".cm-content"),
+    area: root.locator("[data-editor-area]"),
+    names: () => root.locator("[data-tabs] [data-tab]").evaluateAll(tabs => tabs.map(t => t.dataset.path.split("/").pop())),
+  }
+}
+export const focusedGroup = page => page.locator("#editor section[data-group][data-focused=true]")
 
 // ---- The editor
 

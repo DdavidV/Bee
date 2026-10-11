@@ -20,7 +20,7 @@ test("recent files, then files by name; > switches to commands", async ({page}) 
   await expect(page.locator("#palette [data-file$='/src/deep/needle_file.ex']")).toBeVisible()
   await expect(page.locator("#palette-busy")).toHaveCount(0)
   await page.keyboard.press("Enter")
-  await expect(page.locator("#tabs [data-path$='/needle_file.ex']")).toBeVisible()
+  await expect(page.locator("[data-tabs] [data-path$='/needle_file.ex']")).toBeVisible()
   await expect(page.locator("#palette")).toHaveCount(0)
 
   // The commands entry turns the query into ">".

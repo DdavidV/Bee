@@ -113,7 +113,7 @@ defmodule BeeWeb.EditorLiveTest do
         mode: "elixir"
       })
 
-      assert has_element?(view, "#tabs [phx-value-path='#{path}']", "mix.exs")
+      assert has_element?(view, "[data-tabs] [phx-value-path='#{path}']", "mix.exs")
       assert has_element?(view, "#status-lang", "Elixir")
     end
 
@@ -123,8 +123,8 @@ defmodule BeeWeb.EditorLiveTest do
       open_file(view, "mix.exs")
 
       assert_push_event(view, "cm:activate", %{path: ^path})
-      assert has_element?(view, "#tabs > div:nth-child(2)")
-      refute has_element?(view, "#tabs > div:nth-child(3)")
+      assert has_element?(view, "[data-tabs] > div:nth-child(2)")
+      refute has_element?(view, "[data-tabs] > div:nth-child(3)")
     end
 
     test "a click previews a file in the tab the next click reuses; kept files stay", %{
@@ -134,23 +134,23 @@ defmodule BeeWeb.EditorLiveTest do
       readme = Path.join(Path.dirname(path), "README.md")
 
       preview_file(view, "mix.exs")
-      assert has_element?(view, "#tabs [data-tab][data-preview][data-path='#{path}']")
+      assert has_element?(view, "[data-tabs] [data-tab][data-preview][data-path='#{path}']")
 
       # The next file takes the preview's tab: its file is closed.
       preview_file(view, "README.md")
       assert_push_event(view, "cm:close", %{path: ^path})
-      assert has_element?(view, "#tabs [data-tab][data-preview][data-path='#{readme}']")
-      refute has_element?(view, "#tabs > div:nth-child(2)")
+      assert has_element?(view, "[data-tabs] [data-tab][data-preview][data-path='#{readme}']")
+      refute has_element?(view, "[data-tabs] > div:nth-child(2)")
 
       # Kept (a double click): the next preview gets a tab of its own.
       run(view, "workbench.action.keepEditor", [readme])
-      refute has_element?(view, "#tabs [data-preview]")
+      refute has_element?(view, "[data-tabs] [data-preview]")
       preview_file(view, "mix.exs")
-      assert has_element?(view, "#tabs > div:nth-child(2)[data-preview]")
+      assert has_element?(view, "[data-tabs] > div:nth-child(2)[data-preview]")
 
       # An edit keeps it too.
       render_hook(view, "doc_changed", %{"path" => path, "text" => "changed"})
-      refute has_element?(view, "#tabs [data-preview]")
+      refute has_element?(view, "[data-tabs] [data-preview]")
     end
 
     test "workbench.editor.enablePreview: false opens every file in its own tab", %{view: view} do
@@ -161,20 +161,95 @@ defmodule BeeWeb.EditorLiveTest do
 
       preview_file(view, "mix.exs")
       preview_file(view, "README.md")
-      assert has_element?(view, "#tabs > div:nth-child(2)")
-      refute has_element?(view, "#tabs [data-preview]")
+      assert has_element?(view, "[data-tabs] > div:nth-child(2)")
+      refute has_element?(view, "[data-tabs] [data-preview]")
+    end
+
+    test "the editor area splits into groups, each with its own tabs", %{view: view, path: path} do
+      readme = Path.join(Path.dirname(path), "README.md")
+      open_file(view, "mix.exs")
+      assert has_element?(view, "#group-1[data-focused=true] #editor-pane-1")
+
+      # Split Right: a second group beside it, focused, with the same file.
+      run(view, "workbench.action.splitEditor")
+      assert_push_event(view, "cm:open", %{path: ^path, group: 2})
+      assert has_element?(view, "[data-split=row] > #group-1[data-focused=false]")
+      assert has_element?(view, "[data-split=row] > #group-2[data-focused=true] #editor-pane-2")
+      assert has_element?(view, "#tabs-1 [data-tab][data-path='#{path}']")
+      assert has_element?(view, "#tabs-2 [data-tab][data-path='#{path}']")
+
+      # A file opened now goes to the focused group only.
+      open_file(view, "README.md")
+      assert has_element?(view, "#tabs-2 [data-tab][data-path='#{readme}'][data-active=true]")
+      refute has_element?(view, "#tabs-1 [data-tab][data-path='#{readme}']")
+
+      # A change marks the file unsaved in every group that has it.
+      render_hook(view, "doc_changed", %{"path" => path, "text" => "changed"})
+      assert has_element?(view, "#tabs-1 [data-tab][data-dirty][data-path='#{path}']")
+      assert has_element?(view, "#tabs-2 [data-tab][data-dirty][data-path='#{path}']")
+      render_hook(view, "save", %{"path" => path, "text" => "changed"})
+      refute has_element?(view, "[data-tab][data-dirty]")
+
+      # A click on a tab of the other group focuses that group.
+      view |> element("#tabs-1 [data-tab][data-path='#{path}']") |> render_click()
+      assert has_element?(view, "#group-1[data-focused=true]")
+
+      # Split Down, from the first group: below it, in the row's place.
+      run(view, "workbench.action.splitEditorDown")
+
+      assert has_element?(
+               view,
+               "[data-split=row] > [data-split=col] > #group-3[data-focused=true]"
+             )
+
+      # A group goes with its last tab; closing one group's tab of a file
+      # leaves the file open in the others.
+      view |> element("#tabs-3 [data-close]") |> render_click()
+      refute has_element?(view, "#group-3")
+      refute_push_event(view, "cm:close", %{path: ^path, group: 1}, 50)
+      assert has_element?(view, "#tabs-1 [data-tab][data-path='#{path}']")
+      assert has_element?(view, "[data-split=row] > #group-1")
+    end
+
+    test "a tab moves to another group, or to a new one beside it", %{view: view, path: path} do
+      readme = Path.join(Path.dirname(path), "README.md")
+      open_file(view, "mix.exs")
+      open_file(view, "README.md")
+      run(view, "workbench.action.splitEditor")
+      assert has_element?(view, "#tabs-2 [data-tab][data-path='#{readme}']")
+
+      # mix.exs, dragged from the first group to the second: first among its tabs.
+      render_hook(view, "move_tab", %{"path" => path, "from" => 1, "to" => 2, "index" => 0})
+      refute has_element?(view, "#tabs-1 [data-tab][data-path='#{path}']")
+
+      assert has_element?(
+               view,
+               "#tabs-2 > [data-tab]:first-child[data-path='#{path}'][data-active=true]"
+             )
+
+      assert has_element?(view, "#group-2[data-focused=true]")
+
+      # Onto the bottom of the first group's editor: a new group below it.
+      render_hook(view, "move_tab", %{"path" => path, "from" => 2, "to" => 1, "zone" => "down"})
+      assert has_element?(view, "[data-split=col] > #group-1")
+      assert has_element?(view, "[data-split=col] > #group-3 [data-tab][data-path='#{path}']")
+
+      # The last tab of a group, moved away: the group goes.
+      render_hook(view, "move_tab", %{"path" => path, "from" => 3, "to" => 2})
+      refute has_element?(view, "#group-3")
+      assert has_element?(view, "#tabs-2 [data-tab][data-path='#{path}']")
     end
 
     test "changes mark the tab dirty and save writes them", %{view: view, path: path} do
       open_file(view, "mix.exs")
 
       render_hook(view, "doc_changed", %{"path" => path, "text" => "changed"})
-      assert has_element?(view, "#tabs [data-dirty]")
+      assert has_element?(view, "[data-tabs] [data-dirty]")
       assert File.read!(path) == "defmodule M do\nend\n"
 
       render_hook(view, "save", %{"path" => path, "text" => "changed"})
       assert File.read!(path) == "changed"
-      refute has_element?(view, "#tabs [data-dirty]")
+      refute has_element?(view, "[data-tabs] [data-dirty]")
       assert has_element?(view, "#status", "Saved mix.exs")
     end
 
@@ -185,11 +260,11 @@ defmodule BeeWeb.EditorLiveTest do
       ref = Process.monitor(buffer)
 
       view
-      |> element("#tabs [data-path='#{path}'] button[data-close]")
+      |> element("[data-tabs] [data-path='#{path}'] button[data-close]")
       |> render_click()
 
       assert_push_event(view, "cm:close", %{path: ^path})
-      refute has_element?(view, "#tabs [phx-value-path='#{path}']")
+      refute has_element?(view, "[data-tabs] [phx-value-path='#{path}']")
       assert_receive {:DOWN, ^ref, :process, ^buffer, :normal}
     end
 
@@ -264,7 +339,7 @@ defmodule BeeWeb.EditorLiveTest do
       }
     end
 
-    defp tab(path), do: "#tabs [data-path='#{path}']"
+    defp tab(path), do: "[data-tabs] [data-path='#{path}']"
 
     test "the right-click menu", %{view: view, readme: readme} do
       right_click(view, tab(readme))
@@ -273,7 +348,9 @@ defmodule BeeWeb.EditorLiveTest do
                "workbench.action.closeEditor",
                "workbench.action.closeOtherEditors",
                "workbench.action.closeAllEditors",
-               "copyFilePath"
+               "copyFilePath",
+               "workbench.action.splitEditor",
+               "workbench.action.splitEditorDown"
              ]
 
       # Copy Path runs in the page (the clipboard wants the click itself).
@@ -291,7 +368,7 @@ defmodule BeeWeb.EditorLiveTest do
 
       right_click(view, tab(readme))
       menu_click(view, "workbench.action.closeAllEditors")
-      refute has_element?(view, "#tabs [data-tab]")
+      refute has_element?(view, "[data-tabs] [data-tab]")
     end
 
     test "unsaved changes are only dropped once confirmed", %{
@@ -317,7 +394,7 @@ defmodule BeeWeb.EditorLiveTest do
 
       run(view, "workbench.action.closeAllEditors")
       view |> form("#palette-form") |> render_submit()
-      refute has_element?(view, "#tabs [data-tab]")
+      refute has_element?(view, "[data-tabs] [data-tab]")
       refute has_element?(view, tab(readme))
     end
 
@@ -327,7 +404,7 @@ defmodule BeeWeb.EditorLiveTest do
       assert view
              |> render()
              |> LazyHTML.from_fragment()
-             |> LazyHTML.query("#tabs [data-tab]")
+             |> LazyHTML.query("[data-tabs] [data-tab]")
              |> Enum.map(&(&1 |> LazyHTML.attribute("data-path") |> hd())) == [app, mix, readme]
     end
   end
@@ -720,7 +797,7 @@ defmodule BeeWeb.EditorLiveTest do
       refute has_element?(view, "#palette [data-file='#{root}/mix.exs']")
       view |> form("#palette-form") |> render_submit()
       refute has_element?(view, "#palette")
-      assert has_element?(view, "#tabs", "app.ex")
+      assert has_element?(view, "[data-tabs]", "app.ex")
 
       # The commands entry: the query becomes ">".
       run(view, "workbench.action.quickOpen")
@@ -1075,7 +1152,7 @@ defmodule BeeWeb.EditorLiveTest do
              )
 
       menu_click(view, "file", "workbench.action.closeActiveEditor")
-      refute has_element?(view, "#tabs > div")
+      refute has_element?(view, "[data-tabs] > div")
       open_menu(view, "file")
 
       assert has_element?(
@@ -1175,7 +1252,7 @@ defmodule BeeWeb.EditorLiveTest do
              )
 
       open_file(view, "README.md")
-      assert has_element?(view, "#tabs .text-git-untracked", "README.md")
+      assert has_element?(view, "[data-tabs] .text-git-untracked", "README.md")
     end
   end
 
@@ -1475,11 +1552,11 @@ defmodule BeeWeb.EditorLiveTest do
       # Its tab, after the file's; CodeMirror puts the file away.
       assert has_element?(
                view,
-               "#tabs [data-path='extension:word-count']",
+               "[data-tabs] [data-path='extension:word-count']",
                "Extension: Word Count"
              )
 
-      assert data(view, "#tabs [data-path='extension:word-count']", "data-active") == "true"
+      assert data(view, "[data-tabs] [data-path='extension:word-count']", "data-active") == "true"
       assert_push_event(view, "cm:deactivate", %{})
       assert has_element?(view, "#window-title", "Extension: Word Count")
 
@@ -1511,8 +1588,11 @@ defmodule BeeWeb.EditorLiveTest do
 
       # Opened again: the same tab. The file's tab brings the file back.
       view |> element("#plugin-word-count") |> render_click()
-      assert view |> element("#tabs") |> render() |> String.split("data-tab") |> length() == 3
-      view |> element("#tabs [data-path$='/README.md']") |> render_click()
+
+      assert view |> element("[data-tabs]") |> render() |> String.split("data-path=") |> length() ==
+               3
+
+      view |> element("[data-tabs] [data-path$='/README.md']") |> render_click()
       assert_push_event(view, "cm:activate", %{path: _})
       refute has_element?(view, "#extension-word-count")
 
@@ -1525,7 +1605,7 @@ defmodule BeeWeb.EditorLiveTest do
 
       eventually(fn -> has_element?(view, "#extension-word-count", "disabled") end)
       run(view, "workbench.action.closeActiveEditor")
-      refute has_element?(view, "#tabs [data-path='extension:word-count']")
+      refute has_element?(view, "[data-tabs] [data-path='extension:word-count']")
       run(view, "bee.plugins.enable", ["word-count"])
     end
 
@@ -1624,7 +1704,7 @@ defmodule BeeWeb.EditorLiveTest do
       assert icon.("#explorer button[phx-value-path='lib']") == "/plugins/icons/i/open.svg"
 
       open_file(view, "README.md")
-      assert icon.("#tabs") == "/plugins/icons/i/md.svg"
+      assert icon.("[data-tabs]") == "/plugins/icons/i/md.svg"
 
       # Served from the plugin's folder; nothing else is.
       conn = get(build_conn(), "/plugins/icons/i/md.svg")
@@ -1716,7 +1796,7 @@ defmodule BeeWeb.EditorLiveTest do
       assert text == "DEFMODULE M do\nend\n"
       # the editor then reports the change as usual
       render_hook(view, "doc_changed", %{"path" => path, "text" => text})
-      assert has_element?(view, "#tabs [data-dirty]")
+      assert has_element?(view, "[data-tabs] [data-dirty]")
     end
 
     test "browser parts are handed to the page; their messages are shown", %{conn: conn} do
@@ -1943,8 +2023,8 @@ defmodule BeeWeb.EditorLiveTest do
       files = [Path.join(other, "other.txt"), "two.txt"]
       {:ok, view, _html} = live(conn, ~p"/?#{[folder: other, file: files]}")
 
-      assert has_element?(view, "#tabs", "other.txt")
-      assert has_element?(view, "#tabs", "two.txt")
+      assert has_element?(view, "[data-tabs]", "other.txt")
+      assert has_element?(view, "[data-tabs]", "two.txt")
 
       render_hook(view, "run_command", %{
         "command" => "bee.openFile",
@@ -2084,7 +2164,7 @@ defmodule BeeWeb.EditorLiveTest do
       refute has_element?(view, "#explorer-edit")
       assert File.exists?(Path.join(root, "lib/new.ex"))
       assert has_element?(view, entry("lib/new.ex"))
-      assert has_element?(view, "#tabs", "new.ex")
+      assert has_element?(view, "[data-tabs]", "new.ex")
 
       right_click(view, "#explorer")
       menu_click(view, "explorer.newFolder")
@@ -2117,8 +2197,8 @@ defmodule BeeWeb.EditorLiveTest do
       assert File.read!(guide) == "# Readme"
       refute File.exists?(readme)
 
-      assert has_element?(view, "#tabs", "GUIDE.md")
-      refute has_element?(view, "#tabs", "README.md")
+      assert has_element?(view, "[data-tabs]", "GUIDE.md")
+      refute has_element?(view, "[data-tabs]", "README.md")
       assert Bee.Editor.Buffer.get(guide).text == "# Changed"
       assert_push_event(view, "cm:open", %{path: ^guide, text: "# Changed"})
     end
@@ -2142,7 +2222,7 @@ defmodule BeeWeb.EditorLiveTest do
       view |> form("#palette-form") |> render_submit()
       refute File.exists?(Path.join(root, "lib"))
       refute has_element?(view, entry("lib"))
-      refute has_element?(view, "#tabs", "app.ex")
+      refute has_element?(view, "[data-tabs]", "app.ex")
     end
 
     test "copy and cut, then paste into a folder", %{conn: conn} do
@@ -2169,7 +2249,7 @@ defmodule BeeWeb.EditorLiveTest do
       moved = Path.join(root, "lib/mix.exs")
       assert File.exists?(moved)
       refute File.exists?(Path.join(root, "mix.exs"))
-      assert has_element?(view, "#tabs [title='lib/mix.exs']")
+      assert has_element?(view, "[data-tabs] [title='lib/mix.exs']")
 
       # A cut is pasted once.
       right_click(view, entry("lib"))
