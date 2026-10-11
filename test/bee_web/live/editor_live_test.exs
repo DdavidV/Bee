@@ -2399,6 +2399,65 @@ defmodule BeeWeb.EditorLiveTest do
     end
   end
 
+  describe "go to definition" do
+    defp go_to(view, path, line) do
+      render_hook(view, "language_goto", %{
+        "feature" => "definition",
+        "path" => path,
+        "position" => %{"line" => line, "character" => 0}
+      })
+    end
+
+    defp gotos(view), do: :sys.get_state(view.pid).socket.assigns.language_gotos
+
+    test "says it is looking, until the answer comes", %{conn: conn} do
+      path = Path.join(Bee.Workspace.root(), "mix.exs")
+      {:ok, view, _html} = live(conn, ~p"/")
+      open_file(view, "mix.exs")
+
+      # (Nobody to ask here: the answer, none, is on its way already.)
+      assert go_to(view, path, 0) =~ "Looking for the definition…"
+      eventually(fn -> has_element?(view, "#status", "No definition found") end)
+      assert gotos(view) == %{}
+    end
+
+    test "asked again before the answer, only the place asked for last is gone to", %{conn: conn} do
+      path = Path.join(Bee.Workspace.root(), "mix.exs")
+      {:ok, view, _html} = live(conn, ~p"/")
+      open_file(view, "mix.exs")
+
+      # Asked before, and not answered (a language server still building);
+      # and places to pick from, which stay.
+      [slow, slower, pick] = [make_ref(), make_ref(), make_ref()]
+      places = [%{"path" => path, "from" => %{"line" => 1, "character" => 0}}]
+
+      :sys.replace_state(view.pid, fn state ->
+        gotos = %{slow => "definition", slower => "typeDefinition", pick => places}
+        put_in(state.socket.assigns.language_gotos, gotos)
+      end)
+
+      # (Nobody to ask here: the new one is answered at once, with none.)
+      go_to(view, path, 0)
+      eventually(fn -> has_element?(view, "#status", "No definition found") end)
+      assert Map.keys(gotos(view)) == [pick]
+
+      # Their answers come all the same, late: nothing opens for them.
+      send(view.pid, {:language_reply, slow, {:ok, places}})
+      send(view.pid, {:language_reply, slower, {:ok, places}})
+      render(view)
+      refute_push_event(view, "cm:reveal", %{}, 100)
+
+      # One still asked for opens its place when it is answered.
+      :sys.replace_state(view.pid, fn state ->
+        put_in(state.socket.assigns.language_gotos[slow], "definition")
+      end)
+
+      send(view.pid, {:language_reply, slow, {:ok, places}})
+      assert_push_event(view, "cm:reveal", %{path: ^path, from: 15, to: 15})
+      assert Map.keys(gotos(view)) == [pick]
+    end
+  end
+
   describe "notifications" do
     defp message(view, level, text) do
       send(view.pid, {:bee_api, {:show_message, level, text}})

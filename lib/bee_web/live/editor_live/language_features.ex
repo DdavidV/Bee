@@ -45,6 +45,9 @@ defmodule BeeWeb.EditorLive.LanguageFeatures do
 
   # Go to Definition and its relatives: the place is opened when it is
   # known (`{:language_reply, ref, …}`), picked first if there are several.
+  # The answer can take a while (a language server still building): the
+  # status bar says it is looked for, and asking again gives up on what was
+  # asked before – only the place asked for last is gone to.
   def handle_event(
         "language_goto",
         %{"feature" => feature, "path" => path, "position" => %{} = position},
@@ -55,8 +58,13 @@ defmodule BeeWeb.EditorLive.LanguageFeatures do
     if Workbench.open?(workbench(socket), path) do
       ref = make_ref()
       root = socket.assigns.root
+      socket = forget_gotos(socket)
       Bee.Languages.Features.request(root, feature, path, %{position: position}, {self(), ref})
-      {:halt, update(socket, :language_gotos, &Map.put(&1, ref, feature))}
+
+      {:halt,
+       socket
+       |> update(:language_gotos, &Map.put(&1, ref, feature))
+       |> change(&Workbench.set_status(&1, looking(feature)))}
     else
       {:halt, socket}
     end
@@ -148,7 +156,12 @@ defmodule BeeWeb.EditorLive.LanguageFeatures do
 
       Map.has_key?(socket.assigns.language_gotos, ref) ->
         {feature, gotos} = Map.pop(socket.assigns.language_gotos, ref)
-        {:halt, go_to(assign(socket, language_gotos: gotos), feature, reply)}
+
+        {:halt,
+         socket
+         |> assign(language_gotos: gotos)
+         |> found(feature)
+         |> go_to(feature, reply)}
 
       Map.has_key?(socket.assigns.renames, ref) ->
         {step, renames} = Map.pop(socket.assigns.renames, ref)
@@ -386,6 +399,24 @@ defmodule BeeWeb.EditorLive.LanguageFeatures do
     "declaration" => "declaration",
     "implementation" => "implementation"
   }
+
+  # What the status bar says while a place is looked for.
+  defp looking("references"), do: "Looking for references…"
+  defp looking(feature), do: "Looking for the #{@goto_names[feature]}…"
+
+  # The answer came: the status bar doesn't say so any more.
+  defp found(socket, feature) do
+    if socket.assigns.status == looking(feature),
+      do: change(socket, &Workbench.set_status(&1, nil)),
+      else: socket
+  end
+
+  # Gives up on the places still looked for (not on those to pick from).
+  defp forget_gotos(socket) do
+    {asked, kept} = Enum.split_with(socket.assigns.language_gotos, &is_binary(elem(&1, 1)))
+    for {ref, _feature} <- asked, do: Bee.Languages.Features.cancel(socket.assigns.root, ref)
+    assign(socket, language_gotos: Map.new(kept))
+  end
 
   # Where a symbol is defined (`[%{"path", "from", "to"}]`): there, or
   # picked among them in the palette.

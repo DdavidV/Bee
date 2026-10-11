@@ -10,6 +10,9 @@
 const glob = require("./glob")
 const {Disposable, EventEmitter, Uri} = require("./types")
 
+// Text without its `$(icon)`s (Bee shows an item's icon beside its text).
+const stripIcons = text => String(text ?? "").replace(/\$\([a-z0-9-]+(~spin)?\)\s*/g, "").trim()
+
 // register*Provider → the feature's name in Bee.
 const FEATURES = {
   registerCompletionItemProvider: "completion",
@@ -177,11 +180,47 @@ class Languages {
         return [...all.values()]
       },
       onDidChangeDiagnostics: languages.onDiagnostics.event,
-      // Shown nowhere yet: kept so its owner can set and dispose it.
-      createLanguageStatusItem: (id, selector) => ({
-        id, selector, name: undefined, text: "", detail: undefined, severity: 0, busy: false,
-        command: undefined, accessibilityInformation: undefined, dispose() {},
-      }),
+      // What a language's extension says of itself (a language server
+      // starting, running, stopped): an item of Bee's status bar, on the
+      // right, spinning while it is busy. (VS Code shows it for the files
+      // its selector matches; here it is shown for the workspace.)
+      createLanguageStatusItem: (id, selector) => {
+        const key = `language-status:${id}`
+        const item = {
+          id, selector, name: undefined, text: "", detail: undefined, severity: 0, busy: false,
+          command: undefined, accessibilityInformation: undefined,
+          _disposed: false,
+          dispose() {
+            this._disposed = true
+            host.notify("statusItem", {extension: extension.name, id: key, item: null})
+          },
+        }
+        const show = () => {
+          if (item._disposed) return
+          const text = stripIcons(String(item.text || item.name || ""))
+          if (!text) return host.notify("statusItem", {extension: extension.name, id: key, item: null})
+          const command = typeof item.command === "string" ? item.command : item.command && item.command.command
+          const icon = item.busy ? "$(loading~spin)" : item.severity === 2 ? "$(error)" : item.severity === 1 ? "$(warning)" : null
+          host.notify("statusItem", {
+            extension: extension.name, id: key,
+            item: {
+              text, icon,
+              tooltip: [item.detail, command && item.command.title].filter(Boolean).join(" – ") || null,
+              command: command || null,
+              arguments: (item.command && item.command.arguments) || [],
+              alignment: "right",
+              priority: 0,
+            },
+          })
+        }
+        return new Proxy(item, {
+          set(target, prop, value) {
+            target[prop] = value
+            if (["text", "name", "detail", "severity", "busy", "command"].includes(prop)) show()
+            return true
+          },
+        })
+      },
       setLanguageConfiguration: () => new Disposable(() => {}),
       registerWorkspaceSymbolProvider: provider => languages.register(extension, "workspaceSymbol", "*", provider, {}),
     }

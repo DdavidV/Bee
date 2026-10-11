@@ -509,9 +509,96 @@ export const goTo = (view, feature, pos = view.state.selection.main.head) => {
   if (requester) requester.goTo(feature, view.state, toPosition(view.state, pos))
 }
 
+// With Ctrl held (Cmd on a Mac), the word under the pointer is a link to
+// its definition: underlined, the pointer a hand – while the file has
+// someone to ask for definitions.
+const setLink = StateEffect.define()
+const linkMark = Decoration.mark({class: "cm-language-link"})
+
+const linkField = StateField.define({
+  create: () => Decoration.none,
+  update(value, tr) {
+    for (const effect of tr.effects) {
+      if (effect.is(setLink)) return effect.value ? Decoration.set([linkMark.range(effect.value.from, effect.value.to)]) : Decoration.none
+    }
+    return tr.docChanged ? Decoration.none : value
+  },
+  provide: field => EditorView.decorations.from(field),
+})
+
+const linkPlugin = ViewPlugin.fromClass(
+  class {
+    constructor(view) {
+      this.view = view
+      // Where the pointer is over the text (null: elsewhere), and the word shown.
+      this.at = null
+      this.shown = null
+      // Ctrl pressed or let go while the pointer rests; the window left with it held.
+      this.key = event => this.sync(event)
+      this.leave = () => {
+        this.at = null
+        this.show(null)
+      }
+      this.document = view.dom.ownerDocument
+      this.document.addEventListener("keydown", this.key)
+      this.document.addEventListener("keyup", this.key)
+      this.document.defaultView.addEventListener("blur", this.leave)
+    }
+
+    update(update) {
+      if (update.docChanged) this.shown = null
+    }
+
+    move(event) {
+      this.at = {x: event.clientX, y: event.clientY}
+      this.sync(event)
+    }
+
+    sync(event) {
+      const held = (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey
+      this.show(held && this.at && featuresOf(this.view.state).definition ? this.wordAt(this.at) : null)
+    }
+
+    // The word the pointer is on (not one it is merely next to).
+    wordAt(at) {
+      const pos = this.view.posAtCoords(at)
+      const word = pos === null ? null : this.view.state.wordAt(pos)
+      if (!word) return null
+      const start = this.view.coordsAtPos(word.from, 1)
+      const end = this.view.coordsAtPos(word.to, -1)
+      return start && end && at.x >= start.left && at.x <= end.right ? word : null
+    }
+
+    show(word) {
+      const shown = this.shown
+      if (word ? shown && shown.from === word.from && shown.to === word.to : !shown) return
+      this.shown = word && {from: word.from, to: word.to}
+      this.view.dispatch({effects: setLink.of(this.shown)})
+    }
+
+    destroy() {
+      this.document.removeEventListener("keydown", this.key)
+      this.document.removeEventListener("keyup", this.key)
+      this.document.defaultView.removeEventListener("blur", this.leave)
+    }
+  },
+  {
+    eventHandlers: {
+      mousemove(event) {
+        this.move(event)
+      },
+      mouseleave() {
+        this.leave()
+      },
+    },
+  },
+)
+
 // Ctrl+click (Cmd on a Mac) goes to the definition, as in VS Code; another
 // cursor is added with Alt+click.
 const clicks = [
+  linkField,
+  linkPlugin,
   EditorView.clickAddsSelectionRange.of(event => event.altKey && !event.shiftKey),
   Prec.highest(
     EditorView.domEventHandlers({
@@ -533,6 +620,7 @@ const theme = EditorView.baseTheme({
   ".cm-language-info > * + *": {marginTop: "4px", paddingTop: "4px", borderTop: "1px solid color-mix(in srgb, currentColor 15%, transparent)"},
   ".cm-language-signature": {fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace", whiteSpace: "pre-wrap"},
   ".cm-language-parameter": {textDecoration: "underline"},
+  ".cm-language-link": {textDecoration: "underline", cursor: "pointer"},
   ".cm-language-lightbulbs": {width: "1.2em"},
   ".cm-language-lightbulb": {cursor: "pointer", fontSize: "0.8em", lineHeight: "1"},
   ".cm-language-highlight": {backgroundColor: "color-mix(in srgb, currentColor 14%, transparent)", borderRadius: "2px"},

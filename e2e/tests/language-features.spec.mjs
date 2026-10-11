@@ -173,7 +173,29 @@ test("go to definition: F12 and Ctrl+click, in this file or another; Alt+click a
   const lines = page.locator("#editor .cm-line")
   await expect(page.locator("#workbench")).toHaveAttribute("data-context", /"editorHasDefinitionProvider":true/)
 
-  // Ctrl+click: the cursor goes to the definition (one place, this file).
+  // With Ctrl held, the word under the pointer is a link: underlined, the
+  // pointer a hand – until Ctrl is let go, or the pointer leaves the word.
+  const link = page.locator("#editor .cm-language-link")
+  await lines.nth(1).hover({position: {x: 50, y: 8}})
+  await expect(link).toHaveCount(0)
+  await page.keyboard.down("Control")
+  await expect(link).toHaveText("once")
+  await expect(link).toHaveCSS("cursor", "pointer")
+  await expect(link).toHaveCSS("text-decoration-line", "underline")
+  await lines.nth(1).hover({position: {x: 10, y: 8}})
+  await expect(link).toHaveText("uses")
+  await lines.nth(1).hover({position: {x: 600, y: 8}})
+  await expect(link).toHaveCount(0)
+  await lines.nth(1).hover({position: {x: 50, y: 8}})
+  await expect(link).toHaveText("once")
+  await page.keyboard.up("Control")
+  await expect(link).toHaveCount(0)
+  await page.keyboard.down("Control")
+  await page.keyboard.down("Shift")
+  await expect(link).toHaveCount(0)
+  await page.keyboard.up("Shift")
+  await page.keyboard.up("Control")
+
   await lines.nth(1).click({position: {x: 50, y: 8}, modifiers: ["Control"]})
   await expect(page.locator("#editor .cm-activeLine")).toHaveText("def once")
   await page.keyboard.type("X")

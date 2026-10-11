@@ -240,6 +240,46 @@ defmodule Bee.Extensions.HostTest do
       assert status(root) == :active
     end
 
+    test "a language status item is a status bar item, spinning while busy", %{root: root} do
+      item = fn ->
+        case Bee.UI.status_items(root) do
+          [item] -> Map.take(item, [:owner, :text, :icon, :tooltip, :command, :alignment])
+          none -> none
+        end
+      end
+
+      run(root, "hello.languageStatus")
+
+      eventually(fn ->
+        item.() == %{
+          owner: "hello",
+          text: "HelloLS",
+          icon: "$(loading~spin)",
+          tooltip: "Starting language server… – Restart",
+          command: "hello.sayHello",
+          alignment: :right
+        }
+      end)
+
+      run(root, "hello.languageStatus", args: ["running"])
+
+      eventually(fn ->
+        match?(
+          %{text: "HelloLS v1", icon: nil, tooltip: "Language server running – Restart"},
+          item.()
+        )
+      end)
+
+      run(root, "hello.languageStatus", args: ["stopped"])
+
+      eventually(fn ->
+        match?(%{icon: "$(warning)", tooltip: "Language server stopped" <> _}, item.())
+      end)
+
+      run(root, "hello.languageStatus", args: ["gone"])
+      eventually(fn -> item.() == [] end)
+    end
+
     test "a command that throws is reported, the extension goes on", %{root: root} do
       run(root, "hello.broken")
       assert_receive {:bee_api, {:show_message, :error, message}}, 5_000

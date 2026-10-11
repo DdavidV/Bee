@@ -58,6 +58,17 @@ function activate(context) {
       item.text = `$(megaphone) ${greeting()}`
       context.subscriptions.push(item)
     }),
+    // What a language server's extension says of itself: starting, then
+    // (run again) running, stopped or gone.
+    vscode.commands.registerCommand("hello.languageStatus", (state = "starting") => {
+      const item = (context.languageStatus ||= vscode.languages.createLanguageStatusItem("hello.status", {language: "plaintext"}))
+      item.name = "HelloLS"
+      item.command = {command: "hello.sayHello", title: "Restart"}
+      if (state === "starting") Object.assign(item, {busy: true, text: "HelloLS", detail: "Starting language server…"})
+      if (state === "running") Object.assign(item, {busy: false, text: "$(check) HelloLS v1", detail: "Language server running"})
+      if (state === "stopped") Object.assign(item, {busy: false, severity: vscode.LanguageStatusSeverity.Warning, detail: "Language server stopped"})
+      if (state === "gone") item.dispose()
+    }),
     vscode.commands.registerCommand("hello.describe", () => {
       const editor = vscode.window.activeTextEditor
       const state = context.globalState
