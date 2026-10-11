@@ -1,12 +1,14 @@
 defmodule Bee.UI do
   @moduledoc """
   What plugins put on screen, as data: the content of their views, their
-  status bar items, file decorations and context keys. Plugins set them
+  status bar items, file decorations, context keys and the progress of
+  what they are busy with. Plugins set them
   through `Bee.API`. Each workspace has its own (a plugin runs once per
   workspace, see `Bee.Plugins`), rendered by the windows showing it.
 
   Kept in ETS (reads don't go through the process); changes broadcast
-  `{:ui_changed, {:view, id} | :status_items | :decorations | :context}` on
+  `{:ui_changed, {:view, id} | :status_items | :decorations | :context |
+  :progress}` on
   the workspace's topic (`subscribe/1`).
 
   ## View content
@@ -47,6 +49,18 @@ defmodule Bee.UI do
         alignment: :left, priority: 0}
 
   Higher priority goes further left.
+
+  ## Progress
+
+  Something a plugin is busy with (a language server indexing, a build),
+  shown with a spinner in the status bar and in the notifications until
+  the plugin removes it:
+
+      %{title: "Building PLTs", message: "stdlib", percent: 40,
+        cancellable: false, toast: false}
+
+  `percent` (0–100) is left out when nobody knows; `toast: true` also pops
+  it up as a notification.
   """
   use GenServer
 
@@ -99,6 +113,25 @@ defmodule Bee.UI do
 
   def delete_status_item(root, owner, id) when is_binary(root),
     do: GenServer.call(__MODULE__, {:delete, {:status, root, owner, id}})
+
+  ## Progress
+
+  @doc """
+  What plugins are busy with in workspace `root`, `[%{id, owner, title,
+  message, percent, cancellable, toast, started}]`, the oldest first.
+  """
+  def progress(root) do
+    :ets.match(@table, {{:progress, root, :_, :_}, :_, :"$1"})
+    |> Enum.map(&hd/1)
+    |> Enum.sort_by(&{&1.started, &1.owner, &1.id})
+  end
+
+  @doc "Adds `owner`'s progress `id` in workspace `root`, or changes what it says."
+  def put_progress(root, owner, id, item) when is_binary(root),
+    do: GenServer.call(__MODULE__, {:put_progress, root, owner, id, normalize_progress!(item)})
+
+  def delete_progress(root, owner, id) when is_binary(root),
+    do: GenServer.call(__MODULE__, {:delete, {:progress, root, owner, id}})
 
   ## File decorations
 
@@ -225,6 +258,23 @@ defmodule Bee.UI do
   defp normalize_status_item!(_owner, _id, other),
     do: raise(ArgumentError, "a status bar item must be a map, got: #{inspect(other)}")
 
+  defp normalize_progress!(item) when is_map(item) do
+    %{
+      title: string(item, :title) || "",
+      message: string(item, :message),
+      percent:
+        case get(item, :percent) do
+          n when is_number(n) -> n |> max(0) |> min(100) |> round()
+          _ -> nil
+        end,
+      cancellable: get(item, :cancellable) == true,
+      toast: get(item, :toast) == true
+    }
+  end
+
+  defp normalize_progress!(other),
+    do: raise(ArgumentError, "progress must be a map, got: #{inspect(other)}")
+
   defp count(items), do: Enum.reduce(items, 0, &(&2 + 1 + count(&1.children)))
 
   defp color(c) when c in @colors, do: c
@@ -280,9 +330,28 @@ defmodule Bee.UI do
     {:reply, :ok, state}
   end
 
-  def handle_call({:delete, key}, _from, state) do
-    :ets.delete(@table, key)
+  # What it says changes; when it started (its place among the others) doesn't.
+  def handle_call({:put_progress, root, owner, id, item}, _from, state) do
+    key = {:progress, root, owner, id}
+
+    started =
+      case :ets.lookup(@table, key) do
+        [{_, _, %{started: started}}] -> started
+        [] -> System.unique_integer([:monotonic])
+      end
+
+    :ets.insert(@table, {key, owner, Map.merge(item, %{id: id, owner: owner, started: started})})
     broadcast(key)
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:delete, key}, _from, state) do
+    # (Nothing to tell when it wasn't there: a progress is often ended twice.)
+    if :ets.member(@table, key) do
+      :ets.delete(@table, key)
+      broadcast(key)
+    end
+
     {:reply, :ok, state}
   end
 
@@ -303,4 +372,5 @@ defmodule Bee.UI do
   defp change({:status, _root, _owner, _id}), do: :status_items
   defp change({:decorations, _root, _owner}), do: :decorations
   defp change({:context, _root, _owner, _key}), do: :context
+  defp change({:progress, _root, _owner, _id}), do: :progress
 end

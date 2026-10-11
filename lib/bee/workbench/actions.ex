@@ -223,6 +223,23 @@ defmodule Bee.Workbench.Actions do
   @command "workbench.output.action.clearOutput"
   def clear_output(wb), do: {wb, [:clear_output]}
 
+  ## Notifications (the window's: BeeWeb.Workbench.Notifications)
+
+  @command "notifications.toggleList"
+  def toggle_notifications(wb), do: {wb, [{:notifications, :toggle}]}
+
+  @command "notifications.showList"
+  def show_notifications(wb), do: {wb, [{:notifications, :show}]}
+
+  @command "notifications.hideList"
+  def hide_notifications(wb), do: {wb, [{:notifications, :hide}]}
+
+  @command "notifications.clearAll"
+  def clear_notifications(wb), do: {wb, [{:notifications, :clear}]}
+
+  @command "notifications.hideToasts"
+  def hide_toasts(wb), do: {wb, [{:notifications, :hide_toasts}]}
+
   # Formatting by an extension's formatter (Bee.Languages.Features).
   @command "editor.action.formatDocument"
   def format_document(wb), do: format(wb, :document)

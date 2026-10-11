@@ -36,6 +36,17 @@ function activate(context) {
       const said = answer === "Yes" ? "Yes" : answer ? answer.title : "nothing"
       return vscode.window.showInformationMessage(`${name}: ${said}`)
     }),
+    // Busy until cancelled (the Cancel of its notification).
+    vscode.commands.registerCommand("hello.progress", () =>
+      vscode.window.withProgress(
+        {location: vscode.ProgressLocation.Notification, title: "$(sync~spin) Building", cancellable: true},
+        (progress, token) =>
+          new Promise(resolve => {
+            progress.report({message: "step 1", increment: 40})
+            token.onCancellationRequested(() => resolve(vscode.window.showWarningMessage("cancelled")))
+          }),
+      ),
+    ),
     vscode.commands.registerCommand("hello.context", (value = true) =>
       vscode.commands.executeCommand("setContext", "hello.ready", value),
     ),

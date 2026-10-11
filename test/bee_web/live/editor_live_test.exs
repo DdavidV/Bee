@@ -1397,7 +1397,7 @@ defmodule BeeWeb.EditorLiveTest do
       # open: changed in the editor (undoable), not on disk
       assert_push_event(view, "cm:edit", %{path: ^mix, text: "defNodule N do\nend\n"})
       assert File.read!(mix) == "defmodule M do\nend\n"
-      assert has_element?(view, "#flash-info", "Replaced")
+      assert has_element?(view, "#notification-toasts [data-severity=info]", "Replaced")
     end
 
     test "invalid regexes are reported", %{conn: conn} do
@@ -1812,7 +1812,7 @@ defmodule BeeWeb.EditorLiveTest do
         "text" => "oops"
       })
 
-      assert has_element?(view, "#flash-error", "insert-date: oops")
+      assert has_element?(view, "#notification-toasts [data-severity=error]", "insert-date: oops")
     end
 
     test "open editors switch language when a plugin contributes it", %{conn: conn} do
@@ -2396,6 +2396,108 @@ defmodule BeeWeb.EditorLiveTest do
       render_hook(view, "view_resize", %{"reset" => ["panes.a", "panes.b"]})
       assert pane_style(view, "a") =~ "var(--pane-panes_a, 1) 1"
       assert pane_style(view, "b") =~ "var(--pane-panes_b, 1) 1"
+    end
+  end
+
+  describe "notifications" do
+    defp message(view, level, text) do
+      send(view.pid, {:bee_api, {:show_message, level, text}})
+      render(view)
+    end
+
+    test "pop up at the bottom right, by severity, and stay in the bell's list", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      assert has_element?(view, "#status-notifications[data-count='0']")
+      refute has_element?(view, "#notification-toasts")
+
+      message(view, :info, "saved")
+      message(view, :warning, "careful")
+      message(view, :error, "broken")
+
+      assert has_element?(view, "#notification-toasts [data-severity=info]", "saved")
+      assert has_element?(view, "#notification-toasts [data-severity=warning]", "careful")
+      assert has_element?(view, "#notification-toasts [data-severity=error]", "broken")
+      assert has_element?(view, "#status-notifications[data-count='3']")
+
+      # After a while it is no toast any more, but still in the list.
+      [%{id: id} | _] = :sys.get_state(view.pid).socket.assigns.notifications
+      send(view.pid, {:toast_expired, id})
+      refute render(view) =~ ~s(id="toast-#{id}")
+
+      run(view, "notifications.toggleList")
+      refute has_element?(view, "#notification-toasts")
+      assert has_element?(view, "#notification-center li[data-severity=error]", "broken")
+      assert has_element?(view, "#notification-center li[data-severity=info]", "saved")
+
+      # Open, new ones show in the list, not as toasts.
+      message(view, :info, "one more")
+      refute has_element?(view, "#notification-toasts")
+      assert has_element?(view, "#notification-center li", "one more")
+
+      view |> element("#notification-#{id} button") |> render_click()
+      refute has_element?(view, "#notification-center li", "broken")
+
+      view |> element("#notifications-clear") |> render_click()
+      refute has_element?(view, "#notification-center")
+      assert has_element?(view, "#status-notifications[data-count='0']")
+
+      run(view, "notifications.showList")
+      assert has_element?(view, "#notification-center", "No New Notifications")
+      run(view, "notifications.hideList")
+      refute has_element?(view, "#notification-center")
+    end
+
+    test "the same one again is counted; only the last maxCount are kept", %{conn: conn} do
+      put_user_settings(%{"workbench.notifications.maxCount" => 2})
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      message(view, :info, "first")
+      message(view, :info, "second")
+      message(view, :info, "second")
+      assert has_element?(view, "#notification-toasts li", "2")
+      assert has_element?(view, "#status-notifications[data-count='2']")
+
+      message(view, :error, "third")
+      run(view, "notifications.showList")
+      assert has_element?(view, "#notification-center li", "third")
+      assert has_element?(view, "#notification-center li", "second")
+      refute has_element?(view, "#notification-center li", "first")
+    end
+
+    test "a toast leaves by itself after toastTimeout seconds", %{conn: conn} do
+      put_user_settings(%{"workbench.notifications.toastTimeout" => 1})
+      {:ok, view, _html} = live(conn, ~p"/")
+
+      message(view, :info, "brief")
+      assert has_element?(view, "#notification-toasts li", "brief")
+      Process.sleep(1_100)
+      refute has_element?(view, "#notification-toasts")
+      assert has_element?(view, "#status-notifications[data-count='1']")
+    end
+
+    test "what plugins are busy with: a spinner in the status bar, an entry in the list", %{
+      conn: conn
+    } do
+      root = Bee.Workspace.root()
+      on_exit(fn -> Bee.UI.forget("busy") end)
+      {:ok, view, _html} = live(conn, ~p"/")
+      refute has_element?(view, "#status-progress")
+
+      Bee.UI.put_progress(root, "busy", "1", %{title: "Building PLTs", message: "stdlib"})
+      assert has_element?(view, "#status-progress", "Building PLTs: stdlib")
+      # Not one that pops up.
+      refute has_element?(view, "#notification-toasts")
+
+      Bee.UI.put_progress(root, "busy", "1", %{title: "Building PLTs", percent: 40, toast: true})
+      assert has_element?(view, "#notification-toasts [data-progress=busy]", "40%")
+
+      view |> element("#status-progress") |> render_click()
+      assert has_element?(view, "#notification-center [data-progress=busy]", "Building PLTs")
+      assert has_element?(view, "#notification-center", "Notifications")
+
+      Bee.UI.delete_progress(root, "busy", "1")
+      refute has_element?(view, "#status-progress")
+      refute has_element?(view, "#notification-center [data-progress]")
     end
   end
 

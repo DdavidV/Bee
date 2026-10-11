@@ -153,7 +153,8 @@ are installed and their code runs.
 | Area | Supported |
 |---|---|
 | Commands | Registering and running commands, including Bee's own |
-| Messages | Information, warning and error messages with buttons, pick lists, input boxes, progress |
+| Messages | Information, warning and error messages (notifications at the bottom right, kept in the list the status bar's bell opens), with buttons as a pick list; input boxes |
+| Progress | `window.withProgress`: a spinner with the title and what is reported in the status bar and the notification list, a percentage when increments are reported, Cancel when `cancellable`. A language server's work-done progress (indexing, building) arrives this way |
 | Editors and documents | The active editor, open documents, reading and editing text, opening files |
 | Configuration | Reading and updating settings, change notifications |
 | Workspace | The folder, finding files, file watchers, edits spanning several files |
@@ -232,7 +233,11 @@ channel of the Output panel. Channels an extension creates, such as a
 language server's log, appear there too.
 
 If the Node.js process exits, the extensions that were running in it are
-started again in a new one, up to three times a minute.
+started again in a new one. After `extensions.maxStartFailures` failures
+in a minute (4 unless set) Bee gives up and says so in an error
+notification. An extension that fails to activate is reported the same
+way. A language server that keeps crashing is reported by its extension's
+own language client, whose error messages are notifications too.
 
 ### Turning code off
 

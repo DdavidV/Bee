@@ -362,10 +362,37 @@ defmodule Bee.PluginsTest do
       assert Host.whereis("word-count", Bee.Workspace.root()) not in [nil, pid]
     end
 
+    Bee.API.subscribe_window(Bee.Workspace.root())
     kill_host("word-count")
     assert %{errors: [%{message: message}]} = await_status("word-count", :failed)
     assert message =~ "crashed 4 times in a minute"
+    # Given up on: the windows are told.
+    assert_receive {:bee_api,
+                    {:show_message, :error,
+                     "Word Count crashed 4 times in a minute and isn't started again."}}
+
     assert {:error, _} = Plugins.execute("word-count", "wordCount.count", ctx())
+  end
+
+  test "extensions.maxStartFailures: how often it may fail before it is given up on" do
+    File.write!(Bee.Settings.user_path(), ~s({"extensions.maxStartFailures": 2}))
+    Bee.Settings.reload()
+
+    on_exit(fn ->
+      File.rm(Bee.Settings.user_path())
+      Bee.Settings.reload()
+    end)
+
+    install("word-count")
+    Plugins.reload()
+    :ok = Plugins.execute("word-count", "wordCount.count", ctx())
+    await_status("word-count", :active)
+
+    kill_host("word-count")
+    await_status("word-count", :active)
+    kill_host("word-count")
+    assert %{errors: [%{message: message}]} = await_status("word-count", :failed)
+    assert message =~ "crashed 2 times in a minute"
   end
 
   test "compile errors fail activation and point at the file" do

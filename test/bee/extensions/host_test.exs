@@ -249,6 +249,44 @@ defmodule Bee.Extensions.HostTest do
       assert_receive {:bee_api, {:show_message, :info, _}}, 5_000
     end
 
+    test "what it is busy with is progress, until done or cancelled", %{root: root} do
+      run(root, "hello.sayHello")
+      assert_receive {:bee_api, {:show_message, :info, _}}, 5_000
+
+      run(root, "hello.progress")
+
+      eventually(fn ->
+        match?(
+          [
+            %{
+              owner: "hello",
+              title: "Building",
+              message: "step 1",
+              percent: 40,
+              cancellable: true,
+              toast: true
+            }
+          ],
+          Bee.UI.progress(root)
+        )
+      end)
+
+      [%{id: id}] = Bee.UI.progress(root)
+      Host.cancel_progress(root, "hello", id)
+      assert_receive {:bee_api, {:show_message, :warning, "cancelled"}}, 5_000
+      eventually(fn -> Bee.UI.progress(root) == [] end)
+    end
+
+    test "progress left running ends with the host", %{root: root} do
+      run(root, "hello.sayHello")
+      assert_receive {:bee_api, {:show_message, :info, _}}, 5_000
+      run(root, "hello.progress")
+      eventually(fn -> Bee.UI.progress(root) != [] end)
+
+      Plugins.reload()
+      eventually(fn -> Bee.UI.progress(root) == [] end)
+    end
+
     test "when Node exits, the extensions start again in a new one", %{root: root} do
       run(root, "hello.sayHello")
       assert_receive {:bee_api, {:show_message, :info, _}}, 5_000
@@ -259,6 +297,19 @@ defmodule Bee.Extensions.HostTest do
 
       run(root, "hello.sayHello")
       assert_receive {:bee_api, {:show_message, :info, "Hello from the hello extension"}}, 5_000
+    end
+
+    test "a host that keeps stopping is given up on: an error notification", %{root: root} do
+      :ok = Bee.Settings.update(:user, "extensions.maxStartFailures", fn _ -> 1 end)
+      run(root, "hello.sayHello")
+      assert_receive {:bee_api, {:show_message, :info, _}}, 5_000
+
+      run(root, "hello.crash")
+      assert_receive {:bee_api, {:show_message, :error, message}}, 5_000
+      assert message =~ "The extension host stopped 1 times in a minute and isn't started again"
+      assert message =~ "Not running: Hello"
+      eventually(fn -> status(root) == :failed end)
+      assert Host.whereis(root) == nil
     end
 
     test "stopping the host ends its Node.js process", %{root: root} do
@@ -286,6 +337,8 @@ defmodule Bee.Extensions.HostTest do
       assert {:error, message} = run(root, "hello.sayHello")
       assert message =~ "needs Node.js, which wasn't found"
       assert %{status: :failed, errors: [%{message: ^message}]} = Plugins.get("hello", root)
+      assert_receive {:bee_api, {:show_message, :error, notification}}
+      assert notification =~ "needs Node.js, which wasn't found"
       assert Bee.Commands.Registry.command("hello.sayHello")
       assert Bee.Settings.get("hello.volume") == 7
     end

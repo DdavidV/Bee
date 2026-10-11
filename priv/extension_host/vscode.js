@@ -401,8 +401,9 @@ const createApi = (host, ext) => {
       }
       return output
     },
-    withProgress: (_options, task) =>
-      Promise.resolve(task({report() {}}, new types.CancellationTokenSource().token)),
+    // What the extension is busy with (a language server indexing…): a
+    // spinner in Bee's status bar and its notifications while `task` runs.
+    withProgress: (options, task) => host.progress.run(ext, options || {}, task),
     // Webview panels (webview.js).
     ...host.webviews.api(ext),
   }

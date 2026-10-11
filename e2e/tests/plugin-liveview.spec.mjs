@@ -6,7 +6,7 @@ import {expect, freshBee, test} from "./helpers.mjs"
 import {cpSync, readFileSync, rmSync, writeFileSync} from "node:fs"
 import {dirname, join, resolve} from "node:path"
 import {config, dws} from "../fixtures.mjs"
-import {openBee} from "./helpers.mjs"
+import {info, openBee} from "./helpers.mjs"
 
 freshBee({before: () => install()})
 
@@ -150,7 +150,7 @@ const reloadPlugins = async page => {
   await page.keyboard.press("F1")
   await page.fill("#palette-input", ">Reload Plugins")
   await page.keyboard.press("Enter")
-  await expect(page.locator("#flash-info")).toContainText("Plugins reloaded")
+  await expect(info(page)).toContainText("Plugins reloaded")
 }
 
 test("a changed plugin, reloaded: its LiveView is mounted afresh", async ({page}) => {

@@ -174,8 +174,15 @@ export const menuItem = (menu, name) => menu.getByRole("menuitem", {name})
 export const sidebar = page => page.locator("#sidebar")
 export const panel = page => page.locator("#panel")
 export const statusBar = page => page.locator("#workbench > footer")
-export const info = page => page.locator("#flash-info")
-export const error = page => page.locator("#flash-error")
+// Notifications popped up at the bottom right, the newest of a kind; its ×.
+export const toast = (page, severity) => page.locator(`#notification-toasts > [data-severity=${severity}]`).first()
+export const info = page => toast(page, "info")
+export const warning = page => toast(page, "warning")
+export const error = page => toast(page, "error")
+export const dismiss = notification => notification.getByRole("button", {name: "Clear Notification"}).click()
+// The status bar's bell, and the list of notifications it opens.
+export const bell = page => page.locator("#status-notifications")
+export const notificationCenter = page => page.locator("#notification-center")
 
 // The edge that is dragged to resize the "sidebar" or the "panel".
 export const sash = (page, part) => page.locator(`#sash-${part}`)

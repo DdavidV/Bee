@@ -107,8 +107,9 @@ Everything it registered is undone.
 - Commands of a plugin run one at a time, each with a time limit of ten
   seconds. One that takes too long or fails is stopped, the user is told,
   and the plugin carries on with the state it had before.
-- If the plugin's process itself crashes it is restarted, up to three times
-  a minute. After that it is marked as failed in that folder.
+- If the plugin's process itself crashes it is restarted. After
+  `extensions.maxStartFailures` crashes in a minute (4 unless set) it is
+  marked as failed in that folder, and an error notification says so.
 - When a file in the plugin's folder changes, the plugin is reloaded:
   stopped, its contributions replaced, its code compiled again when next
   needed. Editing a plugin and saving is enough to try the change.
@@ -288,7 +289,8 @@ separate and act on a request when they get to it.
 
 | Area | What you can do |
 |---|---|
-| Messages | Show a notification, set the status bar text |
+| Messages | Show a notification (`show_message/3`: `:info`, `:warning` or `:error`), set the status bar text |
+| Progress | Show what you are busy with (`progress/3`, `end_progress/2`): a spinner with a title, a message and a percentage in the status bar and the notification list |
 | Files | Open a file at a line or a selection. Read the current text of a file, including unsaved changes. Edit an open file as an undoable change |
 | Selections | Read the active editor's selections and their text |
 | Views | Set the content of one of your views. Clear a view's input box |

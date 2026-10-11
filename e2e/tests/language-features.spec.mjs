@@ -5,7 +5,7 @@ import {expect, freshBee, test} from "./helpers.mjs"
 import {cpSync, readFileSync, rmSync, writeFileSync} from "node:fs"
 import {dirname, join, resolve} from "node:path"
 import {config, dws} from "../fixtures.mjs"
-import {openBee, openFile, takeCompletion} from "./helpers.mjs"
+import {info, openBee, openFile, takeCompletion} from "./helpers.mjs"
 
 freshBee({before: () => install()})
 
@@ -81,7 +81,7 @@ test("a workspace edit of the extension's: open files in the editor, as one undo
   await page.keyboard.press("F1")
   await page.fill("#palette-input", ">Fix All BADs")
   await page.keyboard.press("Enter")
-  await expect(page.locator("#flash-info")).toContainText("fixed 1 file(s): true")
+  await expect(info(page)).toContainText("fixed 1 file(s): true")
 
   const line = page.locator("#editor .cm-line").nth(1)
   await expect(line).toHaveText("this is GOOD here")

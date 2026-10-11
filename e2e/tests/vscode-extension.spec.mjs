@@ -6,7 +6,7 @@ import {expect, freshBee, test} from "./helpers.mjs"
 import {cpSync, existsSync, readFileSync, rmSync, writeFileSync} from "node:fs"
 import {dirname, join, resolve} from "node:path"
 import {config} from "../fixtures.mjs"
-import {openBee, openFile} from "./helpers.mjs"
+import {dismiss, error, info, openBee, openFile} from "./helpers.mjs"
 
 freshBee({before: () => install()})
 
@@ -35,7 +35,7 @@ test.beforeEach(async ({page, context, baseURL}) => {
   await page.click("#view-explorer")
 })
 
-const flash = page => page.locator("#flash-info")
+const flash = page => info(page)
 
 test("its commands are in the palette, with their keys", async ({page}) => {
   await page.keyboard.press("F1")
@@ -145,7 +145,7 @@ test("the Explorer's menu and the editor's buttons", async ({page}) => {
   await page.click("#context-menu [data-command='hello.reveal']")
   await expect(flash(page)).toContainText(/Hello, .*\/dws\/one\.txt/)
   // (The message is over the editor's buttons: clicked away.)
-  await flash(page).click()
+  await dismiss(flash(page))
   await expect(flash(page)).toBeHidden()
 
   await page.click("#explorer button[phx-value-path='lib']", {button: "right"})
@@ -240,7 +240,7 @@ test("the Output section: what extensions write, a channel at a time", async ({p
   // Its code starts with its first command.
   await page.keyboard.press("Control+Alt+h")
   await expect(flash(page)).toContainText("from the hello extension")
-  await flash(page).click()
+  await dismiss(flash(page))
 
   // An extension shows its output channel: the panel opens on it.
   await run(page, "hello.output", ["first line"])
@@ -256,7 +256,7 @@ test("the Output section: what extensions write, a channel at a time", async ({p
 
   // A failing command: the extension host's channel has where it was raised.
   await run(page, "hello.broken")
-  await expect(page.locator("#flash-error")).toContainText("broken on purpose")
+  await expect(error(page)).toContainText("broken on purpose")
   await page.selectOption("#output-channel", "Extension Host")
   await expect(text).toContainText("command hello.broken failed: Error: broken on purpose")
   await expect(text).toContainText("extension.js")

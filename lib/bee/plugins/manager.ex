@@ -28,16 +28,20 @@ defmodule Bee.Plugins.Manager do
   commands runs in one of its windows (`onCommand:` needs no more) or one
   of its views is shown (`onView:`). Other events are ignored.
 
-  A host that crashes is restarted, up to three times a minute. When a
-  plugin's folder changes on disk it is reloaded (debounced).
+  A host that crashes is restarted, until it has failed
+  `extensions.maxStartFailures` times in a minute. When a plugin's folder
+  changes on disk it is reloaded (debounced).
+
+  Code that is given up on – it failed to activate, or kept crashing – is
+  told to the workspace's windows as an error notification.
 
   The code of a VS Code extension (a plugin's `extension` part) starts on
   the same occasions, in the workspace's Node.js host
   (`Bee.Extensions.Host`, started with the first one): `extensions`, by
   root, has its status there (`:activating`, `:active`, `:failed`), its
   errors, and `warnings` (API it used that Bee doesn't have). When Node
-  exits, the extensions that ran in it start again in a new one, up to
-  three times a minute. `extensions.disabledCode` names extensions whose
+  exits, the extensions that ran in it start again in a new one, with the
+  same limit. `extensions.disabledCode` names extensions whose
   code doesn't run. An extension that needs others
   (`extensionDependencies`) runs when they are installed and their code
   runs, after theirs.
@@ -55,7 +59,6 @@ defmodule Bee.Plugins.Manager do
 
   @table Bee.Plugins
   @topic "plugins"
-  @max_crashes 3
   # Warnings kept per extension and workspace.
   @max_warnings 50
   @crash_window_ms 60_000
@@ -166,6 +169,7 @@ defmodule Bee.Plugins.Manager do
 
   def handle_cast({:extension_failed, name, root, message}, s) do
     Logger.warning("Bee: extension #{name} failed to activate: #{message}")
+    tell_failure(root, name, "#{display_name(s, name)} failed to activate: #{message}")
 
     {:noreply,
      update_extension(s, name, root, fn extension ->
@@ -663,6 +667,7 @@ defmodule Bee.Plugins.Manager do
             {put_extension(s, name, root, :activating, nil), pid}
 
           {:error, message} ->
+            tell_failure(root, name, "#{display_name(s, name)}: #{message}")
             {put_extension(s, name, root, :failed, message), nil}
         end
     end
@@ -744,7 +749,18 @@ defmodule Bee.Plugins.Manager do
           ),
           do: name
 
-    again? = length(crashes) <= @max_crashes and Map.has_key?(s.roots, root)
+    again? = length(crashes) < max_failures(root) and Map.has_key?(s.roots, root)
+
+    if not again? and running != [] and Map.has_key?(s.roots, root) do
+      names = Enum.map_join(running, ", ", &display_name(s, &1))
+
+      tell_failure(
+        root,
+        "Extension Host",
+        "The extension host stopped #{length(crashes)} times in a minute and isn't started again " <>
+          "(#{inspect(reason)}). Not running: #{names}."
+      )
+    end
 
     Enum.reduce(running, s, fn name, s ->
       if again? do
@@ -907,6 +923,17 @@ defmodule Bee.Plugins.Manager do
       {:shutdown, {:activation_failed, problems}} ->
         Logger.warning("Bee: plugin #{name} failed to activate: #{inspect(problems)}")
 
+        tell_failure(
+          root,
+          name,
+          "#{plugin.display_name} failed to activate" <>
+            case problems do
+              [%{message: message} | _] -> ": #{message}"
+              [message | _] when is_binary(message) -> ": #{message}"
+              _ -> ""
+            end
+        )
+
         update_host(s, name, root, fn _ ->
           %{status: :failed, errors: Enum.map(problems, &problem(plugin, &1)), crashes: []}
         end)
@@ -916,9 +943,15 @@ defmodule Bee.Plugins.Manager do
         crashes = [now | Enum.filter(host.crashes, &(now - &1 < @crash_window_ms))]
         Logger.error("Bee: plugin #{name} crashed in #{root}: #{Exception.format_exit(reason)}")
 
-        if length(crashes) > @max_crashes do
+        if length(crashes) >= max_failures(root) do
           message =
             "crashed #{length(crashes)} times in a minute, last: #{Exception.format_exit(reason)}"
+
+          tell_failure(
+            root,
+            name,
+            "#{plugin.display_name} crashed #{length(crashes)} times in a minute and isn't started again."
+          )
 
           update_host(s, name, root, fn _ ->
             %{status: :failed, errors: [problem(plugin, message)], crashes: crashes}
@@ -932,6 +965,27 @@ defmodule Bee.Plugins.Manager do
           if Map.has_key?(s.roots, root), do: start_in(s, name, root), else: s
         end
     end
+  end
+
+  # How often a plugin's code may fail in a minute, in workspace `root`.
+  defp max_failures(root) do
+    case Bee.Settings.get("extensions.maxStartFailures", root) do
+      n when is_integer(n) and n > 0 -> n
+      _ -> 4
+    end
+  end
+
+  defp display_name(s, name) do
+    case s.plugins[name] do
+      %{display_name: display} when is_binary(display) -> display
+      _ -> name
+    end
+  end
+
+  # Code of plugin `name` that Bee gave up on: an error notification in
+  # the windows of workspace `root`.
+  defp tell_failure(root, name, message) do
+    Bee.API.show_message(%Bee.Plugins.Context{plugin: name, root: root}, :error, message)
   end
 
   defp update_plugin(s, name, fun) do

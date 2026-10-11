@@ -124,7 +124,7 @@
   </main>
 
   <%!-- Status bar --%>
-  <footer class="col-span-full h-6 bg-statusbar text-statusbar-fg text-xs flex items-center gap-4 px-3">
+  <footer class="col-span-full h-6 bg-statusbar text-statusbar-fg text-xs flex items-center gap-4 pl-3 pr-2">
     <span class="truncate">{@root}</span>
     <.status_item :for={item <- @status_items} :if={item.alignment == :left} item={item} />
     <button
@@ -153,7 +153,20 @@
     >
       {Bee.Languages.name(lang)}
     </span>
+    <BeeWeb.Workbench.Notifications.bell
+      notifications={@notifications}
+      progress={@progress}
+      open={@notifications_open}
+    />
   </footer>
+
+  <%!-- Notifications: popped up at the bottom right, and their list (the bell) --%>
+  <BeeWeb.Workbench.Notifications.notifications
+    notifications={@notifications}
+    toasts={@toasts}
+    progress={@progress}
+    open={@notifications_open}
+  />
 
   <%!-- Right-click menus (ContextMenus hook opens them) --%>
   <div id="context-menus" phx-hook="ContextMenus" class="hidden"></div>

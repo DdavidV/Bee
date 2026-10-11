@@ -5,7 +5,7 @@ import {cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync} from
 import {join} from "node:path"
 import {zip} from "../mock-open-vsx.mjs"
 import {
-  config, dws, error, expect, freshBee, info, openBee, openFile, paletteItems, read, repo, runCommand, showView, sidebar,
+  config, dismiss, dws, error, expect, freshBee, info, openBee, openFile, paletteItems, read, repo, runCommand, showView, sidebar,
   test, userSettingsFile, work, workspaceSettingsFile, write, writeJson,
 } from "./helpers.mjs"
 
@@ -89,7 +89,7 @@ test("a plugin's command runs its code, which keeps its state", async ({page}) =
   await openBee(page)
   await runCommand(page, "Greeter: Say Hi")
   await expect(info(page)).toContainText("Hi number 1")
-  await info(page).click()
+  await dismiss(info(page))
   await runCommand(page, "Greeter: Say Hi")
   await expect(info(page)).toContainText("Hi number 2")
 })
@@ -99,11 +99,11 @@ test("a command that fails is reported; the plugin goes on as it was", async ({p
   await runCommand(page, "Greeter: Say Hi")
   await expect(info(page)).toContainText(/Hi number \d+/)
   const before = Number((await info(page).textContent()).match(/number (\d+)/)[1])
-  await info(page).click()
+  await dismiss(info(page))
 
   await runCommand(page, "Greeter: Fail")
   await expect(error(page)).toContainText("it broke on purpose")
-  await error(page).click()
+  await dismiss(error(page))
 
   await runCommand(page, "Greeter: Say Hi")
   await expect(info(page)).toContainText(`Hi number ${before + 1}`)
@@ -151,7 +151,7 @@ test("a plugin folder that appears is loaded; changed, reloaded; removed, gone",
   await expect(row(page, "waver")).toBeVisible()
   await runCommand(page, "Greeter: Wave")
   await expect(info(page)).toContainText("Wave number 1")
-  await info(page).click()
+  await dismiss(info(page))
 
   // Its code and its manifest, edited: in effect without a restart.
   greeter(dir, {name: "waver", title: "Wave Twice", greeting: "Waving", module: "Waver"})

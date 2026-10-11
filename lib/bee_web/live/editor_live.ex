@@ -78,6 +78,8 @@ defmodule BeeWeb.EditorLive do
      |> assign(renames: %{}, references: nil, code_actions: %{}, problems_hidden: [])
      |> load_webviews()
      |> load_output_channels()
+     |> assign(notifications: [], toasts: [], notifications_open: false)
+     |> assign(progress: Bee.UI.progress(root))
      |> allow_upload(:vsix,
        accept: :any,
        max_entries: 1,
@@ -85,7 +87,7 @@ defmodule BeeWeb.EditorLive do
        auto_upload: true,
        progress: &vsix_progress/3
      )
-     |> then(&if(problem, do: put_flash(&1, :error, problem), else: &1))
+     |> then(&if(problem, do: notify(&1, :error, problem), else: &1))
      |> open_file_param(params["file"])}
   end
 
@@ -310,7 +312,7 @@ defmodule BeeWeb.EditorLive do
             {:noreply,
              socket
              |> cancel_upload(:vsix, entry.ref)
-             |> put_flash(:error, "Can't upload #{entry.client_name}: #{inspect(errors)}")}
+             |> notify(:error, "Can't upload #{entry.client_name}: #{inspect(errors)}")}
         end
 
       _ ->
@@ -493,8 +495,30 @@ defmodule BeeWeb.EditorLive do
 
   # bee.showMessage() of a browser plugin.
   def handle_event("plugin_message", %{"plugin" => plugin, "text" => text} = params, socket) do
-    level = if params["level"] == "error", do: :error, else: :info
-    {:noreply, put_flash(socket, level, "#{plugin}: #{text}")}
+    level =
+      case params["level"] do
+        "error" -> :error
+        "warning" -> :warning
+        _ -> :info
+      end
+
+    {:noreply, notify(socket, level, "#{plugin}: #{text}")}
+  end
+
+  # The × of a notification, popped up or in the list.
+  def handle_event("notification_close", %{"id" => id}, socket) do
+    id = int(id)
+
+    {:noreply,
+     socket
+     |> update(:notifications, &Enum.reject(&1, fn n -> n.id == id end))
+     |> update(:toasts, &List.delete(&1, id))}
+  end
+
+  # Cancel on what an extension is busy with (window.withProgress).
+  def handle_event("progress_cancel", %{"owner" => owner, "id" => id}, socket) do
+    Bee.Extensions.Host.cancel_progress(socket.assigns.root, owner, id)
+    {:noreply, socket}
   end
 
   # Undo/redo availability of the active editor (enables the undo/redo commands).
@@ -708,7 +732,7 @@ defmodule BeeWeb.EditorLive do
         {:noreply, change(socket, &Workbench.open_editor(&1, abs, preview: preview?(socket)))}
 
       {:error, _} ->
-        {:noreply, put_flash(socket, :error, "Path outside workspace")}
+        {:noreply, notify(socket, :error, "Path outside workspace")}
     end
   end
 
@@ -763,6 +787,13 @@ defmodule BeeWeb.EditorLive do
     do: {:noreply, assign(socket, ui_context: Bee.UI.context(socket.assigns.root))}
 
   def handle_info({:ui_changed, :decorations}, socket), do: {:noreply, load_decorations(socket)}
+
+  def handle_info({:ui_changed, :progress}, socket),
+    do: {:noreply, assign(socket, progress: Bee.UI.progress(socket.assigns.root))}
+
+  # A notification has popped up long enough: it stays in the list.
+  def handle_info({:toast_expired, id}, socket),
+    do: {:noreply, update(socket, :toasts, &List.delete(&1, id))}
 
   def handle_info({:contributions_changed, keys}, socket) do
     socket = if :commands in keys, do: load_commands(socket), else: socket
@@ -991,10 +1022,10 @@ defmodule BeeWeb.EditorLive do
 
     case result do
       {:ok, name} ->
-        {:noreply, put_flash(socket, :info, "Installed #{id} as the plugin #{name}")}
+        {:noreply, notify(socket, :info, "Installed #{id} as the plugin #{name}")}
 
       {:error, message} ->
-        {:noreply, put_flash(socket, :error, "Can't install #{id}: #{message}")}
+        {:noreply, notify(socket, :error, "Can't install #{id}: #{message}")}
     end
   end
 
@@ -1224,7 +1255,7 @@ defmodule BeeWeb.EditorLive do
   defp run_effect({:delete_file, path}, socket) do
     case Files.delete(socket.assigns.root, path) do
       {:ok, path} -> socket |> files_deleted(path) |> files_changed()
-      {:error, message} -> put_flash(socket, :error, message)
+      {:error, message} -> notify(socket, :error, message)
     end
   end
 
@@ -1235,7 +1266,7 @@ defmodule BeeWeb.EditorLive do
         if op == :cut, do: files_moved(socket, pairs), else: socket
 
       {:error, message} ->
-        socket |> files_changed() |> put_flash(:error, message)
+        socket |> files_changed() |> notify(:error, message)
     end
   end
 
@@ -1255,7 +1286,7 @@ defmodule BeeWeb.EditorLive do
 
       {:error, reason} ->
         Phoenix.PubSub.unsubscribe(Bee.PubSub, Terminal.topic(id))
-        put_flash(socket, :error, "Could not start terminal: #{inspect(reason)}")
+        notify(socket, :error, "Could not start terminal: #{inspect(reason)}")
     end
   end
 
@@ -1269,7 +1300,7 @@ defmodule BeeWeb.EditorLive do
 
       {:error, reason} ->
         Phoenix.PubSub.unsubscribe(Bee.PubSub, Terminal.topic(id))
-        put_flash(socket, :error, "Could not start the Bee Console: #{inspect(reason)}")
+        notify(socket, :error, "Could not start the Bee Console: #{inspect(reason)}")
     end
   end
 
@@ -1316,7 +1347,7 @@ defmodule BeeWeb.EditorLive do
   defp run_effect({:run_plugin_command, %{handler: {:plugin, name}, id: id}, args}, socket) do
     case Plugins.execute(name, id, %{plugin_context(socket.assigns) | args: args}) do
       :ok -> socket
-      {:error, message} -> put_flash(socket, :error, message)
+      {:error, message} -> notify(socket, :error, message)
     end
   end
 
@@ -1336,13 +1367,13 @@ defmodule BeeWeb.EditorLive do
 
     case Plugins.execute_extension(name, id, %{ctx | args: args}) do
       :ok -> socket
-      {:error, message} -> put_flash(socket, :error, message)
+      {:error, message} -> notify(socket, :error, message)
     end
   end
 
   defp run_effect(:reload_plugins, socket) do
     Plugins.reload()
-    socket |> load_plugins() |> put_flash(:info, "Plugins reloaded")
+    socket |> load_plugins() |> notify(:info, "Plugins reloaded")
   end
 
   # Applied at once (the change notice comes later): a picked color theme
@@ -1354,7 +1385,7 @@ defmodule BeeWeb.EditorLive do
         load_settings(socket, Settings.all(root), Settings.errors(root))
 
       {:error, message} ->
-        put_flash(socket, :error, message)
+        notify(socket, :error, message)
     end
   end
 
@@ -1368,7 +1399,7 @@ defmodule BeeWeb.EditorLive do
 
     cond do
       not File.dir?(root) ->
-        put_flash(socket, :error, "#{root} is not a folder")
+        notify(socket, :error, "#{root} is not a folder")
 
       where == :new_window ->
         push_event(socket, "bee:open_window", %{url: url})
@@ -1377,7 +1408,7 @@ defmodule BeeWeb.EditorLive do
         socket
 
       dirty != [] ->
-        put_flash(socket, :error, "Save or close #{Enum.join(dirty, ", ")} first")
+        notify(socket, :error, "Save or close #{Enum.join(dirty, ", ")} first")
 
       true ->
         push_navigate(socket, to: url)
@@ -1396,19 +1427,36 @@ defmodule BeeWeb.EditorLive do
 
   defp run_effect({:uninstall_plugin, name}, socket) do
     case Plugins.uninstall(name) do
-      :ok -> socket |> load_plugins() |> put_flash(:info, "Uninstalled #{name}")
-      {:error, message} -> put_flash(socket, :error, message)
+      :ok -> socket |> load_plugins() |> notify(:info, "Uninstalled #{name}")
+      {:error, message} -> notify(socket, :error, message)
     end
   end
 
   defp run_effect({:set_plugin_enabled, name, enabled?}, socket) do
     case Plugins.set_enabled(name, enabled?) do
       :ok -> socket
-      {:error, message} -> put_flash(socket, :error, message)
+      {:error, message} -> notify(socket, :error, message)
     end
   end
 
-  defp run_effect({:flash, kind, message}, socket), do: put_flash(socket, kind, message)
+  defp run_effect({:flash, kind, message}, socket), do: notify(socket, kind, message)
+
+  # The list of notifications (the status bar's bell): shown, nothing pops up.
+  defp run_effect({:notifications, :toggle}, socket),
+    do:
+      run_effect(
+        {:notifications, if(socket.assigns.notifications_open, do: :hide, else: :show)},
+        socket
+      )
+
+  defp run_effect({:notifications, :show}, socket),
+    do: assign(socket, notifications_open: true, toasts: [])
+
+  defp run_effect({:notifications, :hide}, socket), do: assign(socket, notifications_open: false)
+  defp run_effect({:notifications, :hide_toasts}, socket), do: assign(socket, toasts: [])
+
+  defp run_effect({:notifications, :clear}, socket),
+    do: assign(socket, notifications: [], toasts: [], notifications_open: false)
 
   defp run_effect({:marketplace_search, ref, query, offset}, socket) do
     window = self()
@@ -1453,14 +1501,14 @@ defmodule BeeWeb.EditorLive do
     case Bee.Search.replace(paths, Map.put(opts, :root, socket.assigns.root), replacement, only) do
       {:ok, count} ->
         socket
-        |> put_flash(
+        |> notify(
           :info,
           "Replaced #{count} #{if count == 1, do: "occurrence", else: "occurrences"}"
         )
         |> change(&Search.refresh/1)
 
       {:error, message} ->
-        put_flash(socket, :error, message)
+        notify(socket, :error, message)
     end
   end
 
@@ -1509,7 +1557,7 @@ defmodule BeeWeb.EditorLive do
     else
       {:error, reason} ->
         message = "Cannot open #{display_path(socket.assigns.root, path)}: #{inspect(reason)}"
-        put_flash(socket, :error, message)
+        notify(socket, :error, message)
     end
   end
 
@@ -1589,7 +1637,7 @@ defmodule BeeWeb.EditorLive do
         # One a VS Code extension registered without declaring it.
         case Bee.Extensions.Host.command(socket.assigns.root, id) do
           nil ->
-            put_flash(socket, :error, "Command '#{id}' not found")
+            notify(socket, :error, "Command '#{id}' not found")
 
           name ->
             command = %{id: id, handler: {:extension, name}}
@@ -1632,10 +1680,10 @@ defmodule BeeWeb.EditorLive do
          socket
          |> load_plugins()
          |> change(&Workbench.reveal_view(&1, "extensions"))
-         |> put_flash(:info, "Installed #{name} from #{entry.client_name}")}
+         |> notify(:info, "Installed #{name} from #{entry.client_name}")}
 
       {:error, message} ->
-        {:noreply, put_flash(socket, :error, "#{entry.client_name}: #{message}")}
+        {:noreply, notify(socket, :error, "#{entry.client_name}: #{message}")}
     end
   end
 
@@ -1657,8 +1705,41 @@ defmodule BeeWeb.EditorLive do
     }
   end
 
+  ## Notifications
+
+  # Tells the user: `message` pops up at the bottom right (for
+  # workbench.notifications.toastTimeout seconds), and stays in the list of
+  # the last workbench.notifications.maxCount. One said again moves up,
+  # counted.
+  defp notify(socket, severity, message) do
+    message = message |> to_string() |> String.trim()
+    settings = socket.assigns.settings
+    same? = &(&1.severity == severity and &1.message == message)
+    {again, others} = Enum.split_with(socket.assigns.notifications, same?)
+    count = Enum.reduce(again, 1, &(&1.count + &2))
+    id = System.unique_integer([:positive])
+    entry = %{id: id, severity: severity, message: message, count: count}
+    kept = Enum.take([entry | others], positive(settings["workbench.notifications.maxCount"], 20))
+    ids = MapSet.new(kept, & &1.id)
+
+    toasts =
+      if socket.assigns.notifications_open,
+        do: [],
+        else: [id | Enum.filter(socket.assigns.toasts, &(&1 in ids))]
+
+    case settings["workbench.notifications.toastTimeout"] do
+      0 -> :ok
+      seconds -> Process.send_after(self(), {:toast_expired, id}, positive(seconds, 8) * 1000)
+    end
+
+    assign(socket, notifications: kept, toasts: toasts)
+  end
+
+  defp positive(n, _default) when is_integer(n) and n > 0, do: n
+  defp positive(_other, default), do: default
+
   # What a plugin may ask of a window (Bee.API).
-  defp plugin_request(socket, {:show_message, level, text}), do: put_flash(socket, level, text)
+  defp plugin_request(socket, {:show_message, level, text}), do: notify(socket, level, text)
 
   defp plugin_request(socket, {:set_status, text}),
     do: change(socket, &Workbench.set_status(&1, text))
@@ -1671,7 +1752,7 @@ defmodule BeeWeb.EditorLive do
         do: push_event(socket, "cm:reveal", Map.put(reveal, :path, path)),
         else: socket
     else
-      put_flash(socket, :error, "Cannot open #{path}: no such file")
+      notify(socket, :error, "Cannot open #{path}: no such file")
     end
   end
 
@@ -1996,6 +2077,7 @@ defmodule BeeWeb.EditorLive do
       match?({^active, _}, assigns[:selection]) and active != nil and
         Enum.any?(elem(assigns.selection, 1), fn {from, to} -> from != to end)
     )
+    |> Map.put("notificationCenterVisible", assigns[:notifications_open] == true)
     |> Map.merge(language_context(assigns[:root], active))
     |> Map.merge(assigns[:ui_context] || %{})
   end
@@ -2442,7 +2524,7 @@ defmodule BeeWeb.EditorLive do
       if Workbench.open?(workbench(socket), path), do: RecentFiles.add(socket.assigns.root, path)
       change(socket, &Workbench.open_editor(&1, path))
     else
-      put_flash(socket, :error, "Cannot open #{path}: no such file")
+      notify(socket, :error, "Cannot open #{path}: no such file")
     end
   end
 
@@ -2601,7 +2683,7 @@ defmodule BeeWeb.EditorLive do
 
       {:error, reason} ->
         message = "Could not save #{display_path(socket.assigns.root, path)}: #{inspect(reason)}"
-        put_flash(socket, :error, message)
+        notify(socket, :error, message)
     end
   end
 
@@ -2681,7 +2763,7 @@ defmodule BeeWeb.EditorLive do
 
             case Bee.API.edit(path, edits) do
               :ok -> socket
-              _ -> put_flash(socket, :error, "The formatter's changes couldn't be applied")
+              _ -> notify(socket, :error, "The formatter's changes couldn't be applied")
             end
           else
             # Typed in since: its changes are for another text.
@@ -2689,7 +2771,7 @@ defmodule BeeWeb.EditorLive do
           end
 
         {:error, message} ->
-          put_flash(socket, :error, "Formatting failed: #{message}")
+          notify(socket, :error, "Formatting failed: #{message}")
 
         _ ->
           socket
@@ -2731,7 +2813,7 @@ defmodule BeeWeb.EditorLive do
   end
 
   defp code_action_step(socket, :list, {:error, message}),
-    do: put_flash(socket, :error, "Quick Fix: #{message}")
+    do: notify(socket, :error, "Quick Fix: #{message}")
 
   defp code_action_step(socket, :list, _none),
     do: change(socket, &Workbench.set_status(&1, "No code actions available"))
@@ -2739,7 +2821,7 @@ defmodule BeeWeb.EditorLive do
   defp code_action_step(socket, {:pick, session, actions}, index) when is_integer(index) do
     case Enum.at(actions, index) do
       %{"disabled" => reason, "title" => title} when is_binary(reason) ->
-        put_flash(socket, :error, "#{title}: #{reason}")
+        notify(socket, :error, "#{title}: #{reason}")
 
       %{"index" => action, "title" => title} ->
         ref = make_ref()
@@ -2764,10 +2846,10 @@ defmodule BeeWeb.EditorLive do
   defp code_action_step(socket, {:pick, _session, _actions}, _nothing), do: socket
 
   defp code_action_step(socket, {:apply, title}, {:ok, %{"error" => message}}),
-    do: put_flash(socket, :error, "#{title}: #{message}")
+    do: notify(socket, :error, "#{title}: #{message}")
 
   defp code_action_step(socket, {:apply, title}, {:error, message}),
-    do: put_flash(socket, :error, "#{title}: #{message}")
+    do: notify(socket, :error, "#{title}: #{message}")
 
   defp code_action_step(socket, {:apply, _title}, _done), do: socket
 
@@ -2822,10 +2904,10 @@ defmodule BeeWeb.EditorLive do
   end
 
   defp rename_step(socket, {:prepare, _path, _position}, {:ok, %{"error" => message}}),
-    do: put_flash(socket, :error, to_string(message))
+    do: notify(socket, :error, to_string(message))
 
   defp rename_step(socket, {:prepare, _path, _position}, {:error, message}),
-    do: put_flash(socket, :error, "Rename Symbol: #{message}")
+    do: notify(socket, :error, "Rename Symbol: #{message}")
 
   defp rename_step(socket, {:prepare, _path, _position}, _none),
     do: change(socket, &Workbench.set_status(&1, "Nothing to rename here"))
@@ -2854,13 +2936,13 @@ defmodule BeeWeb.EditorLive do
   end
 
   defp rename_step(socket, {:apply, _old, _name}, {:ok, %{"error" => message}}),
-    do: put_flash(socket, :error, "Rename Symbol: #{message}")
+    do: notify(socket, :error, "Rename Symbol: #{message}")
 
   defp rename_step(socket, {:apply, _old, _name}, {:error, message}),
-    do: put_flash(socket, :error, "Rename Symbol: #{message}")
+    do: notify(socket, :error, "Rename Symbol: #{message}")
 
   defp rename_step(socket, {:apply, old, _name}, _other),
-    do: put_flash(socket, :error, "Rename Symbol: #{old} couldn't be renamed")
+    do: notify(socket, :error, "Rename Symbol: #{old} couldn't be renamed")
 
   ## References (the panel's section)
 
@@ -3026,7 +3108,7 @@ defmodule BeeWeb.EditorLive do
     do: show_references(socket, places)
 
   defp go_to(socket, "references", {:error, message}),
-    do: put_flash(socket, :error, "Find All References: #{message}")
+    do: notify(socket, :error, "Find All References: #{message}")
 
   defp go_to(socket, "references", _none), do: show_references(socket, [])
 
@@ -3053,7 +3135,7 @@ defmodule BeeWeb.EditorLive do
   end
 
   defp go_to(socket, feature, {:error, message}),
-    do: put_flash(socket, :error, "Go to #{@goto_names[feature]}: #{message}")
+    do: notify(socket, :error, "Go to #{@goto_names[feature]}: #{message}")
 
   defp go_to(socket, feature, _none),
     do: change(socket, &Workbench.set_status(&1, "No #{@goto_names[feature]} found"))

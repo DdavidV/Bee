@@ -25,8 +25,9 @@ defmodule Bee.Extensions.Host do
 
   and it carries out what they ask: messages, quick picks and input boxes
   in a window (answered with `{:bee_answer, ref, value}`, see `ask/5`),
-  edits of open files, settings, context keys, status bar items, Bee's own
-  commands. Their language features answer the editor through
+  edits of open files, settings, context keys, status bar items, the
+  progress of what they are busy with (`window.withProgress`, `Bee.UI`),
+  Bee's own commands. Their language features answer the editor through
   `Bee.Languages.Features`, which also knows what they registered; the
   diagnostics they find go to `Bee.Diagnostics`, edits of several files (`workspace.applyEdit`) to the
   open buffers and to disk. Their webview panels are the workspace's
@@ -122,6 +123,14 @@ defmodule Bee.Extensions.Host do
       # No host: nobody to tell, and the panel is nobody's.
       nil -> if event == :closed, do: Bee.Webviews.dispose(root, id), else: :ok
       pid -> GenServer.cast(pid, {:webview, id, event})
+    end
+  end
+
+  @doc "The user cancelled progress `id` of extension `name` in workspace `root`."
+  def cancel_progress(root, name, id) do
+    case whereis(root) do
+      nil -> :ok
+      pid -> GenServer.cast(pid, {:cancel_progress, name, id})
     end
   end
 
@@ -240,6 +249,8 @@ defmodule Bee.Extensions.Host do
           watching?: false,
           # Language features being asked for: ref => our request's id.
           provides: %{},
+          # What extensions are busy with (Bee.UI's progress): {name, id}.
+          progress: MapSet.new(),
           log: :queue.new()
         }
 
@@ -374,6 +385,12 @@ defmodule Bee.Extensions.Host do
     end
   end
 
+  def handle_cast({:cancel_progress, name, id}, s) do
+    if MapSet.member?(s.progress, {name, id}),
+      do: {:noreply, notify(s, "progressCancel", %{id: id})},
+      else: {:noreply, s}
+  end
+
   def handle_cast({:active_editor, window, path, selections}, s) do
     s = watch_window(s, window)
     {document, editor, s} = editor_state(s, path, selections)
@@ -476,6 +493,7 @@ defmodule Bee.Extensions.Host do
   @impl true
   def terminate(_reason, s) do
     for {name, _} <- s.extensions, do: forget_commands(s.root, name)
+    for {name, id} <- s.progress, do: Bee.UI.delete_progress(s.root, name, id)
     Bee.Diagnostics.clear(s.root)
     Bee.Languages.Features.put(s.root, [])
     Bee.Webviews.clear(s.root)
@@ -657,7 +675,13 @@ defmodule Bee.Extensions.Host do
         })
 
       _ ->
-        level = if params["level"] == "info", do: :info, else: :error
+        level =
+          case params["level"] do
+            "info" -> :info
+            "warning" -> :warning
+            _ -> :error
+          end
+
         Bee.API.show_message(context(s), level, text)
         reply(s, id, nil)
     end
@@ -846,6 +870,26 @@ defmodule Bee.Extensions.Host do
     s
   end
 
+  # What an extension is busy with (window.withProgress), and what it
+  # says about it as it goes on.
+  defp handle_notification("progress", %{"extension" => name, "id" => id} = params, s)
+       when is_binary(name) and is_binary(id) do
+    Bee.UI.put_progress(s.root, name, id, %{
+      title: stripped(params["title"]),
+      message: stripped(params["message"]),
+      percent: params["percent"],
+      cancellable: params["cancellable"],
+      toast: params["toast"]
+    })
+
+    %{s | progress: MapSet.put(s.progress, {name, id})}
+  end
+
+  defp handle_notification("progressEnd", %{"extension" => name, "id" => id}, s) do
+    Bee.UI.delete_progress(s.root, name, id)
+    %{s | progress: MapSet.delete(s.progress, {name, id})}
+  end
+
   # A diagnostic collection's diagnostics of a file (none: cleared).
   defp handle_notification("diagnostics", %{"owner" => owner, "path" => path} = params, s) do
     Bee.Diagnostics.put(s.root, owner, path, List.wrap(params["diagnostics"]))
@@ -960,6 +1004,12 @@ defmodule Bee.Extensions.Host do
   end
 
   defp handle_notification(_method, _params, s), do: s
+
+  # Without VS Code's icons ("$(sync~spin) Indexing").
+  defp stripped(text) when is_binary(text),
+    do: text |> String.replace(~r/\$\([a-z0-9~-]+\)/i, "") |> String.trim()
+
+  defp stripped(_other), do: nil
 
   ## Windows
 

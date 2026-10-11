@@ -4,7 +4,7 @@
 import {cpSync, writeFileSync} from "node:fs"
 import {join} from "node:path"
 import {
-  activeTab, config, dws, editorLines, endOfLine, expect, expectFile, fileUrl, freshBee, info, error, openBee, openFile,
+  activeTab, config, dismiss, dws, editorLines, endOfLine, expect, expectFile, fileUrl, freshBee, info, error, openBee, openFile,
   paletteItems, repo, runCommand, showView, sidebar, statusBar, test, userSettingsFile, write, writeJson,
 } from "./helpers.mjs"
 
@@ -25,7 +25,7 @@ test.describe("word-count (a server part in Elixir)", () => {
     await expect(activeTab(page)).toContainText("words.txt")
     await runCommand(page, "Word Count: Count Words")
     await expect(info(page)).toContainText("3 words in words.txt (counted 1×)")
-    await info(page).click()
+    await dismiss(info(page))
     await runCommand(page, "Word Count: Count Words")
     await expect(info(page)).toContainText("(counted 2×)")
   })
@@ -41,7 +41,7 @@ test.describe("word-count (a server part in Elixir)", () => {
     await openBee(page, fileUrl(join(dws, "numbers.txt")))
     await runCommand(page, "Word Count: Count Words")
     await expect(info(page)).toContainText("4 words in numbers.txt")
-    await info(page).click()
+    await dismiss(info(page))
 
     writeJson(userSettingsFile, {"wordCount.countNumbers": false})
     await endOfLine(page, 1)

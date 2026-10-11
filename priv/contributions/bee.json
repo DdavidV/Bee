@@ -387,6 +387,36 @@
         "runtime": "server"
       },
       {
+        "command": "notifications.toggleList",
+        "category": "Notifications",
+        "title": "Toggle Notifications",
+        "runtime": "server"
+      },
+      {
+        "command": "notifications.showList",
+        "category": "Notifications",
+        "title": "Show Notifications",
+        "runtime": "server"
+      },
+      {
+        "command": "notifications.hideList",
+        "category": "Notifications",
+        "title": "Hide Notifications",
+        "runtime": "server"
+      },
+      {
+        "command": "notifications.clearAll",
+        "category": "Notifications",
+        "title": "Clear All Notifications",
+        "runtime": "server"
+      },
+      {
+        "command": "notifications.hideToasts",
+        "category": "Notifications",
+        "title": "Hide Notification Toasts",
+        "runtime": "server"
+      },
+      {
         "command": "workbench.output.action.clearOutput",
         "category": "View",
         "title": "Clear Output",
@@ -839,6 +869,7 @@
         {"command": "workbench.view.extensions", "group": "2_views@3"},
         {"command": "workbench.action.toggleSidebarVisibility", "group": "3_layout@1"},
         {"command": "workbench.action.togglePanel", "group": "3_layout@2"},
+        {"command": "notifications.toggleList", "group": "3_layout@3"},
         {"command": "workbench.action.splitEditor", "group": "5_split@1"},
         {"command": "workbench.action.splitEditorDown", "group": "5_split@2"}
       ],

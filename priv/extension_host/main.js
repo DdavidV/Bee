@@ -8,9 +8,10 @@
 //   {method, params}              a notification
 //
 // From Bee: initialize, activate, deactivate, executeCommand; settings,
-// document*, activeEditor, provide, cancel, webview*. To Bee: registerCommand, showMessage,
+// document*, activeEditor, provide, cancel, progressCancel, webview*. To Bee: registerCommand, showMessage,
 // showQuickPick, showInputBox, applyEdit, updateConfiguration,
-// executeCommand (commands that aren't here), statusItem, log, unsupported.
+// executeCommand (commands that aren't here), statusItem, progress, progressEnd, log,
+// unsupported.
 //
 // stdout is the protocol's: what extensions print goes to Bee as log lines.
 "use strict"
@@ -23,7 +24,7 @@ const {Documents} = require("./documents")
 const {Languages} = require("./languages")
 const features = require("./features")
 const {Webviews} = require("./webview")
-const {Disposable, EventEmitter, Uri, TabInputText, CancellationTokenSource} = require("./types")
+const {Disposable, EventEmitter, Uri, TabInputText, CancellationTokenSource, ProgressLocation} = require("./types")
 const {createApi, createContext, TextEditor} = require("./vscode")
 
 // ---- Transport
@@ -142,6 +143,60 @@ const host = {
     const before = host.watchers
     host.watchers += change
     if ((before === 0) !== (host.watchers === 0)) host.notify("watchFiles", {on: host.watchers > 0})
+  },
+
+  // window.withProgress: Bee shows `task` running until its promise settles.
+  // What it reports is sent at most every 100 ms (language servers report a lot).
+  progress: {
+    running: new Map(), // id → {extension, source}
+    run(extension, options, task) {
+      const id = `${++host.nextId}`
+      const source = new CancellationTokenSource()
+      const state = {title: options.title ? String(options.title) : "", message: undefined, percent: undefined}
+      let timer = null
+      const tell = () => {
+        timer = null
+        host.notify("progress", {
+          extension: extension.name, id, ...state,
+          cancellable: options.cancellable === true,
+          toast: options.location === ProgressLocation.Notification,
+        })
+      }
+      host.progress.running.set(id, {extension, source})
+      tell()
+      const done = () => {
+        if (!host.progress.running.delete(id)) return
+        if (timer) clearTimeout(timer)
+        source.dispose()
+        host.notify("progressEnd", {extension: extension.name, id})
+      }
+      const report = value => {
+        if (!value || !host.progress.running.has(id)) return
+        if (typeof value.message === "string") state.message = value.message
+        if (typeof value.increment === "number") state.percent = Math.min(100, (state.percent || 0) + value.increment)
+        if (!timer) timer = setTimeout(tell, 100)
+      }
+      let result
+      try {
+        result = Promise.resolve(task({report}, source.token))
+      } catch (e) {
+        result = Promise.reject(e)
+      }
+      result.then(done, done)
+      return result
+    },
+    cancel(id) {
+      host.progress.running.get(id)?.source.cancel()
+    },
+    // The extension is deactivated: what it left running is over.
+    forget(extension) {
+      for (const [id, entry] of [...host.progress.running]) {
+        if (entry.extension !== extension) continue
+        host.progress.running.delete(id)
+        entry.source.cancel()
+        host.notify("progressEnd", {extension: extension.name, id})
+      }
+    },
   },
 
   // An API Bee doesn't have was used: told once per extension and name.
@@ -327,6 +382,7 @@ const dispose = async extension => {
   }
   host.languages.forget(extension)
   host.webviews.forget(extension)
+  host.progress.forget(extension)
   // Commands it didn't put in its subscriptions.
   for (const [id, entry] of [...host.commands]) {
     if (entry.extension !== extension) continue
@@ -385,6 +441,8 @@ const notifications = {
   webviewClosed: params => host.webviews.closed(params),
   // The editor doesn't wait for a `provide` any more.
   cancel: ({key}) => providing.get(key)?.cancel(),
+  // The user cancelled what an extension is busy with (window.withProgress).
+  progressCancel: ({id}) => host.progress.cancel(id),
 }
 
 const failure = e => ({message: (e && e.message) || String(e), stack: e && e.stack})

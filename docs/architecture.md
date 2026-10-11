@@ -336,6 +336,13 @@ failures. Only the most recent part of each channel is kept.
 
 **Problems** and **References** list what language extensions found.
 
+**Notifications** are not in the panel but at the bottom right of the
+window, as in VS Code. What Bee, a plugin or an extension tells the user
+pops up there for a few seconds and stays in the window's list, which the
+bell at the end of the status bar opens and clears. What plugins and
+extensions are busy with is kept per workspace: a spinner in the status
+bar and an entry in that list until the work is done.
+
 Plugins can add panel sections of their own.
 
 ## Search and Quick Open
@@ -408,7 +415,8 @@ The parts are isolated so that one failing does not take the rest down.
 - A plugin command that is slow or crashes is stopped and reported. The
   plugin keeps running with the state it had before.
 - A plugin whose process crashes is restarted, a limited number of times a
-  minute, then marked as failed.
+  minute (`extensions.maxStartFailures`), then marked as failed, with an
+  error notification.
 - The extension host exiting restarts the extensions that ran in it, with
   the same limit.
 - A plugin's own LiveView is nested in the window as a separate process. If

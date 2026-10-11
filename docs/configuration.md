@@ -132,6 +132,8 @@ the formatter is told it.
 | `workbench.iconTheme` | `null` | The file icon theme, by id. `null` uses Bee's own icons |
 | `workbench.editor.enablePreview` | `true` | A single click on a file, in the Explorer or on a search result, opens it as a preview: a tab with its name in italics that the next file opened that way reuses. Double-click the file or its tab, or edit it, to keep it open. `false` gives every file its own tab |
 | `workbench.quickOpen.recentFiles` | `10` | How many recently opened files Quick Open lists before you type (0–100) |
+| `workbench.notifications.maxCount` | `20` | How many notifications a window keeps. The bell in the status bar lists the last ones, older ones are dropped (1–500) |
+| `workbench.notifications.toastTimeout` | `8` | Seconds a new notification stays popped up at the bottom right before it goes to the notification list. `0` keeps it until it is closed |
 
 Themes can also be picked from a list: **Preferences: Color Theme**
 (`Ctrl+K Ctrl+T`) and **Preferences: File Icon Theme**.
@@ -168,6 +170,7 @@ Glob patterns: `*` matches anything except `/`, `?` one character except
 | `plugins.workspace.enabled` | `false` | Load plugins from the folder's `.bee/plugins`. Plugins run with your permissions, so only enable this for folders you trust. **Only takes effect in user settings**: a folder cannot switch it on for itself |
 | `extensions.nodePath` | `"node"` | The Node.js executable that runs the code of VS Code extensions: a name on the `PATH`, or a path |
 | `extensions.disabledCode` | `[]` | Names of installed VS Code extensions whose code is not run. Their themes, grammars and settings stay. Their commands and language features do not work |
+| `extensions.maxStartFailures` | `4` | How many times in a minute the code of a plugin, or the extension host that runs VS Code extensions and their language servers, may fail before Bee stops starting it again and shows an error notification |
 
 ### Git (built-in plugin)
 

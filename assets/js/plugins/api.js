@@ -3,7 +3,7 @@
 //   bee.plugin                       the plugin's name
 //   bee.registerCommand(id, fn)      implements a "runtime": "client" command
 //   bee.registerMode(name, factory)  a CodeMirror mode for "grammars"
-//   bee.showMessage(text, level)     level: "info" | "error"
+//   bee.showMessage(text, level)     level: "info" | "warning" | "error"
 //   bee.request(method, params)      -> Promise of the server part's answer
 //                                    (handle_request/4); rejects with its error
 //   bee.onMessage(fn)                fn(data) for Bee.API.post_message/2

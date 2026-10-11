@@ -125,4 +125,35 @@ defmodule Bee.UITest do
       assert message =~ ~s(view "uitest.v" is already defined)
     end
   end
+
+  describe "progress" do
+    test "is a workspace's, in the order it started, until it is removed" do
+      root = "/tmp/bee-ui-progress-#{System.unique_integer([:positive])}"
+      on_exit(fn -> UI.forget_workspace(root) end)
+      UI.subscribe(root)
+
+      :ok = UI.put_progress(root, "elp", "1", %{title: "Indexing"})
+      assert_receive {:ui_changed, :progress}
+      :ok = UI.put_progress(root, "elp", "2", %{"title" => "Building", "percent" => 250.4})
+      :ok = UI.put_progress(root, "elp", "1", %{title: "Indexing", message: "3/9", percent: 33})
+
+      assert [
+               %{id: "1", owner: "elp", message: "3/9", percent: 33, cancellable: false},
+               %{id: "2", title: "Building", message: nil, percent: 100, toast: false}
+             ] = UI.progress(root)
+
+      assert UI.progress("/somewhere/else") == []
+
+      :ok = UI.delete_progress(root, "elp", "1")
+      :ok = UI.delete_progress(root, "elp", "1")
+      assert [%{id: "2"}] = UI.progress(root)
+
+      UI.forget("elp")
+      assert UI.progress(root) == []
+
+      assert_raise ArgumentError, ~r/must be a map/, fn ->
+        UI.put_progress(root, "elp", "3", [])
+      end
+    end
+  end
 end

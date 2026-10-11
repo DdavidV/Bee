@@ -26,9 +26,10 @@ defmodule Bee.API do
 
   ## Window
 
-  @doc "Shows a notification. `level` is `:info` or `:error`."
-  def show_message(%Context{} = ctx, level \\ :info, text) when level in [:info, :error],
-    do: window(ctx, {:show_message, level, to_string(text)})
+  @doc "Shows a notification. `level` is `:info`, `:warning` or `:error`."
+  def show_message(%Context{} = ctx, level \\ :info, text)
+      when level in [:info, :warning, :error],
+      do: window(ctx, {:show_message, level, to_string(text)})
 
   @doc "Shows `text` in the status bar."
   def set_status(%Context{} = ctx, text), do: window(ctx, {:set_status, to_string(text)})
@@ -78,6 +79,19 @@ defmodule Bee.API do
 
   def remove_status_item(%Context{plugin: plugin, root: root}, id),
     do: Bee.UI.delete_status_item(root, plugin, to_string(id))
+
+  @doc """
+  Shows what the plugin is busy with – a spinner in the status bar and an
+  entry in the notifications of every window – until `end_progress/2`:
+  `%{title, message, percent}` (`percent`: 0–100, left out when unknown;
+  `toast: true` pops it up as a notification too). Call it again with the
+  same `id` as the work goes on.
+  """
+  def progress(%Context{plugin: plugin, root: root}, id, item),
+    do: Bee.UI.put_progress(root, plugin, to_string(id), item)
+
+  def end_progress(%Context{plugin: plugin, root: root}, id),
+    do: Bee.UI.delete_progress(root, plugin, to_string(id))
 
   @doc """
   Colours and badges for files in the Explorer and editor tabs, like a VS
