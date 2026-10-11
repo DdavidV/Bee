@@ -40,9 +40,31 @@ folder.
 Settings files are JSON with comments. `//` and `/* */` comments and
 trailing commas are allowed.
 
-Open them from the File menu or the command palette:
+### The settings page
 
-- **Preferences: Open User Settings (JSON)** (`Ctrl+,`)
+`Ctrl+,`, or **Open Settings** in the menu of the gear at the bottom of the
+activity bar, opens the settings page. It lists every setting, Bee's and
+those plugins and extensions declare, grouped, each with a control that only
+takes values the setting allows: a switch, a list of values, a number with
+its range, a text, a list, a table of patterns.
+
+- **Search** narrows it by name, title, description or group.
+- **User** and **Workspace** switch between your settings and the folder's.
+  In Workspace, a setting the folder doesn't set shows your value.
+- **Reset** on a changed setting takes it out of the file, so the value from
+  below applies again.
+- **For** a language shows the settings that language can have its own
+  value for, and writes them to that language's block.
+- **Open Settings (JSON)** opens the file itself.
+
+The page edits the same JSON files described below, and keeps their
+comments. Whatever it can't show as a control has a link to the file.
+
+### The files
+
+Open them from the gear's menu or the command palette:
+
+- **Preferences: Open User Settings (JSON)**
 - **Preferences: Open Workspace Settings (JSON)**
 
 A file that does not exist yet is created with every setting listed,
@@ -225,7 +247,7 @@ On macOS, `Ctrl` is `Cmd` for the entries below unless noted.
 | `Ctrl+\` | Split Editor Right |
 | `Ctrl+K Ctrl+\` | Split Editor Down |
 | `Ctrl+K Ctrl+Right`, `Ctrl+K Ctrl+Left` | Focus the next, the previous editor group |
-| `Ctrl+,` | Open User Settings |
+| `Ctrl+,` | Open Settings (the settings page) |
 | `Ctrl+K Ctrl+S` | Open Keyboard Shortcuts |
 | `Ctrl+K Ctrl+T` | Color Theme |
 

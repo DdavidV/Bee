@@ -355,9 +355,11 @@ your modules a prefix of your own.
 ```
 
 Each property is a JSON Schema with a default and a description. From then
-on the setting behaves like one of Bee's: it appears in the generated
-settings file, is validated, can be set per folder, and your plugin is told
-when it changes.
+on the setting behaves like one of Bee's: it appears on the settings page,
+in a group named by `title`, with a control chosen from its schema (a
+boolean is a switch, an `enum` a list of values, a number a field with its
+`minimum` and `maximum`), and in the generated settings file. It is
+validated, can be set per folder, and your plugin is told when it changes.
 
 Setting names must contain a dot and are unique across Bee and all plugins.
 

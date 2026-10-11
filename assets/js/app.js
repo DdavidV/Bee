@@ -89,6 +89,13 @@ window.addEventListener("dblclick", e => {
   if (keep && !e.target.closest("[data-close]")) runCommand("workbench.action.keepEditor", [keep.dataset.keep])
 })
 
+// The settings page: a group brought into view; a field emptied once what
+// was typed into it has been added.
+window.addEventListener("bee:scroll-to", e => e.target.scrollIntoView({block: "start"}))
+window.addEventListener("bee:clear", e => {
+  e.target.value = ""
+})
+
 // Client commands from a right-click menu, run at once (still in the click:
 // copying to the clipboard needs that). BeeWeb.Workbench.ContextMenu.
 window.addEventListener("bee:run", e => exec(e.detail.command, e.detail.args || []))

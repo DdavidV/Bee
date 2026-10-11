@@ -2091,6 +2091,37 @@ defmodule BeeWeb.EditorLiveTest do
   end
 
   describe "explorer context menu" do
+    test "the activity bar's gear (Manage): the settings' commands in a menu", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      assert has_element?(
+               view,
+               "#activity-bar #manage[data-menu=globalActivity][data-menu-click]"
+             )
+
+      # (A click on it asks for its menu, beside it.)
+      render_hook(view, "open_context_menu", %{"menu" => "globalActivity", "x" => 50, "y" => 600})
+
+      assert menu_items(view) == [
+               "workbench.action.showCommands",
+               "workbench.action.openSettings",
+               "workbench.action.openWorkspaceSettings",
+               "workbench.action.openSettingsJson",
+               "workbench.action.openWorkspaceSettingsFile",
+               "workbench.action.openGlobalKeybindingsFile",
+               "workbench.view.extensions",
+               "workbench.action.selectTheme",
+               "workbench.action.selectIconTheme"
+             ]
+
+      view
+      |> element("#context-menu [data-command='workbench.action.openSettingsJson']")
+      |> render_click()
+
+      refute has_element?(view, "#context-menu")
+      assert has_element?(view, "[data-tabs] [data-tab][data-path$='settings.json']")
+    end
+
     # What the ContextMenus hook sends for a right-click on `selector`.
     defp right_click(view, selector) do
       render_hook(view, "open_context_menu", %{

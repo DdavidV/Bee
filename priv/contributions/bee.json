@@ -436,6 +436,18 @@
         "enablement": "terminalCount > 0"
       },
       {
+        "command": "workbench.action.openSettings",
+        "category": "Preferences",
+        "title": "Open Settings",
+        "runtime": "server"
+      },
+      {
+        "command": "workbench.action.openWorkspaceSettings",
+        "category": "Preferences",
+        "title": "Open Workspace Settings",
+        "runtime": "server"
+      },
+      {
         "command": "workbench.action.openSettingsJson",
         "category": "Preferences",
         "title": "Open User Settings (JSON)",
@@ -651,7 +663,7 @@
       {"key": "alt+c", "mac": "cmd+alt+c", "command": "toggleSearchCaseSensitive", "when": "searchViewletFocus"},
       {"key": "alt+w", "mac": "cmd+alt+w", "command": "toggleSearchWholeWord", "when": "searchViewletFocus"},
       {"key": "alt+r", "mac": "cmd+alt+r", "command": "toggleSearchRegex", "when": "searchViewletFocus"},
-      {"key": "ctrl+,", "mac": "cmd+,", "command": "workbench.action.openSettingsJson"},
+      {"key": "ctrl+,", "mac": "cmd+,", "command": "workbench.action.openSettings"},
       {"key": "ctrl+k ctrl+s", "mac": "cmd+k cmd+s", "command": "workbench.action.openGlobalKeybindingsFile"},
       {"key": "ctrl+k ctrl+t", "mac": "cmd+k cmd+t", "command": "workbench.action.selectTheme"}
     ],
@@ -699,16 +711,22 @@
     ],
 
     "menus": {
+      "globalActivity": [
+        {"command": "workbench.action.showCommands", "group": "1_command@1"},
+        {"command": "workbench.action.openSettings", "group": "2_configuration@0"},
+        {"command": "workbench.action.openWorkspaceSettings", "group": "2_configuration@1"},
+        {"command": "workbench.action.openSettingsJson", "group": "2_configuration@2"},
+        {"command": "workbench.action.openWorkspaceSettingsFile", "group": "2_configuration@3"},
+        {"command": "workbench.action.openGlobalKeybindingsFile", "group": "2_configuration@4"},
+        {"command": "workbench.view.extensions", "group": "2_configuration@5"},
+        {"command": "workbench.action.selectTheme", "group": "3_themes@1"},
+        {"command": "workbench.action.selectIconTheme", "group": "3_themes@2"}
+      ],
       "menubar/file": [
         {"command": "workbench.action.files.openFolder", "group": "0_open@1"},
         {"command": "workbench.action.files.openFolderInNewWindow", "group": "0_open@2"},
         {"command": "workbench.action.files.save", "group": "1_save@1"},
-        {"command": "workbench.action.closeActiveEditor", "group": "1_save@2"},
-        {"command": "workbench.action.openSettingsJson", "group": "2_preferences@1"},
-        {"command": "workbench.action.openWorkspaceSettingsFile", "group": "2_preferences@2"},
-        {"command": "workbench.action.openGlobalKeybindingsFile", "group": "2_preferences@3"},
-        {"command": "workbench.action.selectTheme", "group": "2_preferences@4"},
-        {"command": "workbench.action.selectIconTheme", "group": "2_preferences@5"}
+        {"command": "workbench.action.closeActiveEditor", "group": "1_save@2"}
       ],
       "editor/context": [
         {"command": "editor.action.revealDefinition", "group": "navigation@1", "when": "editorHasDefinitionProvider"},

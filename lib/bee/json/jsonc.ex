@@ -55,6 +55,67 @@ defmodule Bee.JSON.JSONC do
     end
   end
 
+  @doc """
+  Takes the top-level `key` out of the object in `text`, with its line when
+  nothing else is on it, keeping everything else as it is. A key that isn't
+  there: the text as it was.
+  """
+  @spec delete(String.t(), String.t()) :: {:ok, String.t()} | {:error, String.t()}
+  def delete(text, key) do
+    with {:ok, %{}} <- decode(text) do
+      code = text |> strip_comments() |> strip_trailing_commas()
+      {members, _close} = members(code)
+
+      case Enum.find_index(members, &(elem(&1, 0) == key)) do
+        nil ->
+          {:ok, text}
+
+        index ->
+          {_key, from, _value, to} = Enum.at(members, index)
+          # (In the text itself: a trailing comma isn't in the stripped one.)
+          after_value = skip_ws(text, to)
+
+          {from, to} =
+            cond do
+              # Its own comma goes with it (also one before a comment: the
+              # original text's, which the stripped one may have blanked).
+              after_value < byte_size(text) and binary_part(text, after_value, 1) == "," ->
+                {from, after_value + 1}
+
+              # The last member: the comma before it would dangle.
+              index > 0 ->
+                {_k, _f, _v, previous} = Enum.at(members, index - 1)
+                comma = skip_ws(code, previous)
+                if binary_part(code, comma, 1) == ",", do: {comma, to}, else: {from, to}
+
+              true ->
+                {from, to}
+            end
+
+          {:ok, text |> splice(from, to, "") |> drop_blank_line(from)}
+      end
+    else
+      {:ok, _not_an_object} -> {:error, "must contain a JSON object"}
+      error -> error
+    end
+  end
+
+  # The line holding `offset`, if only whitespace is left on it.
+  defp drop_blank_line(text, offset) do
+    line_start =
+      case :binary.matches(binary_part(text, 0, offset), "\n") do
+        [] -> 0
+        matches -> elem(List.last(matches), 0) + 1
+      end
+
+    rest = binary_part(text, line_start, byte_size(text) - line_start)
+
+    case Regex.run(~r/\A[ \t]*\r?\n/, rest) do
+      [blank] when line_start > 0 -> splice(text, line_start, line_start + byte_size(blank), "")
+      _ -> text
+    end
+  end
+
   defp splice(text, from, to, insert),
     do: binary_part(text, 0, from) <> insert <> binary_part(text, to, byte_size(text) - to)
 

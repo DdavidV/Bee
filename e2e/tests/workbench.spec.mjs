@@ -2,7 +2,7 @@
 // (shown, hidden, resized, remembered), the activity bar, opening folders.
 import {join} from "node:path"
 import {
-  answer, dws, editorLines, endOfLine, error, expect, explorerItem, folderUrl, freshBee, menuItem, openBee,
+  answer, contextMenu, dws, editorLines, endOfLine, error, expect, explorerItem, folderUrl, freshBee, menuItem, openBee,
   openFile, openMenu, paletteInput, panel, runCommand, sash, sidebar, statusBar, test, ws2,
 } from "./helpers.mjs"
 
@@ -68,6 +68,49 @@ test("the sidebar and the panel: shown and hidden by key, button and menu", asyn
   await expect(panel(page)).toBeVisible()
   await panel(page).getByTitle("Hide Panel").click()
   await expect(panel(page)).toHaveCount(0)
+})
+
+test("the gear at the bottom of the activity bar: a menu of what is managed", async ({page}) => {
+  await openBee(page)
+  const gear = page.locator("#activity-bar").getByRole("button", {name: "Manage"})
+  // Below the views' icons, at the bottom.
+  const [bar, box] = [await page.locator("#activity-bar").boundingBox(), await gear.boundingBox()]
+  expect(box.y + box.height).toBeGreaterThan(bar.y + bar.height - 20)
+
+  await gear.click()
+  const menu = contextMenu(page)
+  await expect(menu.getByRole("menuitem")).toHaveText([
+    /Show All Commands/,
+    /^\s*Open Settings/,
+    /Open Workspace Settings\s*$/,
+    /Open User Settings \(JSON\)/,
+    /Open Workspace Settings \(JSON\)/,
+    /Open Keyboard Shortcuts \(JSON\)/,
+    /Show Plugins/,
+    /Color Theme/,
+    /File Icon Theme/,
+  ])
+  // It opens upwards, inside the window, beside the gear.
+  const shown = await menu.boundingBox()
+  expect(shown.y + shown.height).toBeLessThanOrEqual(page.viewportSize().height)
+  expect(shown.x).toBeGreaterThanOrEqual(box.x + box.width - 1)
+
+  // A click on the gear again, or Escape, closes it.
+  await gear.click()
+  await expect(menu).toHaveCount(0)
+  await gear.click()
+  await expect(menu).toBeVisible()
+  await page.keyboard.press("Escape")
+  await expect(menu).toHaveCount(0)
+
+  // Its entries run their commands.
+  await gear.click()
+  await menuItem(menu, "Open User Settings (JSON)").click()
+  await expect(page.locator("[data-tabs]")).toContainText("settings.json")
+  await gear.click()
+  await menuItem(menu, "Color Theme").click()
+  await expect(paletteInput(page)).toBeFocused()
+  await page.keyboard.press("Escape")
 })
 
 test("the activity bar switches views; the active one's icon hides the sidebar", async ({page}) => {

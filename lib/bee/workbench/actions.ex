@@ -336,6 +336,14 @@ defmodule Bee.Workbench.Actions do
   defp terminal_id(_wb, [id | _]) when is_integer(id), do: id
   defp terminal_id(wb, _args), do: wb.active_term
 
+  # The settings page (BeeWeb.Workbench.SettingsEditor), on the user's
+  # settings or the folder's.
+  @command "workbench.action.openSettings"
+  def open_settings(wb), do: Workbench.open_settings(wb, :user)
+
+  @command "workbench.action.openWorkspaceSettings"
+  def open_workspace_settings(wb), do: Workbench.open_settings(wb, :workspace)
+
   @command "workbench.action.openSettingsJson"
   def open_settings_json(wb), do: Workbench.open_editor(wb, Bee.Settings.ensure_user_file!())
 

@@ -71,6 +71,21 @@ defmodule BeeWeb.Workbench.Sidebar do
           {container.badge}
         </span>
       </button>
+      <%!-- Manage (VS Code's gear): the "globalActivity" menu, opened by a
+           click (the ContextMenus hook: data-menu-click). --%>
+      <div class="flex-1" />
+      <button
+        id="manage"
+        type="button"
+        class="btn btn-ghost btn-square btn-sm text-activitybar-inactive hover:text-activitybar-fg"
+        title="Manage"
+        aria-label="Manage"
+        aria-haspopup="menu"
+        data-menu="globalActivity"
+        data-menu-click
+      >
+        <BeeWeb.Icons.named_icon name="cog-6-tooth" class="size-5" />
+      </button>
     </aside>
     """
   end

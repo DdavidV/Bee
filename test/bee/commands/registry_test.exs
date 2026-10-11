@@ -48,13 +48,7 @@ defmodule Bee.Commands.RegistryTest do
                "workbench.action.files.openFolderInNewWindow",
                :separator,
                "workbench.action.files.save",
-               "workbench.action.closeActiveEditor",
-               :separator,
-               "workbench.action.openSettingsJson",
-               "workbench.action.openWorkspaceSettingsFile",
-               "workbench.action.openGlobalKeybindingsFile",
-               "workbench.action.selectTheme",
-               "workbench.action.selectIconTheme"
+               "workbench.action.closeActiveEditor"
              ]
     end
   end
@@ -92,7 +86,8 @@ defmodule Bee.Commands.RegistryTest do
       # (after Open Folder…, Open Folder in New Window…, a separator, Save)
       file = Enum.find(CommandRegistry.menus(), &(&1.id == "file"))
       assert Enum.at(file.items, 5).command == "plugin.hello"
-      assert Enum.at(file.items, 6) == :separator
+      # (The menu's last group: nothing after it.)
+      assert length(file.items) == 6
 
       Contributions.unregister(:test_plugin)
       assert_receive {:contributions_changed, [:commands]}

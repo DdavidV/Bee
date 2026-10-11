@@ -234,6 +234,91 @@ defmodule Bee.Settings do
     end
   end
 
+  @doc """
+  Takes `key` out of the `:user` or `{:workspace, root}` settings file, so
+  that the layer below applies again (its default, or the user's value in
+  a workspace). Comments and formatting are kept. Returns `:ok` or
+  `{:error, message}`.
+  """
+  def unset(scope, key) do
+    path = path(scope)
+
+    case File.read(path) do
+      {:ok, text} ->
+        with {:ok, text} <- Bee.JSON.JSONC.delete(text, key) do
+          File.write!(path, text)
+          reload()
+        else
+          {:error, message} -> {:error, "#{path}: #{message}"}
+        end
+
+      # No file: nothing set.
+      {:error, :enoent} ->
+        :ok
+
+      {:error, reason} ->
+        {:error, "#{path}: #{:file.format_error(reason)}"}
+    end
+  end
+
+  @doc """
+  Sets `key` to `value` for files of `language` in a settings file: in its
+  block (`"[elixir]": {…}`), which is added when it isn't there. The value
+  is checked like the setting's own. Returns `:ok` or `{:error, message}`.
+  """
+  def put_language(scope, language, key, value) when is_binary(language) do
+    with :ok <- validate(key, value) do
+      update(scope, block_key(language), fn block ->
+        Map.put(if(is_map(block), do: block, else: %{}), key, value)
+      end)
+    else
+      {:error, message} -> {:error, "\"#{key}\": #{message}"}
+    end
+  end
+
+  @doc "Takes `key` out of `language`'s block in a settings file (the block too, when it was its last)."
+  def unset_language(scope, language, key) when is_binary(language) do
+    case layer(scope)[block_key(language)] do
+      %{^key => _} = block when map_size(block) == 1 ->
+        unset(scope, block_key(language))
+
+      %{^key => _} = block ->
+        update(scope, block_key(language), fn _ -> Map.delete(block, key) end)
+
+      _ ->
+        :ok
+    end
+  end
+
+  @doc "The key of `language`'s block in a settings file: `\"[elixir]\"`."
+  def block_key(language), do: "[" <> language <> "]"
+
+  @doc """
+  What a settings file sets for `language` only: its own block's settings
+  (not those of blocks it shares with other languages).
+  """
+  def language_layer(scope, language) do
+    case layer(scope)[block_key(language)] do
+      %{} = block -> block
+      _ -> %{}
+    end
+  end
+
+  @doc "The languages a settings file has blocks for, each once."
+  def block_languages(scope) do
+    scope |> layer() |> Map.keys() |> Enum.flat_map(&languages/1) |> Enum.uniq()
+  end
+
+  @doc """
+  The settings a language's block can change so far: those of the
+  formatter (see the moduledoc). Other settings of a block are kept, and
+  do nothing yet.
+  """
+  def language_overridable, do: ~w(editor.formatOnSave editor.defaultFormatter editor.tabSize)
+
+  @doc "The settings only the user's file can set: a folder mustn't change them for itself."
+  def user_only, do: ~w(plugins.workspace.enabled)
+
   defp path(:user), do: user_path()
   defp path({:workspace, root}), do: workspace_path(root)
 

@@ -8,6 +8,10 @@
 // The editor's menu ("editor/context") also gets the editor's own keys
 // (its selection…). With Shift held, the browser's menu shows instead.
 //
+// With data-menu-click the menu also opens on an ordinary click, beside
+// the element (a button that is a menu: the activity bar's Manage); a
+// click while it is open only closes it.
+//
 // ContextMenus (once per page) catches right-clicks on such elements (the
 // innermost one wins) and asks the server to open the menu there
 // (`open_context_menu`); the server renders it (BeeWeb.Workbench.ContextMenu)
@@ -41,10 +45,28 @@ export const ContextMenus = {
       })
     }
     document.addEventListener("contextmenu", this.onContextMenu)
+
+    this.onClick = e => {
+      const target = e.target.closest("[data-menu][data-menu-click]")
+      if (!target) return
+      const menu = target.dataset.menu
+      // Open: this click is the one that closes it (a click away from it).
+      if (document.querySelector(`#context-menu[data-menu="${CSS.escape(menu)}"]`)) return
+      const box = target.getBoundingClientRect()
+      this.pushEvent("open_context_menu", {
+        menu,
+        x: box.right + 2,
+        y: box.bottom,
+        args: json(target.dataset.menuArgs, []),
+        context: json(target.dataset.menuContext, {}),
+      })
+    }
+    document.addEventListener("click", this.onClick)
   },
 
   destroyed() {
     document.removeEventListener("contextmenu", this.onContextMenu)
+    document.removeEventListener("click", this.onClick)
   },
 }
 

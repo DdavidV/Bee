@@ -3310,6 +3310,11 @@ defmodule BeeWeb.EditorLive do
               class="size-4 shrink-0 opacity-70"
             />
             <.icon
+              :if={tab.kind == :settings}
+              name="hero-cog-6-tooth"
+              class="size-4 shrink-0 opacity-70"
+            />
+            <.icon
               :if={tab.kind in [:live, :webview]}
               name="hero-window"
               class="size-4 shrink-0 opacity-70"
@@ -3373,6 +3378,21 @@ defmodule BeeWeb.EditorLive do
             details={@a.extension_details[tab.name]}
             installed={@a.marketplace_installed}
             installing={@a.marketplace.installing}
+          />
+        </div>
+        <%!-- The settings page --%>
+        <div
+          :for={tab <- @group.tabs}
+          :if={tab.kind == :settings and tab.path == @group.active}
+          class="absolute inset-0"
+        >
+          <.live_component
+            module={BeeWeb.Workbench.SettingsEditor}
+            id="settings-editor"
+            scope={tab.scope}
+            root={@a.root}
+            settings={@a.settings}
+            plugins={@a.plugins}
           />
         </div>
         <%!-- Editors plugins draw themselves (LiveViews): each stays mounted
@@ -3439,6 +3459,7 @@ defmodule BeeWeb.EditorLive do
   # A tab's name: the file's, or "Extension: <plugin>".
   defp tab_label(%{kind: :file, path: path}, _details), do: Path.basename(path)
 
+  defp tab_label(%{kind: :settings}, _details), do: "Settings"
   defp tab_label(%{kind: :live, title: title}, _details), do: title
   defp tab_label(%{kind: :webview, title: title}, _details), do: title
 

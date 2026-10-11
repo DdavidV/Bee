@@ -27,10 +27,10 @@ test("typing narrows the commands; parts of words in any case are enough", async
 test("commands are listed with their category and their key", async ({page}) => {
   await openBee(page)
   await page.keyboard.press("F1")
-  await paletteInput(page).fill(">Open User Settings")
-  const item = paletteItems(page).filter({hasText: "Open User Settings (JSON)"})
+  await paletteInput(page).fill(">Open Keyboard Shortcuts")
+  const item = paletteItems(page).filter({hasText: "Open Keyboard Shortcuts (JSON)"})
   await expect(item).toContainText("Preferences")
-  await expect(item).toContainText("Ctrl+,")
+  await expect(item).toContainText("Ctrl+K Ctrl+S")
 })
 
 test("the arrows choose, Enter runs, Escape and a click elsewhere give up", async ({page}) => {

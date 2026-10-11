@@ -141,7 +141,8 @@ defmodule Bee.Workbench do
   # (`kind: :extension`, path "extension:<name>", like VS Code's extension
   # editor; see `BeeWeb.Workbench.ExtensionEditor`) or an editor a plugin
   # draws itself (`kind: :live`, path "live:<plugin>/<editor>[#<key>]", a
-  # LiveView of its; see `BeeWeb.Workbench.PluginLive`), or a webview panel
+  # LiveView of its; see `BeeWeb.Workbench.PluginLive`), the settings page
+  # (`kind: :settings`, path "settings:"), or a webview panel
   # of a VS Code extension (`kind: :webview`, path "webview:<id>", see
   # `Bee.Webviews`).
 
@@ -382,6 +383,22 @@ defmodule Bee.Workbench do
           },
           path
         )
+  end
+
+  @doc """
+  Shows the settings page (`BeeWeb.Workbench.SettingsEditor`) in an editor
+  tab, on the user's settings (`:user`) or the folder's (`:workspace`): its
+  own tab, or the open one, turned to that scope.
+  """
+  def open_settings(wb, scope) when scope in [:user, :workspace] do
+    path = "settings:"
+
+    if open?(wb, path) do
+      wb |> update_tab(path, &%{&1 | scope: scope}) |> reveal(path)
+    else
+      tab = %{path: path, kind: :settings, scope: scope, dirty: false, lang: nil}
+      activate_editor(%{wb | tabs: wb.tabs ++ [tab]}, path)
+    end
   end
 
   @doc """

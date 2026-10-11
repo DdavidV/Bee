@@ -76,6 +76,7 @@ A failed test leaves a screenshot and a description of the page in
 | `editing.spec.mjs` | typing, the unsaved mark, saving, undo and redo, closing with unsaved changes, files changed on disk, text of every script |
 | `explorer.spec.mjs` | the Explorer: following the disk, new files and folders, rename, delete, cut / copy / paste, `files.exclude` |
 | `search.spec.mjs` | search: options, files to include and exclude, going to a match, unsaved text; replacing one, a file's, all |
+| `settings-ui.spec.mjs` | the settings page: groups, controls by kind, search, User and Workspace, Reset, lists and tables, a language's own settings |
 | `settings.spec.mjs` | user and folder settings applied as saved, invalid values, the commands that open them, themes, the terminal's font |
 | `keybindings.spec.mjs` | default keys, the user's own, chords, conditions, arguments, removing a default, mistakes |
 | `palette.spec.mjs` | the command palette: finding, choosing, what it leaves out; recent files in Quick Open |

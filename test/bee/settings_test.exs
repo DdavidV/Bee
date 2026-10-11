@@ -199,6 +199,63 @@ defmodule Bee.SettingsTest do
     assert Settings.get_user("plugins.workspace.enabled") == false
   end
 
+  describe "what the settings page does to a file" do
+    test "unset/2 takes a setting out: the layer below applies again; comments stay" do
+      write(
+        Settings.user_path(),
+        ~s(// mine\n{\n  "editor.fontSize": 20, // big\n  "editor.tabSize": 4\n}\n)
+      )
+
+      assert Settings.get("editor.fontSize") == 20
+
+      assert Settings.unset(:user, "editor.fontSize") == :ok
+      assert Settings.get("editor.fontSize") == 14
+      assert Settings.get("editor.tabSize") == 4
+      assert File.read!(Settings.user_path()) =~ "// mine"
+
+      # Nothing to take out, no file at all: fine.
+      assert Settings.unset(:user, "editor.fontSize") == :ok
+      assert Settings.unset({:workspace, root()}, "editor.fontSize") == :ok
+    end
+
+    test "a language's block: put_language/4, unset_language/3" do
+      assert Settings.put_language(:user, "elixir", "editor.formatOnSave", true) == :ok
+      assert Settings.put_language(:user, "elixir", "editor.tabSize", 8) == :ok
+
+      assert Settings.language_layer(:user, "elixir") == %{
+               "editor.formatOnSave" => true,
+               "editor.tabSize" => 8
+             }
+
+      assert Settings.get("editor.tabSize", nil, "elixir") == 8
+      assert Settings.get("editor.tabSize", nil, "erlang") == 2
+      assert Settings.block_languages(:user) == ["elixir"]
+
+      # Checked like the setting itself.
+      assert {:error, message} = Settings.put_language(:user, "elixir", "editor.tabSize", "wide")
+      assert message =~ "editor.tabSize"
+      assert Settings.get("editor.tabSize", nil, "elixir") == 8
+
+      assert Settings.unset_language(:user, "elixir", "editor.tabSize") == :ok
+      assert Settings.language_layer(:user, "elixir") == %{"editor.formatOnSave" => true}
+      # Its last one: the block goes too.
+      assert Settings.unset_language(:user, "elixir", "editor.formatOnSave") == :ok
+      refute Map.has_key?(Settings.layer(:user), "[elixir]")
+      assert Settings.block_languages(:user) == []
+      assert Settings.unset_language(:user, "elixir", "editor.formatOnSave") == :ok
+    end
+
+    test "a block shared by languages isn't one language's own" do
+      write(Settings.user_path(), ~s({"[javascript][typescript]": {"editor.tabSize": 4}}))
+      assert Settings.block_languages(:user) == ["javascript", "typescript"]
+      assert Settings.language_layer(:user, "javascript") == %{}
+      # Its own block wins over the shared one.
+      assert Settings.put_language(:user, "javascript", "editor.tabSize", 8) == :ok
+      assert Settings.get("editor.tabSize", nil, "javascript") == 8
+      assert Settings.get("editor.tabSize", nil, "typescript") == 4
+    end
+  end
+
   describe "contributed settings (Bee.Settings.Configuration)" do
     @configuration %{
       "title" => "Test",

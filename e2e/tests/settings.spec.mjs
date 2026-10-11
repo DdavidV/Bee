@@ -101,7 +101,7 @@ test("a folder's settings win over the user's, in that folder only", async ({con
 test("Open User Settings makes the file, with every setting explained, and opens it", async ({page}) => {
   await openBee(page)
   expect(existsSync(userSettingsFile)).toBe(false)
-  await page.keyboard.press("Control+,")
+  await runCommand(page, "Preferences: Open User Settings (JSON)")
   await expect(activeTab(page)).toContainText("settings.json")
   await expect(statusBar(page)).toContainText("JSON with Comments")
 

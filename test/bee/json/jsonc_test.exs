@@ -56,6 +56,43 @@ defmodule Bee.JSON.JSONCTest do
     assert message =~ "line 4, column 3"
   end
 
+  describe "delete/2" do
+    @text """
+    // mine
+    {
+      // a
+      "a": 1,
+      "b": {"x": [1, 2]}, // about b
+      "c": "z",
+    }
+    """
+
+    test "takes a key out with its line, keeping comments and the rest" do
+      assert {:ok, text} = JSONC.delete(@text, "a")
+      assert text =~ "// mine" and text =~ "// a\n  \"b\""
+      assert JSONC.decode(text) == {:ok, %{"b" => %{"x" => [1, 2]}, "c" => "z"}}
+
+      assert {:ok, text} = JSONC.delete(@text, "b")
+      assert text =~ "// about b"
+      assert JSONC.decode(text) == {:ok, %{"a" => 1, "c" => "z"}}
+    end
+
+    test "the last key: no comma is left dangling, the one before keeps its comment" do
+      assert {:ok, text} = JSONC.delete(@text, "c")
+      assert text =~ ~s("b": {"x": [1, 2]}, // about b\n})
+      assert JSONC.decode(text) == {:ok, %{"a" => 1, "b" => %{"x" => [1, 2]}}}
+
+      assert JSONC.delete(~s({\n  "a": 1,\n  "b": 2\n}\n), "b") == {:ok, ~s({\n  "a": 1\n}\n)}
+      assert JSONC.delete(~s({"a": 1}), "a") == {:ok, "{}"}
+    end
+
+    test "a key that isn't there: nothing changes; not an object: refused" do
+      assert JSONC.delete(@text, "nope") == {:ok, @text}
+      assert {:error, _} = JSONC.delete("[1]", "a")
+      assert {:error, _} = JSONC.delete("{ broken", "a")
+    end
+  end
+
   describe "put/3" do
     test "replaces a value, keeping comments and the rest" do
       text = """
