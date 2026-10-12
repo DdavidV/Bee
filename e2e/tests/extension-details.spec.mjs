@@ -51,3 +51,24 @@ test("plugin details in an editor tab", async ({page}) => {
   await expect(tab).toHaveCount(0)
   await expect(page.locator(".cm-content")).toHaveText("one")
 })
+
+test("a click previews a plugin's details in one tab; a double click keeps it", async ({page}) => {
+  await openBee(page)
+  await page.click("#view-extensions")
+  const tabs = page.locator("[data-tabs] [data-path^='extension:']")
+  const tab = name => page.locator(`[data-tabs] [data-path='extension:${name}']`)
+
+  // One after the other: the same tab shows each.
+  await page.click("#plugin-test-theme")
+  await expect(tab("test-theme")).toHaveAttribute("data-preview", "true")
+  await page.click("#plugin-tm-lang")
+  await expect(tab("tm-lang")).toHaveAttribute("data-active", "true")
+  await expect(tabs).toHaveCount(1)
+
+  // Kept by a double click: the next one gets a tab of its own.
+  await page.dblclick("#plugin-tm-lang")
+  await expect(tab("tm-lang")).not.toHaveAttribute("data-preview", "true")
+  await page.click("#plugin-pets-schema")
+  await expect(tab("pets-schema")).toHaveAttribute("data-active", "true")
+  await expect(tabs).toHaveCount(2)
+})

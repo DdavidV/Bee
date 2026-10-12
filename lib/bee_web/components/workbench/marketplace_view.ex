@@ -62,6 +62,7 @@ defmodule BeeWeb.Workbench.MarketplaceView do
         phx-click="run_command"
         phx-value-command="extension.open"
         phx-value-args={Jason.encode!([ext.id])}
+        data-keep={"extension:" <> ext.id}
       >
         <img
           :if={ext.icon}

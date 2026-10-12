@@ -382,21 +382,32 @@ defmodule Bee.Workbench do
     end
   end
 
-  @doc "Shows plugin `name`'s details in an editor tab (VS Code's extension editor)."
+  @doc """
+  Shows plugin `name`'s details in an editor tab (VS Code's extension
+  editor). As there, it opens as a preview: in the group's preview tab, in
+  place of what that showed (a file clicked in the Explorer, another
+  plugin), until it is kept (`keep_editor/2`: a double click).
+  """
   def open_extension(wb, name) do
     path = "extension:" <> name
+    tab = %{path: path, kind: :extension, name: name, dirty: false, lang: nil, preview: true}
 
-    if open?(wb, path),
-      do: reveal(wb, path),
-      else:
-        activate_editor(
-          %{
-            wb
-            | tabs:
-                wb.tabs ++ [%{path: path, kind: :extension, name: name, dirty: false, lang: nil}]
-          },
-          path
+    cond do
+      open?(wb, path) ->
+        reveal(wb, path)
+
+      index = Enum.find_index(wb.tabs, &preview?/1) ->
+        old = Enum.at(wb.tabs, index)
+        effects = if old.kind == :file, do: file_closed(wb, old.path, true), else: []
+
+        chain(
+          {%{wb | tabs: List.replace_at(wb.tabs, index, tab)}, effects},
+          &activate_editor(&1, path)
         )
+
+      true ->
+        activate_editor(%{wb | tabs: wb.tabs ++ [tab]}, path)
+    end
   end
 
   @doc """
@@ -508,10 +519,11 @@ defmodule Bee.Workbench do
       # (`:replace`: kept, but where the preview is – a double click whose
       # second click came before the first one's file was open.)
       old = (tab.preview or preview? == :replace) && Enum.find_index(wb.tabs, &preview?/1) ->
-        closed = Enum.at(wb.tabs, old).path
+        closed = Enum.at(wb.tabs, old)
 
+        # (A plugin's details previewed there have no file to close.)
         {%{wb | tabs: List.replace_at(wb.tabs, old, tab), active: path},
-         file_closed(wb, closed, true)}
+         if(closed.kind == :file, do: file_closed(wb, closed.path, true), else: [])}
 
       true ->
         %{wb | tabs: insert(wb.tabs, tab, index), active: path}

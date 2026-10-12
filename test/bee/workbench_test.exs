@@ -26,6 +26,32 @@ defmodule Bee.WorkbenchTest do
                Workbench.open_editor(wb, "/ws/a")
     end
 
+    test "a plugin's details open as a preview: in the preview tab, until kept" do
+      {wb, _} = Workbench.open_extension(wb(), "one")
+      assert [%{path: "extension:one", preview: true}] = wb.tabs
+
+      # The next one takes its place; a file previewed does too, and the other way.
+      {wb, _} = Workbench.open_extension(wb, "two")
+      assert [%{path: "extension:two"}] = wb.tabs
+      assert wb.active == "extension:two"
+
+      {wb, effects} = Workbench.wrap(Workbench.editor_opened(wb, "/ws/a", false, "text", true))
+      assert [%{path: "/ws/a", preview: true}] = wb.tabs
+      assert effects == []
+
+      {wb, effects} = Workbench.open_extension(wb, "one")
+      assert [%{path: "extension:one"}] = wb.tabs
+      assert {:close_buffer, "/ws/a"} in effects
+
+      # Kept (a double click): the next one gets a tab of its own.
+      wb = Workbench.keep_editor(wb, "extension:one")
+      {wb, _} = Workbench.open_extension(wb, "two")
+      assert ["extension:one", "extension:two"] = Workbench.tab_paths(wb)
+      # Open already: only shown.
+      {wb, _} = Workbench.open_extension(wb, "one")
+      assert wb.active == "extension:one" and length(wb.tabs) == 2
+    end
+
     test "a preview takes the place of the one before it; a kept or edited one stays" do
       assert {_, [{:open_file, "/ws/a", :preview}]} =
                Workbench.open_editor(wb(), "/ws/a", preview: true)

@@ -7,7 +7,8 @@ defmodule BeeWeb.Workbench.PluginsView do
   VSIX and reload buttons are `view/title` menu items in `bee.json`; each
   row's Enable/Disable and Uninstall buttons `view/item/context` ones
   (`viewItem` is `plugin.<enabled|disabled>.<builtin|user|workspace>`).
-  Clicking a row opens the plugin's details (`extension.open`).
+  Clicking a row opens the plugin's details (`extension.open`) as a
+  preview, a double click to stay (`data-keep`).
   """
   use BeeWeb, :html
 
@@ -40,6 +41,7 @@ defmodule BeeWeb.Workbench.PluginsView do
         phx-click="run_command"
         phx-value-command="extension.open"
         phx-value-args={Jason.encode!([plugin.name])}
+        data-keep={"extension:" <> plugin.name}
       >
         <div class="flex items-center gap-2">
           <span class={["font-medium truncate", plugin.status == :disabled && "opacity-50"]}>
