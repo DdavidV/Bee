@@ -256,7 +256,9 @@ defmodule BeeWeb.Workbench.Panel do
 
   # Problems: everything wrong, by file – what extensions' language
   # features found, JSON validation, Bee's own files. The buttons count
-  # each severity and hide or show it; a click on a problem goes there.
+  # each severity and hide or show it; a click on a problem goes there, one
+  # on a file's header folds its problems away (`toggle_view_item`, like
+  # the References view's files).
   defp view_body(%{view: %{id: "workbench.panel.problems"}} = assigns) do
     entries = Enum.with_index(assigns.problems)
     counts = Enum.frequencies_by(assigns.problems, & &1.severity)
@@ -265,6 +267,9 @@ defmodule BeeWeb.Workbench.Panel do
       entries
       |> Enum.reject(fn {problem, _} -> problem.severity in assigns.problems_hidden end)
       |> Enum.chunk_by(fn {problem, _} -> problem.path end)
+      |> Enum.map(fn [{%{path: path}, _} | _] = rows ->
+        {rows, path, not MapSet.member?(assigns.collapsed, {assigns.view.id, path})}
+      end)
 
     assigns = assign(assigns, counts: counts, files: files)
 
@@ -298,8 +303,25 @@ defmodule BeeWeb.Workbench.Panel do
         <p :if={@problems == []} id="problems-empty" class="px-3 py-1 opacity-60">
           No problems have been detected in the workspace.
         </p>
-        <section :for={rows <- @files} data-problem-file={elem(hd(rows), 0).path}>
-          <h3 class="flex items-center gap-1.5 px-3 py-0.5 font-semibold">
+        <section
+          :for={{rows, path, open} <- @files}
+          data-problem-file={path}
+        >
+          <h3
+            role="button"
+            aria-expanded={to_string(open)}
+            class="flex items-center gap-1 pl-1 pr-3 py-0.5 font-semibold cursor-pointer select-none hover:bg-list-hover"
+            phx-click="toggle_view_item"
+            phx-value-view={@view.id}
+            phx-value-item={path}
+          >
+            <.icon
+              name="hero-chevron-right-mini"
+              class={[
+                "size-4 shrink-0 opacity-70 transition-transform duration-150",
+                open && "rotate-90"
+              ]}
+            />
             <BeeWeb.Workbench.FileIcon.file_icon
               :if={@icon_theme}
               theme={@icon_theme}
@@ -310,7 +332,7 @@ defmodule BeeWeb.Workbench.Panel do
             <span class="badge badge-xs badge-ghost">{length(rows)}</span>
           </h3>
           <button
-            :for={{problem, index} <- rows}
+            :for={{problem, index} <- if(open, do: rows, else: [])}
             type="button"
             data-problem={index}
             data-severity={problem.severity}

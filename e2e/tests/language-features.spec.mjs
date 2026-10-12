@@ -490,6 +490,14 @@ test("the Problems section: every problem by file, filtered by severity, a click
   await page.click("#problems-filter-warning")
   await expect(rows).toHaveCount(2)
 
+  // The file's header folds its problems away, and shows them again.
+  const header = page.locator("#problems-view [data-problem-file] h3")
+  await header.click()
+  await expect(header).toHaveAttribute("aria-expanded", "false")
+  await expect(rows).toHaveCount(0)
+  await header.click()
+  await expect(rows).toHaveCount(2)
+
   // A problem: the cursor goes to it.
   await page.locator("#editor .cm-line").first().click()
   await rows.nth(1).click()

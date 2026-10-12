@@ -1042,6 +1042,13 @@ defmodule BeeWeb.EditorLiveTest do
       assert has_element?(view, "#problems-filter-error[aria-pressed='false']", "Errors 1")
       view |> element("#problems-filter-error") |> render_click()
 
+      # Its file's header folds the file's problems away, and shows them again.
+      view |> element("[data-problem-file='#{path}'] h3") |> render_click()
+      refute has_element?(view, "[data-problem]")
+      assert has_element?(view, "[data-problem-file='#{path}'] h3[aria-expanded='false']")
+      view |> element("[data-problem-file='#{path}'] h3") |> render_click()
+      assert has_element?(view, "[data-problem-file='#{path}'] h3[aria-expanded='true']")
+
       # A problem: its file.
       view |> element("[data-problem='0']") |> render_click()
       assert_push_event(view, "cm:open", %{path: ^path})
