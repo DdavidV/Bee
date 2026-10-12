@@ -68,12 +68,12 @@ defmodule BeeWeb.EditorLive.Layout do
 
   # The layout's CSS variables. Before the LiveView connects, the sizes the
   # browser saved (root.html.heex) win over the defaults.
-  def layout_style(assigns, connected?) do
+  def layout_style(sidebar_width, panel_height, connected?) do
     if connected? do
-      "--sidebar-width: #{assigns.sidebar_width}px; --panel-height: #{assigns.panel_height}px"
+      "--sidebar-width: #{sidebar_width}px; --panel-height: #{panel_height}px"
     else
-      "--sidebar-width: var(--saved-sidebar-width, #{assigns.sidebar_width}px); " <>
-        "--panel-height: var(--saved-panel-height, #{assigns.panel_height}px)"
+      "--sidebar-width: var(--saved-sidebar-width, #{sidebar_width}px); " <>
+        "--panel-height: var(--saved-panel-height, #{panel_height}px)"
     end
   end
 end

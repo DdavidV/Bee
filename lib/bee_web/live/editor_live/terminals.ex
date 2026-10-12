@@ -2,11 +2,11 @@ defmodule BeeWeb.EditorLive.Terminals do
   @moduledoc """
   The panel's terminals: `Bee.Terminal` processes owned by the window,
   shown by the `Terminal` hook. Output is forwarded only after the hook
-  reported ready and replayed the scrollback (`term_seq`: the last sequence
-  forwarded, per terminal).
+  reported ready and replayed the scrollback (`term_seq/1`: the last
+  sequence forwarded, per terminal – kept beside the assigns, as output
+  isn't something the page renders).
   """
 
-  import Phoenix.Component, only: [update: 3]
   import Phoenix.LiveView
   import BeeWeb.EditorLive.Window
 
@@ -33,7 +33,7 @@ defmodule BeeWeb.EditorLive.Terminals do
       {scrollback, seq} = Terminal.scrollback(id)
 
       {:halt, %{data: Base.encode64(scrollback)},
-       update(socket, :term_seq, &Map.put(&1, id, seq))}
+       put_term_seq(socket, Map.put(term_seq(socket), id, seq))}
     else
       {:halt, %{data: ""}, socket}
     end
@@ -57,12 +57,12 @@ defmodule BeeWeb.EditorLive.Terminals do
   ## Messages
 
   def handle_info({:term_data, id, seq, data}, socket) do
-    case socket.assigns.term_seq do
-      %{^id => last} when seq > last ->
+    case term_seq(socket) do
+      %{^id => last} = seqs when seq > last ->
         {:halt,
          socket
          |> push_event("term:data", %{id: id, data: Base.encode64(data)})
-         |> update(:term_seq, &Map.put(&1, id, seq))}
+         |> put_term_seq(Map.put(seqs, id, seq))}
 
       # Not attached yet (replayed from scrollback on term_ready) or already sent.
       _ ->
@@ -74,4 +74,8 @@ defmodule BeeWeb.EditorLive.Terminals do
     do: {:halt, change(socket, &Workbench.terminal_exited(&1, id))}
 
   def handle_info(_message, socket), do: {:cont, socket}
+
+  # The last sequence forwarded to each attached terminal view: `%{id => seq}`.
+  def term_seq(socket), do: socket.private[:term_seq] || %{}
+  def put_term_seq(socket, seqs), do: put_private(socket, :term_seq, seqs)
 end

@@ -168,6 +168,59 @@ test("text of every script survives a save", async ({page}) => {
   await expect(editorLines(page).nth(1)).toHaveText(`${text} end`)
 })
 
+test("typing sends what was typed, not the file, however large it is", async ({page}) => {
+  // A megabyte of text.
+  const big = join(dws, "big.txt")
+  const line = "a line of text, some forty characters long\n"
+  writeFileSync(big, line.repeat(25_000))
+
+  // What the page sends to Bee, frame by frame.
+  const sent = []
+  page.on("websocket", socket => socket.on("framesent", frame => sent.push(String(frame.payload).length)))
+
+  await openBee(page)
+  await openFile(page, "big.txt")
+  await endOfLine(page, 1)
+  sent.length = 0
+
+  await page.keyboard.type(" – typed")
+  await expect(unsaved(tab(page, "big.txt"))).toHaveCount(1)
+  // At its far end too, where the place has to be found past every line.
+  await page.keyboard.press("Control+End")
+  await page.keyboard.type("the end")
+  await page.keyboard.press("Control+s")
+
+  await expectFile(big, line.trimEnd() + " – typed\n" + line.repeat(24_999) + "the end")
+  await expect(unsaved(tab(page, "big.txt"))).toHaveCount(0)
+  expect(sent.length).toBeGreaterThan(0)
+  expect(Math.max(...sent)).toBeLessThan(2_000)
+})
+
+test("text of several bytes a character and Windows line ends is changed where it was typed", async ({page}) => {
+  const mixed = join(dws, "mixed.txt")
+  writeFileSync(mixed, "héllo 🐝 wörld\r\nsecond ünïcode 日本 line\r\nthird\r\nfourth\r\n")
+  await openBee(page)
+  await openFile(page, "mixed.txt")
+
+  // After characters of two, three and four bytes; a line's start.
+  await endOfLine(page, 1)
+  await page.keyboard.type("!")
+  await endOfLine(page, 2)
+  await page.keyboard.type("?")
+  await endOfLine(page, 3)
+  await page.keyboard.press("Home")
+  await page.keyboard.type("3: ")
+  // A line joined to the one before it: its line end goes whole.
+  await endOfLine(page, 4)
+  await page.keyboard.press("Home")
+  await page.keyboard.press("Backspace")
+  await expect(editorLines(page).nth(2)).toHaveText("3: thirdfourth")
+  await page.keyboard.press("Control+s")
+
+  // The lines not touched keep their ends.
+  await expectFile(mixed, "héllo 🐝 wörld!\r\nsecond ünïcode 日本 line?\r\n3: thirdfourth\r\n")
+})
+
 test("a file named in the address opens; its language is in the status bar", async ({page}) => {
   await openBee(page, fileUrl(join(dws, "lib/a.ex")))
   await expect(activeTab(page)).toContainText("a.ex")

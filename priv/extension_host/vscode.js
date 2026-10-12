@@ -82,12 +82,12 @@ class TextEditor {
     this.options = {tabSize: host.settings["editor.tabSize"], insertSpaces: true}
     this._setSelections(selections)
   }
-  // [[anchor, active]] offsets.
+  // [[anchor, active]]: positions ({line, character}), as Bee's editor has them.
   _setSelections(selections) {
-    const list = selections && selections.length ? selections : [[0, 0]]
-    this.selections = list.map(
-      ([anchor, active]) => new Selection(this.document.positionAt(anchor), this.document.positionAt(active)),
-    )
+    const start = {line: 0, character: 0}
+    const list = selections && selections.length ? selections : [[start, start]]
+    const position = ({line, character}) => this.document.validatePosition(new Position(line, character))
+    this.selections = list.map(([anchor, active]) => new Selection(position(anchor), position(active)))
   }
   get selection() {
     return this.selections[0]

@@ -37,3 +37,25 @@ fn a_frame_cut_short_is_an_error() {
     assert!(read(&mut bytes.as_slice()).is_err());
     assert!(read(&mut &bytes[..2]).is_err());
 }
+
+/// Counts the writes it gets.
+struct Pipe(usize);
+
+impl std::io::Write for Pipe {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0 += 1;
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn a_frame_is_written_in_one_piece() {
+    let mut pipe = Pipe(0);
+    write(&mut pipe, &json!({"t": "msg", "data": "x".repeat(100_000)})).unwrap();
+
+    assert_eq!(pipe.0, 1);
+}

@@ -89,7 +89,16 @@ defmodule Bee.Settings do
   @spec errors(String.t() | nil) :: [error]
   def errors(root \\ nil), do: elem(layer_state(root), 1)
 
-  def get(key, root \\ nil), do: Map.get(all(root), key, defaults()[key])
+  def get(key, root \\ nil), do: fetch(all(root), key)
+
+  # (The defaults are in every layer: built again only for a key that
+  # isn't there, not on every read.)
+  defp fetch(settings, key) do
+    case settings do
+      %{^key => value} -> value
+      _ -> defaults()[key]
+    end
+  end
 
   @doc """
   Every setting of workspace `root` as it is for files of `language` (a
@@ -113,7 +122,7 @@ defmodule Bee.Settings do
   def for_language(root, _language), do: all(root)
 
   @doc "A setting of workspace `root` for files of `language` (see `for_language/2`)."
-  def get(key, root, language), do: Map.get(for_language(root, language), key, defaults()[key])
+  def get(key, root, language), do: fetch(for_language(root, language), key)
 
   # The languages of a block's key ("[a][b]" → ["a", "b"]), [] for a setting's.
   defp languages("[" <> _ = key) do
@@ -133,10 +142,27 @@ defmodule Bee.Settings do
 
   @doc "Globs from workspace `root`'s `files.exclude` that are switched on, compiled."
   def excluded_globs(root \\ nil) do
-    for {pattern, true} <- get("files.exclude", root), do: Bee.Workspace.Glob.compile(pattern)
+    exclude = get("files.exclude", root)
+    key = {__MODULE__, :excluded_globs, root}
+
+    # Compiled once per value of the setting: listing a folder asks every time.
+    case :persistent_term.get(key, nil) do
+      {^exclude, globs} ->
+        globs
+
+      _ ->
+        globs = for {pattern, true} <- exclude, do: Bee.Workspace.Glob.compile(pattern)
+        :persistent_term.put(key, {exclude, globs})
+        globs
+    end
   end
 
-  defp user_state, do: :persistent_term.get({__MODULE__, :user}, {defaults(), []})
+  defp user_state do
+    case :persistent_term.get({__MODULE__, :user}, nil) do
+      nil -> {defaults(), []}
+      state -> state
+    end
+  end
 
   defp layer_state(nil), do: user_state()
 
@@ -362,6 +388,7 @@ defmodule Bee.Settings do
 
   def handle_call({:untrack, root}, _from, s) do
     :persistent_term.erase({__MODULE__, :workspace, root})
+    :persistent_term.erase({__MODULE__, :excluded_globs, root})
     {:reply, :ok, %{s | roots: MapSet.delete(s.roots, root)}}
   end
 

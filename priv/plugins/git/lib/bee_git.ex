@@ -29,7 +29,22 @@ defmodule BeeGit do
 
   @impl true
   def activate(ctx) do
-    state = %{ctx: ctx, repo: nil, status: nil, log: [], has_head: false, op: nil, timer: nil}
+    state = %{
+      ctx: ctx,
+      repo: nil,
+      status: nil,
+      log: [],
+      has_head: false,
+      op: nil,
+      timer: nil,
+      # What git ignores, as the last status said: `{files, folders}`.
+      ignored: {MapSet.new(), []},
+      # Whether what is on screen is this state's.
+      shown: false,
+      # The git.* settings, as last heard of (nil: not since it started).
+      settings: nil
+    }
+
     {:ok, refresh(state)}
   end
 
@@ -346,8 +361,24 @@ defmodule BeeGit do
   ## Keeping up
 
   @impl true
-  def handle_event({:fs_changed, _path}, state), do: {:ok, refresh_soon(state)}
+  def handle_event({:fs_changed, path}, state),
+    do: if(affects_status?(state, path), do: {:ok, refresh_soon(state)}, else: :ok)
+
   def handle_event({:buffer_saved, _path}, state), do: {:ok, refresh_soon(state)}
+
+  # The blame and the changes the browser part draws follow git.* settings
+  # (git.blame.inline, git.decorations.gutter): it asks for them again.
+  def handle_event({:settings_changed, settings}, state) do
+    git = Map.filter(settings, fn {key, _} -> String.starts_with?(key, "git.") end)
+
+    if git != state.settings do
+      Bee.API.post_message(state.ctx, %{changed: true})
+      {:ok, %{state | settings: git}}
+    else
+      :ok
+    end
+  end
+
   def handle_event(_event, _state), do: :ok
 
   @impl true
@@ -364,6 +395,23 @@ defmodule BeeGit do
 
   def handle_info(_msg, _state), do: :ok
 
+  # Whether a change of `path` can change what `git status` says. What git
+  # ignores can't – a build's output, installed dependencies: files that
+  # change by the thousand, for minutes – nor can git's own objects and
+  # lock files. Without this a build would have git run again and again
+  # for as long as it lasts.
+  defp affects_status?(%{repo: nil}, _path), do: true
+
+  defp affects_status?(%{repo: repo, ignored: {files, folders}}, path) do
+    case Path.relative_to(path, repo) do
+      # Not the repository's.
+      ^path -> false
+      ".git/objects/" <> _ -> false
+      ".git/" <> rest -> not String.ends_with?(rest, ".lock")
+      rel -> not (MapSet.member?(files, rel) or Enum.any?(folders, &String.starts_with?(rel, &1)))
+    end
+  end
+
   # File events come in bursts (a checkout touches many files).
   defp refresh_soon(%{timer: nil} = state),
     do: %{state | timer: Process.send_after(state.ctx.host, :refresh, 300)}
@@ -372,7 +420,8 @@ defmodule BeeGit do
 
   ## Reading the repository
 
-  defp refresh(state) do
+  defp refresh(before) do
+    state = before
     root = state.ctx.root
 
     state =
@@ -406,11 +455,28 @@ defmodule BeeGit do
               {:error, _} -> []
             end
 
-          %{state | repo: repo, status: status, log: log, has_head: Git.has_head?(repo)}
+          {folders, files} =
+            for(%{group: :ignored, path: path} <- status.entries, do: path)
+            |> Enum.split_with(&String.ends_with?(&1, "/"))
+
+          %{
+            state
+            | repo: repo,
+              status: status,
+              log: log,
+              has_head: Git.has_head?(repo),
+              ignored: {MapSet.new(files), folders}
+          }
       end
 
-    publish(state)
+    # (Nothing new: nothing to show again, and the browser part needn't
+    # ask for its blame and its changes again.)
+    if state.shown and same?(state, before),
+      do: state,
+      else: publish(%{state | shown: true})
   end
+
+  defp same?(a, b), do: Enum.all?([:repo, :status, :log, :has_head], &(a[&1] == b[&1]))
 
   ## Showing
 

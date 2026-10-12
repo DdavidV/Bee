@@ -64,7 +64,7 @@ defmodule BeeWeb.EditorLive.Commands do
   # `args` reach plugin and client commands, and Bee's own server commands
   # whose handler takes them.
   def run_command(socket, id, args \\ [], resources? \\ false) do
-    case Enum.find(socket.assigns.commands, &(&1.id == id)) do
+    case socket.assigns.commands_by_id[id] do
       nil ->
         # One a VS Code extension registered without declaring it.
         case Bee.Extensions.Host.command(socket.assigns.root, id) do

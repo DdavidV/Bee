@@ -13,9 +13,31 @@
   const fromB64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0)).buffer
 
   // Tauri may run concurrent invokes out of order; LiveView needs its frames
-  // in order (join before events), so they go one after the other.
-  let queue = Promise.resolve()
-  const invoke = (cmd, args) => (queue = queue.then(() => core().invoke(cmd, args)).catch(e => console.error("bee bridge:", e)))
+  // in order (join before events), so they go one call after the other.
+  // The frames sent while a call is on its way go together in the next
+  // one: a burst (typing: the change, the selection, a completion asked
+  // for) costs one more call, not one each waiting for the one before.
+  const queue = [] // [cmd, args], in order
+  let busy = false
+  const next = () => {
+    if (busy || queue.length === 0) return
+    let [cmd, args] = queue.shift()
+    if (cmd === "bridge_send") {
+      while (queue.length && queue[0][0] === "bridge_send") args.frames.push(...queue.shift()[1].frames)
+    }
+    busy = true
+    core()
+      .invoke(cmd, args)
+      .catch(e => console.error("bee bridge:", e))
+      .finally(() => {
+        busy = false
+        next()
+      })
+  }
+  const invoke = (cmd, args) => {
+    queue.push([cmd, args])
+    next()
+  }
 
   const transports = new Map()
 
@@ -37,8 +59,8 @@
     },
 
     send(sid, data) {
-      if (typeof data === "string") invoke("bridge_send", {sid, data, bin: false})
-      else invoke("bridge_send", {sid, data: toB64(data), bin: true})
+      if (typeof data === "string") invoke("bridge_send", {frames: [{sid, data, bin: false}]})
+      else invoke("bridge_send", {frames: [{sid, data: toB64(data), bin: true}]})
     },
 
     close(sid) {

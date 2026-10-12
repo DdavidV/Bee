@@ -62,7 +62,7 @@ defmodule Bee.Editor.BufferTest do
     File.write!(path, "changed")
     send_fs_event(path)
 
-    assert_receive {:buffer_reloaded, ^path, "changed"}
+    assert_receive {:buffer_reloaded, ^path, 1, "changed"}
     assert %{text: "changed"} = Buffer.get(path)
   end
 
@@ -72,8 +72,93 @@ defmodule Bee.Editor.BufferTest do
     File.write!(path, "theirs")
     send_fs_event(path)
 
-    refute_receive {:buffer_reloaded, _, _}
+    refute_receive {:buffer_reloaded, _, _, _}
     assert %{text: "mine"} = Buffer.get(path)
+  end
+
+  describe "change/3: what an editor typed, by position" do
+    defp at(line, character), do: %{"line" => line, "character" => character}
+    defp typed(from, to, text), do: %{"from" => from, "to" => to, "text" => text}
+
+    test "is applied to the version it names, and makes the next", %{path: path} do
+      File.write!(path, "one\ntwö\n")
+      {:ok, _} = Buffer.open(path)
+
+      # Several places at once, all in the text before the change.
+      edits = [typed(at(1, 3), at(1, 3), "!"), typed(at(0, 0), at(0, 3), "ONE")]
+      assert {:ok, %{text: "ONE\ntwö!\n", version: 1} = buffer} = Buffer.change(path, 0, edits)
+      assert Buffer.dirty?(buffer)
+      assert_receive {:buffer_delta, ^path, 1, ^edits}
+      assert_receive {:buffer_changed, ^path, 1, "ONE\ntwö!\n"}
+
+      # A line break goes with its line.
+      assert {:ok, %{text: "ONEtwö!\n", version: 2}} =
+               Buffer.change(path, 1, [typed(at(0, 3), at(1, 0), "")])
+
+      # Back to the file's text: not dirty.
+      assert {:ok, buffer} = Buffer.change(path, 2, [typed(at(0, 0), at(0, 7), "one\ntwö")])
+      refute Buffer.dirty?(buffer)
+    end
+
+    test "typing on, back and after other changes lands where the editor says", %{path: path} do
+      File.write!(path, "one\ntwo\nthree\n")
+      {:ok, _} = Buffer.open(path)
+
+      insert = fn version, place, text ->
+        Buffer.change(path, version, [typed(place, place, text)])
+      end
+
+      assert {:ok, %{text: "one\ntwo\nthree!\n"}} = insert.(0, at(2, 5), "!")
+      assert {:ok, %{text: "one\ntwo\nthree!?\n"}} = insert.(1, at(2, 6), "?")
+      # An earlier line, then a later one again.
+      assert {:ok, %{text: "one\n\ntwo\nthree!?\n"}} = insert.(2, at(1, 0), "\n")
+      assert {:ok, %{text: "one\n\ntwo\nthree!?\nend"}} = insert.(3, at(4, 0), "end")
+      # A change that isn't the editor's moves the lines: found anew.
+      {:ok, %{version: 5}} = Buffer.edit(path, [{0, 0, "zero\n"}])
+      assert {:ok, %{text: "zero\none\n\ntwo\nthree!?\nend."}} = insert.(5, at(5, 3), ".")
+    end
+
+    test "of another version, or not of this text, is stale", %{path: path} do
+      {:ok, _} = Buffer.open(path)
+      edit = [typed(at(0, 0), at(0, 0), "x")]
+
+      assert Buffer.change(path, 1, edit) == {:error, :stale}
+      assert Buffer.change(path, 0, [typed(at(3, 0), at(3, 0), "x")]) == {:error, :stale}
+      assert Buffer.change(path, 0, [typed(at(0, 2), at(0, 1), "x")]) == {:error, :stale}
+
+      assert Buffer.change(path, 0, [
+               typed(at(0, 0), at(0, 3), "x"),
+               typed(at(0, 2), at(0, 4), "y")
+             ]) ==
+               {:error, :stale}
+
+      assert Buffer.change(path, 0, [%{"from" => at(0, 0)}]) == {:error, :stale}
+      assert %{text: "hello", version: 0} = Buffer.get(path)
+      refute_receive {:buffer_changed, _, _, _}
+
+      # The whole text always goes.
+      assert %{text: "mine", version: 1} = Buffer.update(path, "mine")
+      assert {:ok, %{text: "xmine", version: 2}} = Buffer.change(path, 1, edit)
+    end
+
+    test "sync_version/1 is nil for a text whose lines the editor breaks differently", %{
+      path: path
+    } do
+      File.write!(path, "old\rmac")
+      {:ok, buffer} = Buffer.open(path)
+      assert Buffer.sync_version(buffer) == nil
+      assert Buffer.sync_version(Buffer.update(path, "old\nmac")) == 1
+    end
+
+    test "save/3 with a base saves only that version", %{path: path} do
+      {:ok, _} = Buffer.open(path)
+      Buffer.update(path, "typed")
+
+      assert Buffer.save(path, nil, base: 0) == {:error, :stale}
+      assert File.read!(path) == "hello"
+      assert {:ok, %{text: "typed"}} = Buffer.save(path, nil, base: 1)
+      assert File.read!(path) == "typed"
+    end
   end
 
   test "refuses binary and missing files", %{dir: dir} do

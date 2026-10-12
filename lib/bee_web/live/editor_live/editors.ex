@@ -6,6 +6,11 @@ defmodule BeeWeb.EditorLive.Editors do
   `Bee.Editor.Buffer` per file: the editor's changes come as `doc_changed`
   and `save`, the buffer's (plugins' edits, reloads) go back as `cm:edit`
   and `cm:reload`. Tabs follow their files when Bee moves or deletes them.
+
+  The two agree on the text by its version (`Bee.Editor.Buffer`): the
+  editor sends what was typed (`changes`, of version `base`) and is told
+  the new version – or `resync`, when the buffer has another text, and
+  then sends its whole `text`, which always wins.
   """
 
   import Phoenix.Component, only: [assign: 2]
@@ -20,6 +25,9 @@ defmodule BeeWeb.EditorLive.Editors do
   alias Bee.Editor.Buffer
   alias Bee.Workspace.RecentFiles
   alias BeeWeb.EditorLive.{Formatting, Json, LanguageFeatures, Notifications}
+
+  # How often the Explorer follows files changing on disk.
+  @fs_ms 100
 
   ## Events
 
@@ -52,27 +60,38 @@ defmodule BeeWeb.EditorLive.Editors do
     {:halt, change(socket, &Workbench.reorder_tabs(&1, group, order))}
   end
 
-  def handle_event("doc_changed", %{"path" => path, "text" => text}, socket) do
-    if Workbench.open?(workbench(socket), path) do
-      dirty = Buffer.dirty?(Buffer.update(path, text))
-
-      {:halt,
-       socket |> change(&Workbench.set_dirty(&1, path, dirty)) |> Json.validate_json(path, text)}
+  # What was typed, in version `base` of the text.
+  def handle_event(
+        "doc_changed",
+        %{"path" => path, "base" => base, "changes" => changes},
+        socket
+      ) do
+    with true <- Workbench.open?(workbench(socket), path),
+         {:ok, buffer} <- Buffer.change(path, base, changes) do
+      {:halt, %{version: buffer.version}, text_changed(socket, buffer)}
     else
-      {:halt, socket}
+      _ -> {:halt, %{resync: true}, socket}
     end
   end
 
-  # Format on save: the file's formatter (an extension's) goes first, and
-  # the file is saved when it answered – or didn't in time.
-  def handle_event("save", %{"path" => path, "text" => text}, socket) do
-    if Workbench.open?(workbench(socket), path) and
-         Formatting.file_settings(socket, path)["editor.formatOnSave"] == true and
-         Formatting.formatter?(socket, path, "formatting") do
-      Buffer.update(path, text)
-      {:halt, Formatting.format(socket, path, :document, true)}
+  # The editor's whole text.
+  def handle_event("doc_changed", %{"path" => path, "text" => text}, socket) do
+    if Workbench.open?(workbench(socket), path) do
+      buffer = Buffer.update(path, text)
+      {:halt, %{version: Buffer.sync_version(buffer)}, text_changed(socket, buffer)}
     else
-      {:halt, save_file(socket, path, text)}
+      {:halt, %{}, socket}
+    end
+  end
+
+  # Save: the buffer's text when it is the editor's (version `base`), else
+  # the editor's whole `text`.
+  def handle_event("save", %{"path" => path} = params, socket) do
+    with true <- Workbench.open?(workbench(socket), path),
+         {:ok, buffer} <- saved_text(path, params) do
+      {:halt, %{version: Buffer.sync_version(buffer)}, save(socket, path, buffer.text)}
+    else
+      _ -> {:halt, %{resync: true}, socket}
     end
   end
 
@@ -83,9 +102,12 @@ defmodule BeeWeb.EditorLive.Editors do
   def handle_event("history_changed", %{"canUndo" => can_undo, "canRedo" => can_redo}, socket),
     do: {:halt, change(socket, &Workbench.set_history(&1, can_undo == true, can_redo == true))}
 
-  # Selections of the active editor, UTF-8 byte offsets (for plugin commands).
+  # Selections of the active editor, as positions (`Bee.Editor.Positions`):
+  # for extensions as they are, for plugin commands as byte offsets when
+  # one runs (`BeeWeb.EditorLive.Window.plugin_context/1`).
   def handle_event("selection_changed", %{"path" => path, "ranges" => ranges}, socket) do
-    ranges = for [from, to] <- ranges, is_integer(from), is_integer(to), do: {from, to}
+    position? = &match?(%{"line" => l, "character" => c} when is_integer(l) and is_integer(c), &1)
+    ranges = for [from, to] <- ranges, position?.(from), position?.(to), do: {from, to}
     socket = assign(socket, selection: {path, ranges})
     if path == socket.assigns.active, do: tell_extension_host(socket)
     {:halt, socket}
@@ -115,30 +137,62 @@ defmodule BeeWeb.EditorLive.Editors do
     end
   end
 
+  # A file changed on disk: the Explorer lists its folder again – at once,
+  # and then at most every @fs_ms while changes keep coming (a build, a
+  # log), each folder once.
   def handle_info({:fs_changed, path}, socket) do
-    send_update(BeeWeb.Workbench.FileTree, id: "explorer", fs_changed: path)
-    {:halt, socket}
+    dir = Path.dirname(path)
+
+    case socket.private[:fs_dirs] do
+      nil ->
+        send_update(BeeWeb.Workbench.FileTree, id: "explorer", fs_changed: [dir])
+        Process.send_after(self(), :fs_changed_dirs, @fs_ms)
+        {:halt, put_private(socket, :fs_dirs, MapSet.new())}
+
+      dirs ->
+        {:halt, put_private(socket, :fs_dirs, MapSet.put(dirs, dir))}
+    end
   end
 
-  def handle_info({:buffer_edited, path, _version, edits, text}, socket) do
+  def handle_info(:fs_changed_dirs, socket) do
+    dirs = socket.private[:fs_dirs]
+
+    if MapSet.size(dirs) == 0 do
+      {:halt, put_private(socket, :fs_dirs, nil)}
+    else
+      send_update(BeeWeb.Workbench.FileTree, id: "explorer", fs_changed: MapSet.to_list(dirs))
+      Process.send_after(self(), :fs_changed_dirs, @fs_ms)
+      {:halt, put_private(socket, :fs_dirs, MapSet.new())}
+    end
+  end
+
+  # Edits made here: for the editor that has the version they were made
+  # of (`base`); another one sends its text instead.
+  def handle_info({:buffer_edited, path, version, edits, text}, socket) do
     if Workbench.open?(workbench(socket), path) do
       edits = for {from, to, insert} <- edits, do: [from, to, insert]
 
       {:halt,
        socket
-       |> push_event("cm:edit", %{path: path, edits: edits, text: text})
+       |> change(&Workbench.set_dirty(&1, path, dirty?(path)))
+       |> push_event("cm:edit", %{
+         path: path,
+         edits: edits,
+         base: version - 1,
+         version: sync_version(version, text)
+       })
        |> Json.validate_json(path, text)}
     else
       {:halt, socket}
     end
   end
 
-  def handle_info({:buffer_reloaded, path, text}, socket) do
+  def handle_info({:buffer_reloaded, path, version, text}, socket) do
     if Workbench.open?(workbench(socket), path) do
       {:halt,
        socket
        |> change(&Workbench.set_dirty(&1, path, false))
-       |> push_event("cm:reload", %{path: path, text: text})
+       |> push_event("cm:reload", %{path: path, text: text, version: sync_version(version, text)})
        |> Json.validate_json(path, text)}
     else
       {:halt, socket}
@@ -146,6 +200,44 @@ defmodule BeeWeb.EditorLive.Editors do
   end
 
   def handle_info(_message, socket), do: {:cont, socket}
+
+  # Whether the open file `path` has unsaved changes.
+  defp dirty?(path) do
+    Buffer.dirty?(Buffer.get(path))
+  catch
+    :exit, _ -> false
+  end
+
+  defp sync_version(version, text),
+    do: Buffer.sync_version(%Buffer{version: version, text: text})
+
+  # The buffer's text changed with the editor's: its tab, its problems.
+  defp text_changed(socket, buffer) do
+    dirty = Buffer.dirty?(buffer)
+
+    socket
+    |> change(&Workbench.set_dirty(&1, buffer.path, dirty))
+    |> Json.validate_json(buffer.path, buffer.text)
+  end
+
+  defp saved_text(path, %{"text" => text}) when is_binary(text),
+    do: {:ok, Buffer.update(path, text)}
+
+  defp saved_text(path, %{"base" => base}) do
+    case Buffer.get(path) do
+      %{version: ^base} = buffer -> {:ok, buffer}
+      _ -> :stale
+    end
+  end
+
+  # Format on save: the file's formatter (an extension's) goes first, and
+  # the file is saved when it answered – or didn't in time.
+  defp save(socket, path, text) do
+    if Formatting.file_settings(socket, path)["editor.formatOnSave"] == true and
+         Formatting.formatter?(socket, path, "formatting"),
+       do: Formatting.format(socket, path, :document, true),
+       else: save_file(socket, path, text)
+  end
 
   # Opens `path` in a new tab. `text`: unsaved text to carry over (a file
   # that was moved with unsaved changes).
@@ -161,7 +253,13 @@ defmodule BeeWeb.EditorLive.Editors do
       |> push_event(
         "cm:open",
         Map.merge(
-          %{path: path, text: buffer.text, lang: lang, group: socket.assigns.group},
+          %{
+            path: path,
+            text: buffer.text,
+            version: Buffer.sync_version(buffer),
+            lang: lang,
+            group: socket.assigns.group
+          },
           highlight(lang)
         )
       )

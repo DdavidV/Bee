@@ -270,11 +270,13 @@ defmodule BeeWeb.ExtensionsTest do
     {:ok, view, _html} = live(conn, ~p"/")
     open_file(view, "notes.txt")
     path = Path.join(Bee.Workspace.root(), "notes.txt")
-    render_hook(view, "selection_changed", %{"path" => path, "ranges" => [[5, 5]]})
+    at = %{"line" => 0, "character" => 5}
+    render_hook(view, "selection_changed", %{"path" => path, "ranges" => [[at, at]]})
 
     # What the Keybindings hook pushes for a binding with arguments.
     run(view, "hello.insert", [%{"text" => "inserted "}])
-    assert_push_event(view, "cm:edit", %{path: ^path, text: "some inserted notes\n"}, 3_000)
+    assert_push_event(view, "cm:edit", %{path: ^path}, 3_000)
+    assert Bee.Editor.Buffer.get(path).text == "some inserted notes\n"
     assert Bee.Editor.Buffer.get(path).text == "some inserted notes\n"
   end
 
@@ -530,9 +532,11 @@ defmodule BeeWeb.ExtensionsTest do
     assert_push_event(
       view,
       "cm:edit",
-      %{path: ^path, text: "this is GOOD here\n# TODO later\nfrozen\n"},
+      %{path: ^path},
       5_000
     )
+
+    assert Bee.Editor.Buffer.get(path).text == "this is GOOD here\n# TODO later\nfrozen\n"
 
     eventually(fn -> has_element?(view, "#problems", "1 problem") end)
 
@@ -619,11 +623,15 @@ defmodule BeeWeb.ExtensionsTest do
     assert_push_event(
       view,
       "cm:edit",
-      %{path: ^path, text: "def twice\n  var inner\n    twice and twice\ndef last\n"},
+      %{path: ^path},
       5_000
     )
 
-    assert_push_event(view, "cm:edit", %{path: ^other, text: "def elsewhere\nuses twice\n"})
+    assert Bee.Editor.Buffer.get(path).text ==
+             "def twice\n  var inner\n    twice and twice\ndef last\n"
+
+    assert_push_event(view, "cm:edit", %{path: ^other})
+    assert Bee.Editor.Buffer.get(other).text == "def elsewhere\nuses twice\n"
 
     eventually(fn ->
       has_element?(view, "#status", "Renamed once to twice: 4 places in 2 files")
@@ -679,19 +687,26 @@ defmodule BeeWeb.ExtensionsTest do
     end)
 
     # Format Selection: the lines of the selection (the second, here).
-    render_hook(view, "selection_changed", %{"path" => path, "ranges" => [[12, 15]]})
+    render_hook(view, "selection_changed", %{
+      "path" => path,
+      "ranges" => [[%{"line" => 1, "character" => 0}, %{"line" => 1, "character" => 3}]]
+    })
+
     run(view, "editor.action.formatSelection")
 
     assert_push_event(
       view,
       "cm:edit",
-      %{path: ^path, text: "one   two\nthree four\n", edits: [[10, 23, "three four"]]},
+      %{path: ^path, edits: [[10, 23, "three four"]]},
       5_000
     )
 
+    assert Bee.Editor.Buffer.get(path).text == "one   two\nthree four\n"
+
     # Format Document: the edits go to the editor, undoable; unsaved.
     run(view, "editor.action.formatDocument")
-    assert_push_event(view, "cm:edit", %{path: ^path, text: "one two\nthree four\n"}, 5_000)
+    assert_push_event(view, "cm:edit", %{path: ^path}, 5_000)
+    assert Bee.Editor.Buffer.get(path).text == "one two\nthree four\n"
     assert File.read!(path) == "one   two\nthree    four\n"
 
     # Saving doesn't format, unless asked to.
@@ -701,7 +716,8 @@ defmodule BeeWeb.ExtensionsTest do
     Bee.Settings.update(:user, "editor.formatOnSave", fn _ -> true end)
     eventually(fn -> :sys.get_state(view.pid).socket.assigns.settings["editor.formatOnSave"] end)
     render_hook(view, "save", %{"path" => path, "text" => "c   d  \n"})
-    assert_push_event(view, "cm:edit", %{path: ^path, text: "c d\n"}, 5_000)
+    assert_push_event(view, "cm:edit", %{path: ^path}, 5_000)
+    assert Bee.Editor.Buffer.get(path).text == "c d\n"
     eventually(fn -> File.read!(path) == "c d\n" end)
     eventually(fn -> has_element?(view, "#status", "Saved f.hl") end)
 
@@ -713,7 +729,8 @@ defmodule BeeWeb.ExtensionsTest do
 
     Bee.Settings.reload()
     render_hook(view, "save", %{"path" => path, "text" => "e   f\n"})
-    assert_push_event(view, "cm:edit", %{path: ^path, text: "e f\n"}, 5_000)
+    assert_push_event(view, "cm:edit", %{path: ^path}, 5_000)
+    assert Bee.Editor.Buffer.get(path).text == "e f\n"
     eventually(fn -> File.read!(path) == "e f\n" end)
     # (The formatter is told the language's tab size.)
     eventually(fn -> "formatting with tabSize 7" in Bee.Extensions.Host.log(root) end)

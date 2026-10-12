@@ -53,6 +53,12 @@ editors are open and which is in front, whether the sidebar and the panel
 are shown and how large they are, the terminals, the open menu, the command
 palette, the search.
 
+What the page shows is worked out from that state: which menu items are
+enabled, which buttons a view has, what the title says. Each of these is
+worked out again only when what it depends on changed, and only what came
+out different is sent to the page. Moving the cursor, typing on or output
+in a terminal changes none of them, and so sends the page nothing to redraw.
+
 Two rules shape how a window works.
 
 **Every action is a command.** A menu item, a button, a keybinding, a
@@ -97,11 +103,11 @@ the editor.
   typing                                         a plugin or extension edits
     │                                                       │
     ▼                                                       ▼
-┌─────────┐   whole text, throttled    ┌───────────────────────────┐
-│ editor  │───────────────────────────▶│ buffer                    │
-│ in the  │                            │ (one per open file,       │
-│ browser │◀───────────────────────────│  shared by every window)  │
-└─────────┘   edits, as ranges         └─────────────┬─────────────┘
+┌─────────┐   what was typed, throttled ┌──────────────────────────┐
+│ editor  │────────────────────────────▶│ buffer                   │
+│ in the  │                             │ (one per open file,      │
+│ browser │◀────────────────────────────│  shared by every window) │
+└─────────┘   edits, as ranges          └────────────┬─────────────┘
                                                      │ announces: opened, changed,
                                                      │ saved, reloaded, closed
                                                      ▼
@@ -115,10 +121,19 @@ the editor.
 - **In Bee**, each open file has a buffer. It holds the latest text and the
   text last known to be on disk. The file is unsaved when they differ.
 
-As the user types, the browser sends the text to the buffer, throttled. When
-something inside Bee edits the file, such as a plugin, a formatter or a
-rename, the buffer sends the edit to every editor showing that file, where it
-becomes an ordinary undoable change.
+As the user types, the browser sends what was typed to the buffer,
+throttled: the changes and where they are, not the file. Typing in a large
+file costs what typing in a small one does. When something inside Bee edits
+the file, such as a plugin, a formatter or a rename, the buffer sends the
+edit to every editor showing that file, where it becomes an ordinary
+undoable change.
+
+The two sides agree on the text by counting its versions. Every change makes
+the next version, and a change says which version it was made of. If the
+buffer has another one, because a file was reloaded or edited from elsewhere
+at the same moment, it applies nothing and asks for the editor's whole text,
+which then wins. Extensions follow the same way: they are sent each change
+as it was typed, and the whole text only when they have fallen behind.
 
 Before any command runs, pending text and selections are flushed, so a
 command always sees what the user sees.
@@ -145,8 +160,10 @@ finds matches in unsaved text. Plugins read unsaved text. Extensions are
 sent every change.
 
 Two ways of counting positions meet here. Bee counts bytes of UTF-8, the
-browser's editor and VS Code extensions count UTF-16 units. Positions are
-converted at the boundary.
+browser's editor and VS Code extensions count lines and UTF-16 units.
+What the editor and extensions say to each other passes through as it is.
+What Bee itself needs is converted at the boundary, from the line in
+question rather than from the start of the file.
 
 ## Contributions
 
@@ -321,7 +338,9 @@ Both are picked by a setting and switch live.
 
 **Terminals.** Each terminal tab is a real shell running in a pseudo
 terminal, owned by the window that opened it. Its output is broadcast to the
-window and also kept in a bounded scrollback. A terminal view that attaches
+window and also kept in a bounded scrollback. What is typed is echoed at
+once; a flood of output is passed on a few milliseconds at a time, in one
+piece each. A terminal view that attaches
 late, for example after the panel was hidden, first replays the scrollback
 and then continues with live output, skipping what it has already seen. A
 terminal ends with its window.
@@ -363,8 +382,9 @@ symbols in the file, `#` for symbols in the workspace.
 ## Watching the file system
 
 Bee watches two kinds of places: its own configuration folder, and the
-folder of every open workspace. One stream of change notices feeds
-everything that cares:
+folder of every open workspace. A change is told at once; a burst of them,
+such as a build writing its output, is gathered for a moment and each file
+told once. One stream of change notices feeds everything that cares:
 
 - settings and keybindings reload when their files change;
 - a plugin reloads when its folder changes;
@@ -390,7 +410,8 @@ saved the same way a window does.
 The things asked for constantly, such as settings, keybindings,
 contributions, plugin state and what plugins put on screen, are kept where
 any part of Bee can read them directly without waiting in line behind
-anything else. Only changes go through a single owner, which keeps them
+anything else, and in the shape they are asked for, so a read copies and
+computes nothing. Only changes go through a single owner, which keeps them
 consistent.
 
 ## Processes beside Bee

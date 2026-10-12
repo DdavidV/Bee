@@ -7,7 +7,7 @@
 //!   Channel (`opened`, `msg`, `closed`).
 
 use std::collections::HashMap;
-use std::io::{Read, Write};
+use std::io::{BufReader, Read, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Mutex};
 use std::time::Duration;
@@ -61,7 +61,9 @@ impl Bridge {
     }
 
     /// Reads Bee's frames from `from`, its stdout, until it ends (blocks).
-    pub fn read_frames(&self, mut from: impl Read) {
+    pub fn read_frames(&self, from: impl Read) {
+        // (Buffered: a frame's length and its body aren't a read each.)
+        let mut from = BufReader::with_capacity(64 * 1024, from);
         while let Ok(body) = frame::read(&mut from) {
             match serde_json::from_slice(&body) {
                 Ok(frame) => self.dispatch(frame),
@@ -81,12 +83,13 @@ impl Bridge {
             }
             Some(t @ ("opened" | "msg" | "closed")) => {
                 let sid = frame["sid"].as_str().unwrap_or_default().to_string();
+                let closed = t == "closed";
                 let mut sockets = self.sockets.lock().unwrap();
 
                 if let Some((channel, _win)) = sockets.get(&sid) {
-                    let _ = channel.send(frame.clone());
+                    let _ = channel.send(frame);
                 }
-                if t == "closed" {
+                if closed {
                     sockets.remove(&sid);
                 }
             }

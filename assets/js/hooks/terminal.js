@@ -10,7 +10,12 @@
 import {Terminal as XTerm} from "@xterm/xterm"
 import {FitAddon} from "@xterm/addon-fit"
 
-const decode = base64 => Uint8Array.from(atob(base64), c => c.charCodeAt(0))
+const decode = base64 => {
+  const text = atob(base64)
+  const bytes = new Uint8Array(text.length)
+  for (let i = 0; i < text.length; i++) bytes[i] = text.charCodeAt(i)
+  return bytes
+}
 
 const DARK = {
   background: "#282c34",

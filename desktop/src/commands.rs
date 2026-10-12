@@ -25,15 +25,29 @@ pub fn bridge_open(
     bridge.open_socket(sid, win, &url, channel);
 }
 
+/// A frame a page sends on its socket `sid` (`bin`: `data` is base64).
+#[derive(serde::Deserialize)]
+pub struct SocketFrame {
+    sid: String,
+    data: String,
+    bin: bool,
+}
+
+/// The frames a page sends on its sockets, in order: what it had to send
+/// while its last call was on its way comes in one.
 #[tauri::command]
 pub fn bridge_send(
     webview: tauri::Webview,
     bridge: tauri::State<'_, Arc<Bridge>>,
-    sid: String,
-    data: String,
-    bin: bool,
+    frames: Vec<SocketFrame>,
 ) {
-    bridge.send_socket(&socket_id(webview.label(), &sid), &data, bin);
+    for frame in frames {
+        bridge.send_socket(
+            &socket_id(webview.label(), &frame.sid),
+            &frame.data,
+            frame.bin,
+        );
+    }
 }
 
 #[tauri::command]

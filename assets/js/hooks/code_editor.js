@@ -28,6 +28,11 @@
 // data-token-colors has the color theme's tokenColors). With them comes the
 // language's configuration, if it has one (editor/language_config.js).
 //
+// Text: the server has each file's text too (Bee.Editor.Buffer), and the
+// two agree on it by its version (`this.sync`). What is typed is sent as
+// what changed, by position, in the version the server has – not the whole
+// text, however large the file: see "Text sync" below.
+//
 // Server -> client: cm:open, cm:activate, cm:deactivate (an editor that
 //                   isn't a file is shown), cm:close, cm:reload, cm:language,
 //                   cm:edit (server-side edits, UTF-8 byte offsets),
@@ -37,7 +42,7 @@
 //                   (those extensions found), cm:language_features (what
 //                   extensions provide for a file), language:reply
 // Client -> server: doc_changed (throttled), save, selection_changed
-//                   (throttled, UTF-8 byte offsets; for plugin commands)
+//                   (throttled, positions; for extensions and plugin commands)
 //                   history_changed (whether the active file can undo/redo)
 //                   language_request, language_cancel, language_goto, language_rename,
 //                   language_code_actions
@@ -75,7 +80,7 @@ import {snippetCompletions, insertSnippet, setSnippetRoot} from "../editor/snipp
 import {jsonAssist, setJsonRequester} from "../editor/json_assist"
 import {
   languageFeatures, setFeatures, setLanguageRequester, goTo, quickFix, rename, showHover, startCompletion,
-  triggerSignatureHelp,
+  toPosition, triggerSignatureHelp,
 } from "../editor/language_features"
 
 const SYNC_MS = 300
@@ -216,6 +221,8 @@ export const CodeEditor = {
     Object.defineProperty(this, "states", {configurable: true, get: () => this.cur().states})
     this.timers = new Map() // path -> throttle timer
     this.pending = new Set() // paths with changes not yet sent
+    // path -> what the server has of the file's text (see "Text sync").
+    this.sync = new Map()
     this.modes = new Map() // path -> {mode, scope, config, snippets}
     this.selectionTimer = null
     this.settings = this.readSettings()
@@ -232,14 +239,14 @@ export const CodeEditor = {
       if (group) this.userFocus(Number(group.dataset.group))
     })
 
-    this.handleEvent("cm:open", ({group, path, text, mode, scope, config, snippets, json}) =>
-      this.open(this.groupOf(group), path, text, {mode, scope, config, snippets, json}),
+    this.handleEvent("cm:open", ({group, path, text, version, mode, scope, config, snippets, json}) =>
+      this.open(this.groupOf(group), path, text, version, {mode, scope, config, snippets, json}),
     )
     this.handleEvent("cm:activate", ({group, path}) => this.activate(this.groupOf(group), path))
     this.handleEvent("cm:deactivate", ({group}) => this.deactivate(this.groupOf(group)))
     this.handleEvent("cm:close", ({group, path}) => this.close(this.groupOf(group), path))
     this.handleEvent("cm:focus", ({group}) => this.serverFocus(group))
-    this.handleEvent("cm:reload", ({path, text}) => this.reload(path, text))
+    this.handleEvent("cm:reload", ({path, text, version}) => this.reload(path, text, version))
     this.handleEvent("cm:language", ({path, mode, scope, config, snippets, json}) =>
       this.setMode(path, {mode, scope, config, snippets, json}),
     )
@@ -281,7 +288,7 @@ export const CodeEditor = {
       this.updateState(path, {effects: setFeatures.of(features)})
     })
     this.handleEvent("language:reply", ({ref, result}) => this.languageRequests.get(ref)?.(result ?? null))
-    this.handleEvent("cm:edit", ({path, edits, text}) => this.edit(path, edits, text))
+    this.handleEvent("cm:edit", ({path, edits, base, version}) => this.edit(path, edits, base, version))
     this.handleEvent("cm:reveal", target => this.reveal(target))
 
     this.unregisterCommands = [
@@ -323,11 +330,20 @@ export const CodeEditor = {
   },
 
   // LiveView patches data-settings even though the content is ignored.
+  // (Called for every patch in the editor area: only what changed is read.)
   updated() {
     this.syncGroups()
     this.readTextMate()
-    const settings = this.readSettings()
-    if (JSON.stringify(settings) !== JSON.stringify(this.settings)) this.configure(settings)
+    if (this.el.dataset.settings !== this.settingsJson) this.configure(this.readSettings())
+  },
+
+  // The connection was lost and is back, with another window on the
+  // server's side: what was agreed on the files' text isn't any more (and
+  // no answer is on its way).
+  reconnected() {
+    for (const sync of this.sync.values()) {
+      Object.assign(sync, {version: null, base: null, changes: null, waiting: false, epoch: sync.epoch + 1})
+    }
   },
 
   // Unchanged strings are ignored cheaply (textmate.js compares them too).
@@ -451,6 +467,7 @@ export const CodeEditor = {
     clearTimeout(this.timers.get(path))
     this.timers.delete(path)
     this.pending.delete(path)
+    this.sync.delete(path)
     this.modes.delete(path)
     this.jsonDiagnostics.delete(path)
     this.languageDiagnostics.delete(path)
@@ -458,7 +475,8 @@ export const CodeEditor = {
   },
 
   readSettings() {
-    return {...DEFAULTS, ...JSON.parse(this.el.dataset.settings || "{}")}
+    this.settingsJson = this.el.dataset.settings
+    return {...DEFAULTS, ...JSON.parse(this.settingsJson || "{}")}
   },
 
   configure(settings) {
@@ -484,10 +502,15 @@ export const CodeEditor = {
         EditorView.domEventHandlers({blur: () => void this.flushAll()}),
         EditorView.updateListener.of(update => {
           if (update.docChanged) {
+            // What was typed here: for the file's other editors, and the server.
+            let typed = false
             for (const tr of update.transactions) {
-              if (tr.docChanged && !tr.annotation(remote)) this.mirror(group, path, tr)
+              if (!tr.docChanged || tr.annotation(remote)) continue
+              this.mirror(group, path, tr)
+              this.record(path, tr)
+              typed = true
             }
-            if (update.transactions.some(tr => tr.docChanged && tr.annotation(remote) !== "mirror")) this.changed(path)
+            if (typed) this.changed(path)
           }
           if (group.id !== this.focused) return
           if (update.transactions.length) this.historyChanged()
@@ -608,7 +631,7 @@ export const CodeEditor = {
     }
   },
 
-  open(group, path, text, highlight) {
+  open(group, path, text, version, highlight) {
     if (!group) return
     // Another group's editor of the file has its text as it is now; else
     // always start from the server's, even if we had a stale state.
@@ -625,7 +648,10 @@ export const CodeEditor = {
     this.selectionChanged()
     this.historyChanged()
     // Problems that came before the file did.
-    if (!sibling) this.jsonDiagnostics.delete(path)
+    if (!sibling) {
+      this.jsonDiagnostics.delete(path)
+      this.synced(path, version)
+    }
     this.applyDiagnostics(path)
   },
 
@@ -662,38 +688,39 @@ export const CodeEditor = {
     this.forget(path)
   },
 
-  reload(path, text) {
+  // The file changed on disk: the server's `text` (its `version`) is ours now.
+  reload(path, text, version) {
     const state = this.stateOf(path)
-    if (!state || state.doc.toString() === text) return
-    this.updateState(path, {changes: {from: 0, to: state.doc.length, insert: text}, annotations: remote.of("server")})
+    if (!state) return
+    if (state.doc.toString() !== text) {
+      this.updateState(path, {changes: {from: 0, to: state.doc.length, insert: text}, annotations: remote.of("server")})
+    }
+    // (Our whole text was on its way: the server has that one now. Told again.)
+    if (this.syncOf(path).waiting) this.sendText(path)
+    else this.synced(path, version)
   },
 
   // Edits made on the server (plugins), `edits` = [[from, to, insert]] in
-  // UTF-8 bytes against the text the server had. Applied as one undoable
-  // change if they lead to the server's `text`; if our document diverged in
-  // the meantime (unsent typing), ours wins and is sent instead.
-  edit(path, edits, text) {
+  // UTF-8 bytes, which made `version` of the text of version `base`.
+  // Applied as one undoable change when `base` is the text we have; if ours
+  // is another one (typing the server hasn't got), ours wins and is sent
+  // instead.
+  edit(path, edits, base, version) {
     const state = this.stateOf(path)
     if (!state) return
-    const doc = state.doc.toString()
-    if (doc === text) return
+    const sync = this.syncOf(path)
+    // (Our whole text is on its way: it wins there.)
+    if (sync.waiting) return
+    if (sync.version !== base || sync.changes) return this.sendText(path)
 
-    const offsets = fromBytes(doc, edits.flatMap(([from, to]) => [from, to]))
-    let transaction = null
-    if (edits.every(([from, to]) => offsets.has(from) && offsets.has(to))) {
-      const changes = edits.map(([from, to, insert]) => ({from: offsets.get(from), to: offsets.get(to), insert}))
-      try {
-        transaction = state.update({changes, userEvent: "input.bee"})
-      } catch (_e) {
-        transaction = null
-      }
-    }
-
-    if (transaction && transaction.state.doc.toString() === text) {
-      const changes = edits.map(([from, to, insert]) => ({from: offsets.get(from), to: offsets.get(to), insert}))
+    const offsets = fromBytes(state.doc.toString(), edits.flatMap(([from, to]) => [from, to]))
+    if (!edits.every(([from, to]) => offsets.has(from) && offsets.has(to))) return this.sendText(path)
+    const changes = edits.map(([from, to, insert]) => ({from: offsets.get(from), to: offsets.get(to), insert}))
+    try {
       this.updateState(path, {changes, userEvent: "input.bee", annotations: remote.of("server")})
-    } else {
-      this.pushText("doc_changed", path)
+      this.synced(path, version)
+    } catch (_e) {
+      this.sendText(path)
     }
   },
 
@@ -799,15 +826,14 @@ export const CodeEditor = {
     }, SELECTION_MS)
   },
 
+  // (As positions: finding a line doesn't go through the text.)
   pushSelection() {
     this.selectionPending = false
     if (!this.active) return
     const state = this.view.state
-    const ranges = state.selection.ranges.map(r => [r.from, r.to])
-    const bytes = toBytes(state.doc.toString(), ranges.flat())
     this.pushEvent("selection_changed", {
       path: this.active,
-      ranges: ranges.map(([from, to]) => [bytes.get(from), bytes.get(to)]),
+      ranges: state.selection.ranges.map(r => [toPosition(state, r.from), toPosition(state, r.to)]),
     })
   },
 
@@ -816,7 +842,7 @@ export const CodeEditor = {
     for (const path of [...this.timers.keys()]) {
       clearTimeout(this.timers.get(path))
       this.timers.delete(path)
-      if (this.pending.delete(path)) this.pushText("doc_changed", path)
+      if (this.pending.delete(path)) this.send(path)
     }
     if (this.selectionTimer) {
       clearTimeout(this.selectionTimer)
@@ -837,7 +863,7 @@ export const CodeEditor = {
       this.pending.add(path)
       return
     }
-    this.pushText("doc_changed", path)
+    this.send(path)
     this.timers.set(path, setTimeout(() => this.flush(path), SYNC_MS))
   },
 
@@ -846,15 +872,101 @@ export const CodeEditor = {
     if (this.pending.delete(path)) this.changed(path)
   },
 
+  // The server saves the text it has, once it has ours.
   save(path) {
     clearTimeout(this.timers.get(path))
     this.timers.delete(path)
     this.pending.delete(path)
-    this.pushText("save", path)
+    const sync = this.syncOf(path)
+    if (sync.version == null) return this.sendText(path, "save")
+    this.send(path)
+    this.pushEvent("save", {path, base: sync.version}, reply => {
+      if (reply.resync && this.sync.get(path) === sync) this.sendText(path, "save")
+    })
   },
 
-  pushText(event, path) {
+  // ---- Text sync
+  //
+  // Per file, `this.sync` has what the server has of its text:
+  //
+  //   version   the version of the server's text when it is ours as it was
+  //             last sent (counted on as changes are sent: each makes the
+  //             next version); null when the server has to be sent the
+  //             whole text
+  //   changes   what was typed since (a ChangeSet), `base` the document
+  //             it was typed into – the one the server has
+  //   waiting   the whole text was sent, its version isn't known yet
+  //   epoch     counts the times the two were made to agree anew: answers
+  //             to what was sent before are of no use then
+  //
+  // The server applies changes only to the version they name. Anything
+  // else (another window typed, a file reloaded as we typed) it answers
+  // with `resync`, and gets our whole text: ours wins, as it always did.
+
+  syncOf(path) {
+    let sync = this.sync.get(path)
+    if (!sync) this.sync.set(path, (sync = {version: null, base: null, changes: null, waiting: false, epoch: 0}))
+    return sync
+  },
+
+  // The server's text of `version` is ours.
+  synced(path, version) {
+    const sync = this.syncOf(path)
+    Object.assign(sync, {version: version ?? null, base: null, changes: null, waiting: false, epoch: sync.epoch + 1})
+  },
+
+  // A transaction typed into `path`: kept until it is sent.
+  record(path, transaction) {
+    const sync = this.syncOf(path)
+    // (Nothing to say it against: the whole text goes.)
+    if (sync.version == null && !sync.waiting) return
+    if (sync.changes) {
+      sync.changes = sync.changes.compose(transaction.changes)
+    } else {
+      sync.base = transaction.startState.doc
+      sync.changes = transaction.changes
+    }
+  },
+
+  // Sends what was typed into `path` since the last time.
+  send(path) {
+    const sync = this.syncOf(path)
+    if (sync.waiting) return
+    if (sync.version == null) return this.sendText(path)
+    if (!sync.changes) return
+    // (Typed and taken back since.)
+    if (sync.changes.empty) return void Object.assign(sync, {base: null, changes: null})
+
+    const {base, epoch} = sync
+    const position = pos => {
+      const line = base.lineAt(pos)
+      return {line: line.number - 1, character: pos - line.from}
+    }
+    const changes = []
+    sync.changes.iterChanges((from, to, _fromB, _toB, inserted) =>
+      changes.push({from: position(from), to: position(to), text: inserted.toString()}),
+    )
+    const version = sync.version
+    Object.assign(sync, {version: version + 1, base: null, changes: null})
+    this.pushEvent("doc_changed", {path, base: version, changes}, reply => {
+      if (reply.resync && sync.epoch === epoch && this.sync.get(path) === sync) this.sendText(path)
+    })
+  },
+
+  // Sends the whole text of `path` (`event`: doc_changed, or save): the
+  // server's is ours then, and it says which version that is.
+  sendText(path, event = "doc_changed") {
     const state = this.stateOf(path)
-    if (state) this.pushEvent(event, {path, text: state.doc.toString()})
+    if (!state) return
+    const sync = this.syncOf(path)
+    const epoch = sync.epoch + 1
+    Object.assign(sync, {version: null, base: null, changes: null, waiting: true, epoch})
+    this.pushEvent(event, {path, text: state.doc.toString()}, reply => {
+      if (sync.epoch !== epoch || this.sync.get(path) !== sync) return
+      sync.waiting = false
+      sync.version = reply.version ?? null
+      // Typed while it was on its way.
+      if (sync.changes) this.send(path)
+    })
   },
 }

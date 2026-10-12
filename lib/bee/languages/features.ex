@@ -108,9 +108,11 @@ defmodule Bee.Languages.Features do
   The features there are for file `path` of workspace `root`, with the
   characters that ask for them when typed:
   `%{"completion" => %{triggerCharacters: ["."]}, "hover" => %{triggerCharacters: []}}`.
+  `language`: the file's language id, when it is known already (detecting
+  it isn't free).
   """
-  def for_file(root, path) do
-    language = Bee.Languages.detect(path)
+  def for_file(root, path, language \\ nil) do
+    language = language || Bee.Languages.detect(path)
     relative = Path.relative_to(path, root)
 
     for %{"feature" => feature} = provider <- providers(root),

@@ -63,6 +63,14 @@ defmodule Bee.Commands.Registry do
     |> Enum.map(&Map.take(&1, [:command, :submenu, :group, :when_ast]))
   end
 
+  @doc "Every menu's items as `menu/1` gives them, by menu id."
+  def menu_table do
+    Contributions.entries(:commands)
+    |> Enum.flat_map(&elem(&1, 1).menu_items)
+    |> Enum.sort_by(&{&1.group, &1.order})
+    |> Enum.group_by(& &1.menu, &Map.take(&1, [:command, :submenu, :group, :when_ast]))
+  end
+
   @doc "The submenus, by id: `%{id => %{id, label, source}}`."
   def submenus do
     for {_source, data} <- Contributions.entries(:commands),

@@ -195,6 +195,26 @@ defmodule Bee.Extensions.LanguagesTest do
         match?([%{from: %{line: 0, character: 0}}], Diagnostics.for_file(root, a))
       end)
 
+      # What an editor types reaches the extension as that change alone.
+      at = fn line, character -> %{"line" => line, "character" => character} end
+      version = Buffer.get(a).version
+
+      {:ok, _} =
+        Buffer.change(a, version, [
+          %{"from" => at.(0, 0), "to" => at.(0, 3), "text" => "fine,\nnot BAD"}
+        ])
+
+      eventually(fn ->
+        match?([%{from: %{line: 1, character: 4}}], Diagnostics.for_file(root, a))
+      end)
+
+      {:ok, _} =
+        Buffer.change(a, version + 1, [
+          %{"from" => at.(1, 4), "to" => at.(1, 7), "text" => "GOOD"}
+        ])
+
+      eventually(fn -> Diagnostics.for_file(root, a) == [] end)
+
       Buffer.close(a)
       eventually(fn -> Diagnostics.for_file(root, a) == [] end)
       assert [_] = Diagnostics.for_file(root, b)

@@ -1,5 +1,6 @@
 // The text documents Bee has open in the host's workspace, as the vscode
-// API shows them. Bee sends their text; positions are computed here.
+// API shows them. Bee sends their text, then what changes in it as it is
+// typed (`change`); positions are computed here.
 "use strict"
 
 const {EventEmitter, Position, Range, Uri, EndOfLine} = require("./types")
@@ -26,7 +27,7 @@ class TextDocument {
   _starts() {
     if (!this._lines) {
       const starts = [0]
-      for (let i = 0; i < this._text.length; i++) if (this._text[i] === "\n") starts.push(i + 1)
+      for (let i = this._text.indexOf("\n"); i >= 0; i = this._text.indexOf("\n", i + 1)) starts.push(i + 1)
       this._lines = starts
     }
     return this._lines
@@ -136,6 +137,27 @@ class Documents {
     existing.isDirty = true
     this.onChange.fire({document: existing, contentChanges: [change(existing, before, text)], reason: undefined})
     return existing
+  }
+
+  // What was typed, as Bee's editor says it: `changes` ([{from, to, text}],
+  // positions) all in the text we have, which becomes `version`.
+  change({path, version, changes}) {
+    const document = this.byPath.get(path)
+    if (!document) return
+    // From the end of the text, so that each is in place when it is its turn.
+    const edits = changes
+      .map(({from, to, text}) => ({
+        range: new Range(from.line, from.character, to.line, to.character),
+        rangeOffset: document.offsetAt(from),
+        rangeLength: document.offsetAt(to) - document.offsetAt(from),
+        text,
+      }))
+      .sort((a, b) => b.rangeOffset - a.rangeOffset)
+    let text = document._text
+    for (const edit of edits) text = text.slice(0, edit.rangeOffset) + edit.text + text.slice(edit.rangeOffset + edit.rangeLength)
+    document._set(text, version)
+    document.isDirty = true
+    this.onChange.fire({document, contentChanges: edits, reason: undefined})
   }
 
   saved(fsPath) {

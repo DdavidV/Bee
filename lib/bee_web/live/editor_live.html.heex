@@ -12,9 +12,9 @@
   data-theme={@color_theme.base}
   data-color-theme={@color_theme.id}
   data-keybindings={Jason.encode!(@client_keybindings)}
-  data-context={Jason.encode!(Window.context(assigns))}
+  data-context={Jason.encode!(@context)}
   data-root={@root}
-  style={Layout.layout_style(assigns, @connected)}
+  style={Layout.layout_style(@sidebar_width, @panel_height, @connected)}
   class={[
     "h-screen w-screen grid grid-rows-[auto_1fr_auto] bg-base-100 text-base-content overflow-hidden",
     if(@sidebar_open,
@@ -24,22 +24,13 @@
   ]}
 >
   <BeeWeb.Workbench.TitleBar.title_bar
-    title={
-      Window.window_title(
-        @active &&
-          EditorArea.tab_label(
-            Workbench.tab(Window.workbench_from(assigns), @active),
-            @extension_details
-          ),
-        @root
-      )
-    }
+    title={@window_title}
     palette={@palette}
-    palette_items={Palette.palette_items(assigns)}
-    palette_shortcut={Bee.Commands.Keybindings.label("workbench.action.quickOpen", @keybindings)}
+    palette_items={@palette_items}
+    palette_shortcut={@keybinding_labels["workbench.action.quickOpen"]}
     icon_theme={@icon_theme}
-    palette_busy={Palette.quick_open_busy?(assigns)}
-    menus={Menus.menubar(assigns)}
+    palette_busy={Palette.quick_open_busy?(@palette, @quick_open)}
+    menus={@menubar}
     open_menu={@open_menu}
     sidebar_open={@sidebar_open}
     panel_open={@panel_open}
@@ -47,18 +38,18 @@
 
   <%!-- Activity bar and sidebar: views containers and views (Bee.Views) --%>
   <BeeWeb.Workbench.Sidebar.activity_bar
-    containers={Views.activity_bar(assigns)}
+    containers={@activity_bar}
     sidebar_view={@sidebar_view}
     sidebar_open={@sidebar_open}
-    keybindings={@keybindings}
+    keybinding_labels={@keybinding_labels}
   />
 
   <BeeWeb.Workbench.Sidebar.sidebar
     container={Enum.find(@containers, &(&1.id == @sidebar_view))}
-    views={Views.sidebar_views(assigns)}
+    views={@sidebar_views}
     sidebar_open={@sidebar_open}
     root={@root}
-    active={Workbench.active_file(Window.workbench_from(assigns))}
+    active={Workbench.active_file(%Workbench{tabs: @tabs, active: @active})}
     plugins={@plugins}
     view_contents={@view_contents}
     view_inputs={@view_inputs}
@@ -98,7 +89,26 @@
       data-group={@group}
       class="flex-1 min-h-0 min-w-0 flex"
     >
-      <EditorArea.editor_node node={@editor_layout} a={assigns} />
+      <EditorArea.editor_node
+        node={@editor_layout}
+        groups={@groups}
+        focused={@group}
+        actions={@editor_actions}
+        root={@root}
+        icon_theme={@icon_theme}
+        file_decorations={@file_decorations}
+        extension_details={@extension_details}
+        marketplace_installed={@marketplace_installed}
+        installing={@marketplace.installing}
+        settings={@settings}
+        plugins={@plugins}
+        socket={@socket}
+        live={@live}
+        webviews={@webviews}
+        color_theme_id={@color_theme.id}
+        webview_origin={@webview_origin}
+        keybinding_labels={@keybinding_labels}
+      />
     </div>
 
     <%!-- The bottom panel: Terminal, Bee Console, plugins' sections --%>
@@ -106,8 +116,8 @@
       :if={@panel_open}
       maximized={@panel_maximized}
       active={@panel_view}
-      sections={Views.panel_sections(assigns)}
-      actions={Views.panel_actions(assigns)}
+      sections={@panel_sections}
+      actions={@panel_actions}
       terminals={@terminals}
       active_term={@active_term}
       console={@console}
@@ -122,7 +132,7 @@
       output_channels={@output_channels}
       output_channel={@output_channel}
       references={@references}
-      problems={Problems.problem_entries(assigns)}
+      problems={@problem_entries}
       problems_hidden={@problems_hidden}
     />
   </main>
@@ -136,11 +146,11 @@
       item={item}
     />
     <button
-      :if={(problems = Problems.problems(assigns)) != []}
+      :if={@problems != []}
       id="problems"
       class="flex items-center gap-1 cursor-pointer hover:underline"
       title={
-        problems
+        @problems
         |> Enum.take(25)
         |> Enum.map_join("\n", &"#{Path.basename(&1.path)}: #{&1.message}")
       }
@@ -148,7 +158,7 @@
       phx-value-command="workbench.actions.view.problems"
     >
       <.icon name="hero-exclamation-triangle-micro" class="size-3.5" />
-      {length(problems)} {if length(problems) == 1, do: "problem", else: "problems"}
+      {length(@problems)} {if length(@problems) == 1, do: "problem", else: "problems"}
     </button>
     <div class="flex-1" />
     <BeeWeb.Workbench.StatusBar.status_item
@@ -185,7 +195,7 @@
   <BeeWeb.Workbench.ContextMenu.context_menu
     :if={@context_menu}
     menu={@context_menu}
-    items={Menus.context_menu_items(assigns)}
+    items={@context_menu_items}
   />
 
   <%!-- The file picker of Plugins: Install from VSIX… (VsixInstall hook) --%>

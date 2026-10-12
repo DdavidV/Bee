@@ -45,6 +45,15 @@ defmodule Bee.Commands.Keybindings do
     end
   end
 
+  @doc "The label of every bound command (see `label/2`): `%{command => label}`."
+  def labels(bindings \\ all()) do
+    # (Later bindings win.)
+    Map.new(bindings, fn binding ->
+      {binding.command,
+       Bee.Commands.Keys.label(binding.key || binding.linux || binding.win || binding.mac)}
+    end)
+  end
+
   @doc "A binding's `args` as a command's arguments."
   def arguments(nil), do: []
   def arguments(args) when is_list(args), do: args

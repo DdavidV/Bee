@@ -54,7 +54,7 @@ defmodule BeeWeb.EditorLive.Formatting do
             options: %{tabSize: settings["editor.tabSize"] || 2, insertSpaces: true},
             formatter: settings["editor.defaultFormatter"]
           },
-          if(what == :selection, do: %{range: selected_range(socket, path, text)}, else: %{})
+          if(what == :selection, do: %{range: selected_range(socket, path)}, else: %{})
         )
 
       Bee.Languages.Features.request(root, feature, path, params, {self(), ref})
@@ -66,19 +66,13 @@ defmodule BeeWeb.EditorLive.Formatting do
     end
   end
 
-  # The first selection of the file's editor as positions (the cursor's
-  # place when there is none).
-  defp selected_range(socket, path, text) do
-    {from, to} =
-      case socket.assigns.selection do
-        {^path, [{from, to} | _]} -> {min(from, to), max(from, to)}
-        _ -> {0, 0}
-      end
-
-    %{
-      from: Bee.Extensions.Host.bytes_to_position(text, from),
-      to: Bee.Extensions.Host.bytes_to_position(text, to)
-    }
+  # The first selection of the file's editor (the cursor's place when
+  # there is none).
+  defp selected_range(socket, path) do
+    case selections(socket.assigns.selection, path) do
+      [{from, to} | _] -> %{from: from, to: to}
+      [] -> %{from: %{line: 0, character: 0}, to: %{line: 0, character: 0}}
+    end
   end
 
   def formatted(socket, ref, reply) do

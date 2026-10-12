@@ -38,7 +38,7 @@ defmodule BeeWeb.Workbench.Sidebar do
   attr :containers, :list, required: true, doc: "with :badge"
   attr :sidebar_view, :string, required: true
   attr :sidebar_open, :boolean, required: true
-  attr :keybindings, :list, required: true
+  attr :keybinding_labels, :map, required: true
 
   def activity_bar(assigns) do
     ~H"""
@@ -58,7 +58,7 @@ defmodule BeeWeb.Workbench.Sidebar do
             else: "text-activitybar-inactive hover:text-activitybar-fg"
           )
         ]}
-        title={title(container, @keybindings)}
+        title={title(container, @keybinding_labels)}
         aria-label={container.title}
         phx-click="show_view"
         phx-value-container={container.id}
@@ -91,8 +91,8 @@ defmodule BeeWeb.Workbench.Sidebar do
   end
 
   # Bee's own containers have a show command with a keybinding.
-  defp title(container, keybindings) do
-    case Bee.Commands.Keybindings.label("workbench.view.#{container.id}", keybindings) do
+  defp title(container, labels) do
+    case labels["workbench.view.#{container.id}"] do
       nil -> container.title
       key -> "#{container.title} (#{key})"
     end

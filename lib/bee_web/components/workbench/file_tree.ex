@@ -42,15 +42,19 @@ defmodule BeeWeb.Workbench.FileTree do
   end
 
   @impl true
-  def update(%{fs_changed: abs}, socket) do
-    dir = abs |> Path.dirname() |> then(&FS.relative(socket.assigns.root, &1))
-
+  # Files changed in these folders (absolute): those shown are listed again.
+  def update(%{fs_changed: dirs}, socket) do
     # Other workspaces' files aren't ours (their paths stay absolute).
-    if Map.has_key?(socket.assigns.children, dir) do
-      {:ok, update(socket, :children, &Map.put(&1, dir, list(socket, dir)))}
-    else
-      {:ok, socket}
-    end
+    shown =
+      for abs <- dirs,
+          dir = FS.relative(socket.assigns.root, abs),
+          Map.has_key?(socket.assigns.children, dir),
+          do: dir
+
+    {:ok,
+     Enum.reduce(shown, socket, fn dir, socket ->
+       update(socket, :children, &Map.put(&1, dir, list(socket, dir)))
+     end)}
   end
 
   # files.exclude changed, or Bee changed files: re-list every loaded directory.
@@ -92,7 +96,21 @@ defmodule BeeWeb.Workbench.FileTree do
       else: {:ok, update(socket, :children, &Map.put(&1, "", list(socket, "")))}
   end
 
-  defp list(socket, dir), do: Bee.Workspace.list_dir(socket.assigns.root, dir)
+  # A folder's entries, each with what its row says of it whatever happens
+  # around it: built once per listing, not per render.
+  defp list(socket, dir) do
+    root = socket.assigns.root
+
+    for entry <- Bee.Workspace.list_dir(root, dir) do
+      abs = abs(root, entry.path)
+
+      Map.merge(entry, %{
+        keep: entry.type != :dir && abs,
+        menu_args: Jason.encode!([abs]),
+        menu_context: Jason.encode!(menu_context(root, abs, entry.type))
+      })
+    end
+  end
 
   defp refresh(socket) do
     update(socket, :children, fn children ->
@@ -167,20 +185,7 @@ defmodule BeeWeb.Workbench.FileTree do
 
   @impl true
   def render(assigns) do
-    assigns =
-      assign(assigns,
-        tree: %{
-          root: assigns.root,
-          expanded: assigns.expanded,
-          children: assigns.children,
-          active: assigns.active,
-          decorations: assigns.decorations,
-          icon_theme: assigns.icon_theme,
-          edit: assigns.edit,
-          cut: cut(assigns.clipboard, assigns.root),
-          myself: assigns.myself
-        }
-      )
+    assigns = assign(assigns, rows: rows(assigns, cut(assigns.clipboard, assigns.root), ""))
 
     ~H"""
     <nav
@@ -193,98 +198,119 @@ defmodule BeeWeb.Workbench.FileTree do
       <div class="px-3 pb-1 text-[11px] font-semibold uppercase tracking-wide opacity-60 truncate">
         {Path.basename(@root)}
       </div>
-      <.level entries={@children[""]} dir="" depth={0} tree={@tree} />
+      <.level rows={@rows} dir="" depth={0} edit={@edit} icon_theme={@icon_theme} myself={@myself} />
     </nav>
     """
   end
 
-  attr :entries, :list, required: true
+  # The rows of folder `dir`, each with everything it shows (its colour,
+  # whether it is the active file, its folder's rows when it is open…).
+  # A row is drawn from its own data alone, so LiveView sends a row again
+  # only when that data changed: opening another file is two rows, not
+  # the whole tree.
+  defp rows(assigns, cut, dir) do
+    for entry <- assigns.children[dir] || [] do
+      decoration = decoration(assigns.decorations, entry.path)
+      expanded = entry.type == :dir and MapSet.member?(assigns.expanded, entry.path)
+
+      Map.merge(entry, %{
+        title: title(entry.path, decoration),
+        color: decoration && decoration.color,
+        color_class: color_class(decoration),
+        badge: decoration && decoration.badge,
+        active: assigns.active == entry.path,
+        cut: MapSet.member?(cut, entry.path),
+        expanded: expanded,
+        rows: if(expanded, do: rows(assigns, cut, entry.path), else: [])
+      })
+    end
+  end
+
+  attr :rows, :list, required: true
   attr :dir, :string, required: true, doc: "the folder listed (relative, \"\" for the root)"
   attr :depth, :integer, required: true
-  attr :tree, :map, required: true
+  attr :edit, :any, required: true, doc: "the name being asked for, or nil"
+  attr :icon_theme, :any, required: true
+  attr :myself, :any, required: true
 
   defp level(assigns) do
     ~H"""
     <ul>
-      <li :if={new_here?(@tree.edit, @dir)}>
-        <.edit_row edit={@tree.edit} depth={@depth} tree={@tree} />
+      <li :if={new_here?(@edit, @dir)}>
+        <.edit_row edit={@edit} depth={@depth} icon_theme={@icon_theme} myself={@myself} />
       </li>
-      <li :for={entry <- @entries}>
+      <li :for={row <- @rows}>
         <.edit_row
-          :if={@tree.edit && @tree.edit.kind == :rename && @tree.edit.path == entry.path}
-          edit={@tree.edit}
-          entry={entry}
+          :if={renaming?(@edit, row)}
+          edit={@edit}
+          entry={row}
           depth={@depth}
-          tree={@tree}
+          icon_theme={@icon_theme}
+          myself={@myself}
         />
         <button
-          :if={!(@tree.edit && @tree.edit.kind == :rename && @tree.edit.path == entry.path)}
+          :if={!renaming?(@edit, row)}
           type="button"
-          phx-click={if entry.type == :dir, do: "toggle", else: "open"}
-          phx-value-path={entry.path}
-          phx-target={@tree.myself}
-          title={title(entry.path, decoration(@tree.decorations, entry.path))}
-          data-decoration={(d = decoration(@tree.decorations, entry.path)) && d.color}
-          data-keep={entry.type != :dir && abs(@tree.root, entry.path)}
+          phx-click={if row.type == :dir, do: "toggle", else: "open"}
+          phx-value-path={row.path}
+          phx-target={@myself}
+          title={row.title}
+          data-decoration={row.color}
+          data-keep={row.keep}
           data-menu={menu()}
-          data-menu-args={Jason.encode!([abs(@tree.root, entry.path)])}
-          data-menu-context={
-            Jason.encode!(menu_context(@tree.root, abs(@tree.root, entry.path), entry.type))
-          }
+          data-menu-args={row.menu_args}
+          data-menu-context={row.menu_context}
           style={"padding-left: #{0.5 + @depth * 0.75}rem"}
           class={[
             "w-full flex items-center gap-1 pr-2 py-[2px] text-left cursor-pointer hover:bg-list-hover truncate",
-            @tree.active == entry.path && "bg-list-inactive",
-            MapSet.member?(@tree.cut, entry.path) && "opacity-50"
+            row.active && "bg-list-inactive",
+            row.cut && "opacity-50"
           ]}
         >
-          <.chevron entry={entry} tree={@tree} />
+          <.chevron type={row.type} expanded={row.expanded} icon_theme={@icon_theme} />
           <FileIcon.file_icon
-            theme={@tree.icon_theme}
-            path={entry.path}
-            folder={entry.type == :dir}
-            expanded={entry.type == :dir and MapSet.member?(@tree.expanded, entry.path)}
+            theme={@icon_theme}
+            path={row.path}
+            folder={row.type == :dir}
+            expanded={row.expanded}
           />
-          <span class={["truncate", color_class(decoration(@tree.decorations, entry.path))]}>
-            {entry.name}
+          <span class={["truncate", row.color_class]}>
+            {row.name}
           </span>
-          <span
-            :if={badge = (d = decoration(@tree.decorations, entry.path)) && d.badge}
-            class={["ml-auto pl-2 text-xs font-semibold", color_class(d)]}
-          >
-            {badge}
+          <span :if={row.badge} class={["ml-auto pl-2 text-xs font-semibold", row.color_class]}>
+            {row.badge}
           </span>
         </button>
         <.level
-          :if={entry.type == :dir and MapSet.member?(@tree.expanded, entry.path)}
-          entries={@tree.children[entry.path] || []}
-          dir={entry.path}
+          :if={row.expanded}
+          rows={row.rows}
+          dir={row.path}
           depth={@depth + 1}
-          tree={@tree}
+          edit={@edit}
+          icon_theme={@icon_theme}
+          myself={@myself}
         />
       </li>
     </ul>
     """
   end
 
-  attr :entry, :map, required: true
-  attr :tree, :map, required: true
+  defp renaming?(%{kind: :rename, path: path}, %{path: path}), do: true
+  defp renaming?(_edit, _row), do: false
+
+  attr :type, :atom, required: true
+  attr :expanded, :boolean, default: false
+  attr :icon_theme, :any, required: true
 
   defp chevron(assigns) do
     ~H"""
     <.icon
-      :if={@entry.type == :dir and not FileIcon.hides_arrows?(@tree.icon_theme)}
-      name={
-        if MapSet.member?(@tree.expanded, @entry.path),
-          do: "hero-chevron-down-mini",
-          else: "hero-chevron-right-mini"
-      }
+      :if={@type == :dir and not FileIcon.hides_arrows?(@icon_theme)}
+      name={if @expanded, do: "hero-chevron-down-mini", else: "hero-chevron-right-mini"}
       class="size-4 shrink-0 opacity-70"
     />
     <span
-      :if={
-        (@entry.type == :file and @tree.icon_theme) && not FileIcon.hides_arrows?(@tree.icon_theme)
-      }
+      :if={(@type == :file and @icon_theme) && not FileIcon.hides_arrows?(@icon_theme)}
       class="w-4 shrink-0"
     />
     """
@@ -293,7 +319,8 @@ defmodule BeeWeb.Workbench.FileTree do
   attr :edit, :map, required: true
   attr :entry, :map, default: nil, doc: "the entry renamed"
   attr :depth, :integer, required: true
-  attr :tree, :map, required: true
+  attr :icon_theme, :any, required: true
+  attr :myself, :any, required: true
 
   # The name input: in place of the entry renamed, or a new one's row.
   defp edit_row(assigns) do
@@ -307,18 +334,18 @@ defmodule BeeWeb.Workbench.FileTree do
     <form
       id="explorer-edit"
       phx-submit="edit_submit"
-      phx-target={@tree.myself}
+      phx-target={@myself}
       class="flex items-center gap-1 pr-2 py-[1px]"
       style={"padding-left: #{0.5 + @depth * 0.75}rem"}
     >
-      <.chevron entry={@entry} tree={@tree} />
-      <FileIcon.file_icon theme={@tree.icon_theme} path={@entry.path} folder={@entry.type == :dir} />
+      <.chevron type={@entry.type} expanded={@entry[:expanded] == true} icon_theme={@icon_theme} />
+      <FileIcon.file_icon theme={@icon_theme} path={@entry.path} folder={@entry.type == :dir} />
       <input
         id="explorer-edit-input"
         name="name"
         value={@edit.value || @entry.name}
         phx-hook="ExplorerInput"
-        phx-target={@tree.myself}
+        phx-target={@myself}
         data-select={select_length(@edit, @entry)}
         autocomplete="off"
         spellcheck="false"

@@ -66,6 +66,9 @@ defmodule BeeWeb.EditorLiveTest do
 
   defp json_data(view, selector, attr), do: view |> data(selector, attr) |> Jason.decode!()
 
+  # A place in a file, as the editor sends it.
+  defp at(line, character), do: %{"line" => line, "character" => character}
+
   # Buffers stop asynchronously once their LiveView is gone; make sure none
   # survive into the next test with stale text.
   defp stop_buffers_under(root) do
@@ -274,13 +277,157 @@ defmodule BeeWeb.EditorLiveTest do
       refute File.exists?(outside)
     end
 
+    test "what is typed comes as changes of the version the editor has", %{
+      view: view,
+      path: path
+    } do
+      open_file(view, "mix.exs")
+      assert_push_event(view, "cm:open", %{path: ^path, version: 0})
+
+      typed = fn from, to, text -> %{"from" => from, "to" => to, "text" => text} end
+      change = %{"path" => path, "base" => 0, "changes" => [typed.(at(0, 10), at(0, 11), "N")]}
+      render_hook(view, "doc_changed", change)
+      assert_reply(view, %{version: 1})
+      assert Bee.Editor.Buffer.get(path).text == "defmodule N do\nend\n"
+      assert has_element?(view, "[data-tabs] [data-dirty]")
+
+      # Of a version the buffer doesn't have (anymore): the editor's whole text is asked for.
+      render_hook(view, "doc_changed", change)
+      assert_reply(view, %{resync: true})
+      assert Bee.Editor.Buffer.get(path).text == "defmodule N do\nend\n"
+
+      render_hook(view, "doc_changed", %{"path" => path, "text" => "defmodule O do\nend\n"})
+      assert_reply(view, %{version: 2})
+
+      # Saving the version the editor has needs no text; another one does.
+      render_hook(view, "save", %{"path" => path, "base" => 1})
+      assert_reply(view, %{resync: true})
+      assert File.read!(path) == "defmodule M do\nend\n"
+
+      render_hook(view, "save", %{"path" => path, "base" => 2})
+      assert_reply(view, %{version: 2})
+      assert File.read!(path) == "defmodule O do\nend\n"
+      refute has_element?(view, "[data-tabs] [data-dirty]")
+    end
+
     test "files changed on disk are reloaded into the editor", %{view: view, path: path} do
       open_file(view, "mix.exs")
       File.write!(path, "from disk")
       Phoenix.PubSub.broadcast(Bee.PubSub, "fs", {:fs_changed, path})
 
-      assert_push_event(view, "cm:reload", %{path: ^path, text: "from disk"})
+      assert_push_event(view, "cm:reload", %{path: ^path, text: "from disk", version: 1})
     end
+  end
+
+  describe "what the page is sent" do
+    # Everything the window sends while `fun` runs, as the page gets it.
+    defp sent(view, fun) do
+      :erlang.trace(view.pid, true, [:send])
+      fun.()
+      render(view)
+      :erlang.trace(view.pid, false, [:send])
+      drain([])
+    end
+
+    defp drain(acc) do
+      receive do
+        {:trace, _, :send, %Phoenix.Socket.Reply{payload: payload}, _} -> drain([payload | acc])
+        {:trace, _, :send, %Phoenix.Socket.Message{payload: payload}, _} -> drain([payload | acc])
+        {:trace, _, :send, _other, _} -> drain(acc)
+      after
+        0 -> Enum.reverse(acc)
+      end
+    end
+
+    defp bytes(payloads), do: payloads |> Enum.map(&byte_size(Jason.encode!(&1))) |> Enum.sum()
+
+    setup %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/")
+      open_file(view, "mix.exs")
+      open_file(view, "README.md")
+      run(view, "workbench.action.togglePanel")
+      render(view)
+      %{view: view, path: Path.join(Bee.Workspace.root(), "README.md")}
+    end
+
+    test "moving the cursor, typing on and terminal output change nothing on the page", %{
+      view: view,
+      path: path
+    } do
+      cursor = fn line ->
+        render_hook(view, "selection_changed", %{
+          "path" => path,
+          "ranges" => [[at(line, 0), at(line, 0)]]
+        })
+      end
+
+      typed = fn base ->
+        change = %{"from" => at(0, 0), "to" => at(0, 0), "text" => "x"}
+        render_hook(view, "doc_changed", %{"path" => path, "base" => base, "changes" => [change]})
+      end
+
+      # (The first key: the tab's unsaved mark, undo.)
+      cursor.(0)
+      typed.(0)
+
+      # Nothing of the menus, the tabs, the sidebar: not even an empty diff's worth.
+      assert sent(view, fn -> cursor.(0) end) == [%{}]
+      assert sent(view, fn -> typed.(1) end) == [%{diff: %{r: %{version: 2}}}]
+
+      [terminal] = :sys.get_state(view.pid).socket.assigns.terminals
+      render_hook(view, "term_ready", %{"id" => terminal.id, "cols" => 80, "rows" => 24})
+
+      assert [%{e: [["term:data", %{data: data}]]}] =
+               sent(view, fn -> send(view.pid, {:term_data, terminal.id, 1_000_000, "output"}) end)
+
+      assert Base.decode64!(data) == "output"
+    end
+
+    test "another tab, with many files in the Explorer: the rows that changed, not the tree", %{
+      view: view
+    } do
+      root = Bee.Workspace.root()
+      for n <- 1..60, do: File.write!(Path.join(root, "lib/bee/file#{n}.ex"), "")
+      view |> element("#explorer button[phx-value-path='lib']") |> render_click()
+      view |> element("#explorer button[phx-value-path='lib/bee']") |> render_click()
+      assert has_element?(view, "#explorer button[phx-value-path='lib/bee/file60.ex']")
+
+      activate = fn name ->
+        sent(view, fn -> render_hook(view, "activate_tab", %{"path" => Path.join(root, name)}) end)
+      end
+
+      # (Each of the 60 rows said again would be some 500 bytes.)
+      assert bytes(activate.("mix.exs")) < 8_000
+      assert bytes(activate.("README.md")) < 8_000
+    end
+  end
+
+  test "files changing in a burst are listed a moment later, each folder once", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+    root = Bee.Workspace.root()
+    view |> element("#explorer button[phx-value-path='lib']") |> render_click()
+
+    # The first is shown at once.
+    File.write!(Path.join(root, "first.txt"), "")
+    send(view.pid, {:fs_changed, Path.join(root, "first.txt")})
+    _ = render(view)
+    assert has_element?(view, "#explorer button[phx-value-path='first.txt']")
+
+    # Those right after it, together: a moment later.
+    for name <- ~w(second.txt third.txt lib/fourth.ex) do
+      File.write!(Path.join(root, name), "")
+      send(view.pid, {:fs_changed, Path.join(root, name)})
+    end
+
+    _ = render(view)
+    refute has_element?(view, "#explorer button[phx-value-path='second.txt']")
+
+    eventually(fn ->
+      _ = render(view)
+
+      has_element?(view, "#explorer button[phx-value-path='third.txt']") and
+        has_element?(view, "#explorer button[phx-value-path='lib/fourth.ex']")
+    end)
   end
 
   test "new files show up after a file system event", %{conn: conn} do
@@ -1371,7 +1518,11 @@ defmodule BeeWeb.EditorLiveTest do
       {:ok, view, _html} = live(conn, ~p"/")
       open_file(view, "mix.exs")
       path = Path.join(Bee.Workspace.root(), "mix.exs")
-      render_hook(view, "selection_changed", %{"path" => path, "ranges" => [[10, 11]]})
+
+      render_hook(view, "selection_changed", %{
+        "path" => path,
+        "ranges" => [[at(0, 10), at(0, 11)]]
+      })
 
       run(view, "workbench.action.findInFiles")
       assert has_element?(view, "#search-query[value='M']")
@@ -1395,7 +1546,8 @@ defmodule BeeWeb.EditorLiveTest do
       # case-insensitive by default: the m of Readme too
       assert File.read!(readme) == "# ReadNe\nNodule N\n"
       # open: changed in the editor (undoable), not on disk
-      assert_push_event(view, "cm:edit", %{path: ^mix, text: "defNodule N do\nend\n"})
+      assert_push_event(view, "cm:edit", %{path: ^mix})
+      assert Bee.Editor.Buffer.get(mix).text == "defNodule N do\nend\n"
       assert File.read!(mix) == "defmodule M do\nend\n"
       assert has_element?(view, "#notification-toasts [data-severity=info]", "Replaced")
     end
@@ -1783,19 +1935,19 @@ defmodule BeeWeb.EditorLiveTest do
       path = Path.join(Bee.Workspace.root(), "mix.exs")
 
       # "defmodule M do\nend\n": select "defmodule"
-      render_hook(view, "selection_changed", %{"path" => path, "ranges" => [[0, 9]]})
+      render_hook(view, "selection_changed", %{"path" => path, "ranges" => [[at(0, 0), at(0, 9)]]})
+
       run(view, "upcase.selection")
 
+      # The edit is of the text the editor has (`base`) and makes its next version.
       assert_push_event(
         view,
         "cm:edit",
-        %{path: ^path, edits: [[0, 9, "DEFMODULE"]], text: text},
+        %{path: ^path, edits: [[0, 9, "DEFMODULE"]], base: 0, version: 1},
         3_000
       )
 
-      assert text == "DEFMODULE M do\nend\n"
-      # the editor then reports the change as usual
-      render_hook(view, "doc_changed", %{"path" => path, "text" => text})
+      assert Bee.Editor.Buffer.get(path).text == "DEFMODULE M do\nend\n"
       assert has_element?(view, "[data-tabs] [data-dirty]")
     end
 

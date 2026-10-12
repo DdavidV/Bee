@@ -5,11 +5,14 @@ use std::io::{self, Read, Write};
 
 use serde_json::Value;
 
-/// Writes `frame` to `to`, flushed.
+/// Writes `frame` to `to`, flushed: in one piece (a pipe is written to as
+/// it is told, and two writes would be two wake-ups of the reader).
 pub fn write(to: &mut impl Write, frame: &Value) -> io::Result<()> {
-    let body = serde_json::to_vec(frame).expect("a frame is JSON");
-    to.write_all(&(body.len() as u32).to_be_bytes())?;
-    to.write_all(&body)?;
+    let mut bytes = vec![0u8; 4];
+    serde_json::to_writer(&mut bytes, frame).expect("a frame is JSON");
+    let len = (bytes.len() - 4) as u32;
+    bytes[..4].copy_from_slice(&len.to_be_bytes());
+    to.write_all(&bytes)?;
     to.flush()
 }
 

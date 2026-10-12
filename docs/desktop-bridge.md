@@ -173,7 +173,9 @@ on it, and diffs must be applied in sequence.
 
 - **Page to shell.** Calls from the page to the shell may run concurrently
   and finish out of order. The injected script therefore queues them and
-  sends each one only after the previous has been accepted.
+  makes each call only after the previous has been accepted. Messages that
+  pile up while a call is on its way go together in the next one, in their
+  order, so a burst never waits for one call per message.
 - **Shell to page.** Messages go back over a channel that delivers them in
   the order they were sent.
 - **Shell to Bee and back.** A single pipe in each direction is ordered by

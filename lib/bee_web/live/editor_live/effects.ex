@@ -19,7 +19,7 @@ defmodule BeeWeb.EditorLive.Effects do
   alias Bee.Workspace.Files
   alias Bee.Plugins.OpenVsx
   alias Bee.Workbench.Search
-  alias BeeWeb.EditorLive.{Config, Editors, Extensions, Formatting, Notifications}
+  alias BeeWeb.EditorLive.{Config, Editors, Extensions, Formatting, Notifications, Terminals}
 
   def run_effects(socket, effects), do: Enum.reduce(effects, socket, &run_effect/2)
 
@@ -130,11 +130,11 @@ defmodule BeeWeb.EditorLive.Effects do
 
   def run_effect({:forget_terminal, id}, socket) do
     Phoenix.PubSub.unsubscribe(Bee.PubSub, Terminal.topic(id))
-    update(socket, :term_seq, &Map.delete(&1, id))
+    Terminals.put_term_seq(socket, Map.delete(Terminals.term_seq(socket), id))
   end
 
   # The xterm views were unmounted; they re-attach via term_ready.
-  def run_effect(:panel_hidden, socket), do: assign(socket, term_seq: %{})
+  def run_effect(:panel_hidden, socket), do: Terminals.put_term_seq(socket, %{})
 
   def run_effect({:exec_client, command}, socket),
     do: run_effect({:exec_client, command, []}, socket)
@@ -337,7 +337,8 @@ defmodule BeeWeb.EditorLive.Effects do
 
   # Text of the active editor's first selection, if any.
   defp selected_text(assigns) do
-    with %{active: active, selection: {active, [{from, to} | _]}} when to > from <- assigns,
+    with %{active_editor: active, selections: [{from, to} | _]} when to > from <-
+           plugin_context(assigns),
          text when is_binary(text) <- Bee.API.text(active),
          true <- to <= byte_size(text) do
       binary_part(text, from, to - from)

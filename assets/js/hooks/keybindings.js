@@ -38,12 +38,23 @@ export const Keybindings = {
     window.removeEventListener("keydown", this.onKeydown, true)
   },
 
+  // (Called for every patch of the page: only what changed is read again.)
   load() {
-    const platform = isMac ? "mac" : navigator.platform.startsWith("Win") ? "win" : navigator.platform.includes("Linux") ? "linux" : "key"
-    this.bindings = JSON.parse(this.el.dataset.keybindings || "[]")
-      .map(b => ({...b, strokes: b[platform]}))
-      .filter(b => b.strokes)
-    this.serverContext = JSON.parse(this.el.dataset.context || "{}")
+    const {keybindings, context} = this.el.dataset
+    if (keybindings !== this.keybindingsJson) {
+      this.keybindingsJson = keybindings
+      const platform = isMac ? "mac" : navigator.platform.startsWith("Win") ? "win" : navigator.platform.includes("Linux") ? "linux" : "key"
+      this.bindings = JSON.parse(keybindings || "[]")
+        .map(b => ({...b, strokes: b[platform]}))
+        .filter(b => b.strokes)
+      // The strokes bindings begin with: a key that begins none (most of
+      // what is typed) is nobody's, whatever the context.
+      this.first = new Set(this.bindings.map(b => b.strokes[0]))
+    }
+    if (context !== this.contextJson) {
+      this.contextJson = context
+      this.serverContext = JSON.parse(context || "{}")
+    }
   },
 
   context() {
@@ -71,6 +82,7 @@ export const Keybindings = {
   keydown(e) {
     const stroke = strokeFromEvent(e)
     if (!stroke) return
+    if (!this.pending && !this.first.has(stroke)) return
 
     const seq = this.pending ? [...this.pending, stroke] : [stroke]
     const ctx = this.context()

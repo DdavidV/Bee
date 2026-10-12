@@ -14,7 +14,6 @@ defmodule BeeWeb.EditorLive.Palette do
 
   alias Bee.Workbench
   alias Bee.Commands.Registry, as: CommandRegistry
-  alias Bee.Commands.Keybindings
   alias Bee.Workspace.FileFinder
   alias Bee.Workspace.RecentFiles
   alias Bee.Workbench.QuickOpen
@@ -113,16 +112,16 @@ defmodule BeeWeb.EditorLive.Palette do
 
   defp command_items(assigns, query) do
     ctx = context(assigns)
-    hidden = hidden_from_palette(ctx)
+    hidden = hidden_from_palette(assigns, ctx)
 
     assigns.commands
-    |> Enum.filter(&(CommandRegistry.enabled?(&1, ctx) and &1.id not in hidden))
+    |> Enum.filter(&(CommandRegistry.enabled?(&1, ctx) and not MapSet.member?(hidden, &1.id)))
     |> Enum.map(
       &%{
         kind: :command,
         id: &1.id,
         label: CommandRegistry.label(&1),
-        shortcut: Keybindings.label(&1.id, assigns.keybindings)
+        shortcut: assigns.keybinding_labels[&1.id]
       }
     )
     |> Enum.filter(&fuzzy_match?(String.downcase(&1.label), query))
@@ -224,7 +223,7 @@ defmodule BeeWeb.EditorLive.Palette do
   end
 
   # Quick Open waits for its file finder: listing, or a query not answered yet.
-  def quick_open_busy?(%{palette: %{mode: :quick_open, query: query}, quick_open: %{} = data}) do
+  def quick_open_busy?(%{mode: :quick_open, query: query}, %{} = data) do
     case QuickOpen.mode(query) do
       {:files, q} -> data.loading? or data.results_for != q
       {:symbols, _} -> data.symbols_ref != nil
@@ -233,13 +232,14 @@ defmodule BeeWeb.EditorLive.Palette do
     end
   end
 
-  def quick_open_busy?(_assigns), do: false
+  def quick_open_busy?(_palette, _data), do: false
 
   # Commands whose "commandPalette" menu entry has a `when` that is false
   # (e.g. commands that need arguments from a view item).
-  defp hidden_from_palette(ctx) do
-    for %{command: id, when_ast: when_ast} <- CommandRegistry.menu("commandPalette"),
+  defp hidden_from_palette(assigns, ctx) do
+    for %{command: id, when_ast: when_ast} <- assigns.menu_items["commandPalette"] || [],
         not Bee.Commands.When.eval(when_ast, ctx),
+        into: MapSet.new(),
         do: id
   end
 

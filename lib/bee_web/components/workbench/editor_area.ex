@@ -10,7 +10,6 @@ defmodule BeeWeb.Workbench.EditorArea do
   use BeeWeb, :html
 
   alias Bee.Workbench
-  alias BeeWeb.EditorLive.{Menus, Window}
 
   # `when` keys of a tab's right-click menu (editor/title/context).
   def tab_menu_context(tab, group \\ nil)
@@ -37,14 +36,48 @@ defmodule BeeWeb.Workbench.EditorArea do
   end
 
   attr :node, :any, required: true, doc: "a node of the workbench's layout"
-  attr :a, :map, required: true, doc: "the window's assigns"
+  attr :groups, :map, required: true, doc: "the groups by id: `%{id => %{id, tabs, active}}`"
+  attr :focused, :integer, required: true, doc: "the focused group's id"
+  attr :actions, :list, required: true, doc: "the editor/title buttons (the focused group's)"
+  attr :root, :string, required: true
+  attr :icon_theme, :any, required: true
+  attr :file_decorations, :map, required: true
+  attr :extension_details, :map, required: true
+  attr :marketplace_installed, :map, required: true
+  attr :installing, :any, required: true, doc: "the Open VSX extensions being installed"
+  attr :settings, :map, required: true
+  attr :plugins, :list, required: true
+  attr :socket, :any, required: true, doc: "the window's socket, for plugins' LiveViews"
+  attr :live, :map, required: true
+  attr :webviews, :map, required: true
+  attr :color_theme_id, :string, required: true
+  attr :webview_origin, :any, required: true
+  attr :keybinding_labels, :map, required: true
 
   # A group, or groups side by side (a row) or one above the other (a column).
   def editor_node(%{node: {:leaf, id}} = assigns) do
-    assigns = assign(assigns, :group, Workbench.group(Window.workbench_from(assigns.a), id))
+    assigns = assign(assigns, :group, assigns.groups[id])
 
     ~H"""
-    <.editor_group group={@group} a={@a} />
+    <.editor_group
+      group={@group}
+      focused={@group.id == @focused}
+      actions={@actions}
+      root={@root}
+      icon_theme={@icon_theme}
+      file_decorations={@file_decorations}
+      extension_details={@extension_details}
+      marketplace_installed={@marketplace_installed}
+      installing={@installing}
+      settings={@settings}
+      plugins={@plugins}
+      socket={@socket}
+      live={@live}
+      webviews={@webviews}
+      color_theme_id={@color_theme_id}
+      webview_origin={@webview_origin}
+      keybinding_labels={@keybinding_labels}
+    />
     """
   end
 
@@ -56,20 +89,37 @@ defmodule BeeWeb.Workbench.EditorArea do
       data-split={@axis}
       class={["editor-split flex flex-1 min-w-0 min-h-0", @axis == :col && "flex-col"]}
     >
-      <.editor_node :for={node <- @nodes} node={node} a={@a} />
+      <.editor_node
+        :for={node <- @nodes}
+        node={node}
+        groups={@groups}
+        focused={@focused}
+        actions={@actions}
+        root={@root}
+        icon_theme={@icon_theme}
+        file_decorations={@file_decorations}
+        extension_details={@extension_details}
+        marketplace_installed={@marketplace_installed}
+        installing={@installing}
+        settings={@settings}
+        plugins={@plugins}
+        socket={@socket}
+        live={@live}
+        webviews={@webviews}
+        color_theme_id={@color_theme_id}
+        webview_origin={@webview_origin}
+        keybinding_labels={@keybinding_labels}
+      />
     </div>
     """
   end
-
-  attr :group, :map, required: true, doc: "`%{id, tabs, active}`"
-  attr :a, :map, required: true
 
   # One group: its tabs, and what its active one shows – a file in the
   # group's pane (CodeMirror's, the CodeEditor hook), or another kind of editor.
   defp editor_group(assigns) do
     assigns =
       assign(assigns,
-        focused: assigns.group.id == assigns.a.group,
+        tabs: Enum.map(assigns.group.tabs, &tab_row(&1, assigns)),
         file:
           Enum.find_value(assigns.group.tabs, fn tab ->
             (tab.kind == :file and tab.path == assigns.group.active) && tab.path
@@ -94,38 +144,34 @@ defmodule BeeWeb.Workbench.EditorArea do
           class="flex flex-1 min-w-0 overflow-x-auto text-sm"
         >
           <div
-            :for={tab <- @group.tabs}
-            id={"tab-#{@group.id}-#{:erlang.phash2(tab.path)}"}
+            :for={tab <- @tabs}
+            id={tab.id}
             data-tab
             data-path={tab.path}
-            data-active={to_string(tab.path == @group.active)}
+            data-active={to_string(tab.active)}
             data-dirty={tab.dirty && "true"}
-            data-preview={Workbench.preview?(tab) && "true"}
+            data-preview={tab.preview && "true"}
             data-keep={tab.path}
             data-menu="editor/title/context"
-            data-menu-args={Jason.encode!([tab.path])}
-            data-menu-context={Jason.encode!(tab_menu_context(tab, @group.id))}
+            data-menu-args={tab.menu_args}
+            data-menu-context={tab.menu_context}
             class={[
               "group flex items-center gap-1 pl-3 pr-1 py-1.5 border-r border-tab-border cursor-pointer whitespace-nowrap",
-              if(tab.path == @group.active,
+              if(tab.active,
                 do: "bg-tab-active text-tab-active-fg",
                 else:
                   "bg-tab-inactive text-tab-inactive-fg hover:text-tab-active-fg hover:bg-base-content/5"
               ),
-              (tab.path == @group.active and not @focused) && "opacity-70"
+              tab.dimmed && "opacity-70"
             ]}
             phx-click="activate_tab"
             phx-value-path={tab.path}
-            phx-value-group={@group.id}
-            title={
-              if tab.kind == :file,
-                do: Bee.Workspace.FS.relative(@a.root, tab.path),
-                else: tab_label(tab, @a.extension_details)
-            }
+            phx-value-group={tab.group}
+            title={tab.title}
           >
             <BeeWeb.Workbench.FileIcon.file_icon
-              :if={@a.icon_theme && tab.kind == :file}
-              theme={@a.icon_theme}
+              :if={@icon_theme && tab.kind == :file}
+              theme={@icon_theme}
               path={tab.path}
               language={tab.lang}
             />
@@ -144,11 +190,8 @@ defmodule BeeWeb.Workbench.EditorArea do
               name="hero-window"
               class="size-4 shrink-0 opacity-70"
             />
-            <span class={[
-              tab.kind == :file && tab_color(@a.file_decorations, @a.root, tab.path),
-              (tab.kind == :extension or Workbench.preview?(tab)) && "italic"
-            ]}>
-              {tab_label(tab, @a.extension_details)}
+            <span class={[tab.color, tab.italic && "italic"]}>
+              {tab.label}
             </span>
             <button
               class="size-5 grid place-items-center rounded cursor-pointer hover:bg-base-content/10"
@@ -156,7 +199,7 @@ defmodule BeeWeb.Workbench.EditorArea do
               data-close
               phx-click="run_command"
               phx-value-command="workbench.action.closeEditor"
-              phx-value-args={Jason.encode!([tab.path, @group.id])}
+              phx-value-args={tab.close_args}
             >
               <span :if={tab.dirty} class="size-2 rounded-full bg-current group-hover:hidden" />
               <.icon
@@ -171,7 +214,7 @@ defmodule BeeWeb.Workbench.EditorArea do
         <BeeWeb.Workbench.Toolbar.toolbar
           :if={@focused}
           id="editor-actions"
-          actions={Menus.toolbar(@a, "editor/title")}
+          actions={@actions}
           class="px-1"
         />
       </div>
@@ -200,9 +243,9 @@ defmodule BeeWeb.Workbench.EditorArea do
         >
           <BeeWeb.Workbench.ExtensionEditor.extension_editor
             name={tab.name}
-            details={@a.extension_details[tab.name]}
-            installed={@a.marketplace_installed}
-            installing={@a.marketplace.installing}
+            details={@extension_details[tab.name]}
+            installed={@marketplace_installed}
+            installing={@installing}
           />
         </div>
         <%!-- The settings page --%>
@@ -215,9 +258,9 @@ defmodule BeeWeb.Workbench.EditorArea do
             module={BeeWeb.Workbench.SettingsEditor}
             id="settings-editor"
             scope={tab.scope}
-            root={@a.root}
-            settings={@a.settings}
-            plugins={@a.plugins}
+            root={@root}
+            settings={@settings}
+            plugins={@plugins}
           />
         </div>
         <%!-- Editors plugins draw themselves (LiveViews): each stays mounted
@@ -233,23 +276,23 @@ defmodule BeeWeb.Workbench.EditorArea do
           ]}
         >
           <BeeWeb.Workbench.PluginLive.plugin_live
-            socket={@a.socket}
-            state={@a.live[{:editor, tab.editor}]}
+            socket={@socket}
+            state={@live[{:editor, tab.editor}]}
             kind="editor"
             id={tab.editor}
             key={tab.key}
-            root={@a.root}
+            root={@root}
             params={tab.params}
           />
         </div>
         <%!-- Webview panels of extensions: each frame stays while its tab is open. --%>
         <BeeWeb.Workbench.Webview.webview
           :for={tab <- @group.tabs}
-          :if={tab.kind == :webview and @a.webviews[tab.webview]}
-          panel={@a.webviews[tab.webview]}
-          theme={@a.color_theme.id}
+          :if={tab.kind == :webview and @webviews[tab.webview]}
+          panel={@webviews[tab.webview]}
+          theme={@color_theme_id}
           active={tab.path == @group.active}
-          origin={@a.webview_origin}
+          origin={@webview_origin}
         />
         <div
           :if={@group.tabs == []}
@@ -268,7 +311,7 @@ defmodule BeeWeb.Workbench.EditorArea do
             }>
               {label}
               <kbd
-                :if={key = Bee.Commands.Keybindings.label(command, @a.keybindings)}
+                :if={key = @keybinding_labels[command]}
                 class="kbd kbd-xs ml-1"
               >
                 {key}
@@ -279,6 +322,37 @@ defmodule BeeWeb.Workbench.EditorArea do
       </div>
     </section>
     """
+  end
+
+  # What a tab of the group shows, all of it: a tab is drawn from this
+  # alone, so LiveView sends a tab again only when it changed itself –
+  # typing into a file is one tab's dot, not every tab's attributes.
+  defp tab_row(tab, %{group: group} = assigns) do
+    active = tab.path == group.active
+    preview = Workbench.preview?(tab)
+
+    %{
+      id: "tab-#{group.id}-#{:erlang.phash2(tab.path)}",
+      group: group.id,
+      path: tab.path,
+      kind: tab.kind,
+      lang: tab.lang,
+      active: active,
+      dimmed: active and not assigns.focused,
+      dirty: tab.dirty,
+      preview: preview,
+      italic: tab.kind == :extension or preview,
+      label: tab_label(tab, assigns.extension_details),
+      title:
+        if(tab.kind == :file,
+          do: Bee.Workspace.FS.relative(assigns.root, tab.path),
+          else: tab_label(tab, assigns.extension_details)
+        ),
+      color: tab.kind == :file && tab_color(assigns.file_decorations, assigns.root, tab.path),
+      menu_args: Jason.encode!([tab.path]),
+      menu_context: Jason.encode!(tab_menu_context(tab, group.id)),
+      close_args: Jason.encode!([tab.path, group.id])
+    }
   end
 
   # A tab's name: the file's, or "Extension: <plugin>".

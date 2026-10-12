@@ -3,60 +3,63 @@ defmodule BeeWeb.EditorLive.Menus do
   The items of the window's menus, from the commands and menus contributed
   (`Bee.Commands.Registry`): the menu bar, the icon menus (toolbars) and
   the open right-click menu. An item is shown when its `when` holds in the
-  window's context (`BeeWeb.EditorLive.Window.context/1`).
+  window's context.
+
+  They are built for the page by `BeeWeb.EditorLive.Derived`, from what it
+  keeps in the assigns: the context (`context`), the commands by id
+  (`commands_by_id`), the menus' items (`menu_items`) and the keys' labels
+  (`keybinding_labels`).
   """
 
-  import BeeWeb.EditorLive.Window
-
   alias Bee.Commands.Registry, as: CommandRegistry
-  alias Bee.Commands.Keybindings
 
+  # The menu bar: every menu's label, and the items of the open one (the
+  # others show none).
   def menubar(assigns) do
-    ctx = context(assigns)
-    commands = Map.new(assigns.commands, &{&1.id, &1})
-
     for menu <- assigns.menus do
-      items =
-        menu.items
-        |> Enum.flat_map(fn
-          :separator ->
-            [:separator]
-
-          %{command: id, when_ast: when_ast} ->
-            command = commands[id]
-
-            if command && Bee.Commands.When.eval(when_ast, ctx) do
-              [
-                %{
-                  command: id,
-                  label: command.title,
-                  shortcut: Keybindings.label(id, assigns.keybindings),
-                  disabled: not CommandRegistry.enabled?(command, ctx),
-                  checked: CommandRegistry.toggled?(command, ctx)
-                }
-              ]
-            else
-              []
-            end
-        end)
-        |> tidy_separators()
-
+      items = if menu.id == assigns.open_menu, do: menubar_items(menu, assigns), else: []
       %{id: menu.id, label: menu.label, items: items}
     end
+  end
+
+  defp menubar_items(menu, %{context: ctx, commands_by_id: commands} = assigns) do
+    menu.items
+    |> Enum.flat_map(fn
+      :separator ->
+        [:separator]
+
+      %{command: id, when_ast: when_ast} ->
+        command = commands[id]
+
+        if command && Bee.Commands.When.eval(when_ast, ctx) do
+          [
+            %{
+              command: id,
+              label: command.title,
+              shortcut: assigns.keybinding_labels[id],
+              disabled: not CommandRegistry.enabled?(command, ctx),
+              checked: CommandRegistry.toggled?(command, ctx)
+            }
+          ]
+        else
+          []
+        end
+    end)
+    |> tidy_separators()
   end
 
   # Buttons of an icon menu ("editor/title", …): `[%{command, label, icon,
   # disabled}]`, the items whose `when` holds in `ctx` (+ `extra` keys).
   # `inline_only`: just the items of group "inline…" (view/item/context).
   def toolbar(assigns, menu, extra \\ %{}, inline_only \\ false) do
-    ctx = Map.merge(context(assigns), extra)
-    commands = Map.new(assigns.commands, &{&1.id, &1})
+    ctx = Map.merge(assigns.context, extra)
+    commands = assigns.commands_by_id
 
-    for %{command: id, when_ast: when_ast, group: group} <- CommandRegistry.menu(menu),
+    for %{command: id, when_ast: when_ast, group: group} <- assigns.menu_items[menu] || [],
         not inline_only or String.starts_with?(group, "inline"),
         command = commands[id],
         command != nil and Bee.Commands.When.eval(when_ast, ctx) do
-      shortcut = Keybindings.label(id, assigns.keybindings)
+      shortcut = assigns.keybinding_labels[id]
 
       %{
         command: id,
@@ -77,10 +80,11 @@ defmodule BeeWeb.EditorLive.Menus do
 
   def context_menu_items(%{context_menu: menu} = assigns) do
     env = %{
-      ctx: Map.merge(context(assigns), menu.context),
-      commands: Map.new(assigns.commands, &{&1.id, &1}),
-      submenus: CommandRegistry.submenus(),
-      keybindings: assigns.keybindings
+      ctx: Map.merge(assigns.context, menu.context),
+      commands: assigns.commands_by_id,
+      menus: assigns.menu_items,
+      submenus: assigns.submenus,
+      labels: assigns.keybinding_labels
     }
 
     menu_items(menu.menu, env, 0)
@@ -90,8 +94,7 @@ defmodule BeeWeb.EditorLive.Menus do
   @max_menu_depth 3
 
   defp menu_items(menu, env, depth) do
-    menu
-    |> CommandRegistry.menu()
+    (env.menus[menu] || [])
     |> Enum.reject(&String.starts_with?(&1.group, "inline"))
     |> Enum.sort_by(&(&1.group != "navigation"))
     |> Enum.chunk_by(& &1.group)
@@ -117,7 +120,7 @@ defmodule BeeWeb.EditorLive.Menus do
           %{
             command: id,
             label: command.title,
-            shortcut: Keybindings.label(id, env.keybindings),
+            shortcut: env.labels[id],
             disabled: not CommandRegistry.enabled?(command, env.ctx),
             runtime: command.runtime
           }

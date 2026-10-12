@@ -414,7 +414,8 @@ const notifications = {
     })
   },
   documentOpened: document => host.documents.put(document),
-  documentChanged: document => host.documents.put(document),
+  // The whole text, or what changed in it.
+  documentChanged: document => (document.changes ? host.documents.change(document) : host.documents.put(document)),
   documentSaved: ({path: file}) => host.documents.saved(file),
   documentClosed: ({path: file}) => {
     if (host.activeEditor && host.activeEditor.document.fileName === file) setActiveEditor(undefined)

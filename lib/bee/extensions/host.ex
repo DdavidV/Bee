@@ -103,8 +103,9 @@ defmodule Bee.Extensions.Host do
 
   @doc """
   `window`'s active editor is the file `path` (nil: none) with `selections`
-  (`[{from, to}]`, byte offsets): what the extensions of workspace `root`
-  see as the active editor, if they run.
+  (`[{from, to}]`, positions as the editor has them, `Bee.Editor.Positions`):
+  what the extensions of workspace `root` see as the active editor, if
+  they run.
   """
   def active_editor(root, window, path, selections) do
     case whereis(root) do
@@ -243,7 +244,7 @@ defmodule Bee.Extensions.Host do
           window: nil,
           # Questions windows haven't answered: ref => Node's request id.
           asks: %{},
-          # What Node has of each open document (a hash of its text).
+          # The version Node has of each open document (`Bee.Editor.Buffer`).
           documents: %{},
           # Whether an extension watches files (we send their changes then).
           watching?: false,
@@ -254,7 +255,8 @@ defmodule Bee.Extensions.Host do
           log: :queue.new()
         }
 
-        {:ok, request(s, "initialize", initial(root), :initialize)}
+        s = request(s, "initialize", initial(root), :initialize)
+        {:ok, Enum.reduce(open_buffers(root), s, &sync_document(&2, &1))}
     end
   end
 
@@ -263,23 +265,30 @@ defmodule Bee.Extensions.Host do
       root: root,
       settings: Bee.Settings.all(root),
       defaults: Bee.Settings.defaults(),
-      documents: for({path, text} <- open_buffers(root), do: document(path, text)),
       editor: nil
     }
   end
 
-  # The open files under `root` with their text.
+  # The open files under `root`.
   defp open_buffers(root) do
     for path <-
           Registry.select(Bee.Registry, [{{{:buffer, :"$1"}, :_, :_}, [], [:"$1"]}]),
         inside?(path, root),
-        text = Bee.API.text(path),
-        is_binary(text),
-        do: {path, text}
+        do: path
   end
 
-  defp document(path, text, version \\ nil) do
+  defp document(path, text, version) do
     %{path: path, text: text, languageId: Bee.Languages.detect(path), version: version}
+  end
+
+  # The buffer of an open file, or nil.
+  defp buffer(path) do
+    case is_binary(path) && Registry.lookup(Bee.Registry, {:buffer, path}) do
+      [{_pid, _}] -> Buffer.get(path)
+      _ -> nil
+    end
+  catch
+    :exit, _ -> nil
   end
 
   @impl true
@@ -312,12 +321,12 @@ defmodule Bee.Extensions.Host do
 
     run = fn
       {:ok, s} ->
-        {document, editor, s} = editor_state(s, ctx.active_editor, ctx.selections)
+        {editor, s} = editor_state(s, ctx.active_editor, ctx.selections)
 
         request(
           s,
           "executeCommand",
-          %{command: id, args: ctx.args, document: document, editor: editor},
+          %{command: id, args: ctx.args, editor: editor},
           {:execute, id, ctx.window}
         )
 
@@ -343,15 +352,14 @@ defmodule Bee.Extensions.Host do
   # A language feature for an editor (Bee.Languages.Features): about the
   # text the buffer has now, which Node gets first if it hasn't.
   def handle_cast({:provide, feature, path, params, {pid, ref}}, s) do
-    open? = is_binary(path) and Registry.lookup(Bee.Registry, {:buffer, path}) != []
-    text = open? && inside?(path, s.root) && Bee.API.text(path)
+    buffer = if is_binary(path) and inside?(path, s.root), do: buffer(path)
 
     cond do
       # Details of a completion already given, the workspace's symbols:
       # not about the text.
-      is_binary(text) or
+      buffer != nil or
           feature in ~w(completionResolve completionAccept workspaceSymbol codeActionApply) ->
-        s = sync_document(s, path, text)
+        s = if buffer, do: sync_document(s, buffer), else: s
         id = s.next_id
         params = Map.merge(params, %{feature: feature, path: path, key: id})
 
@@ -393,8 +401,8 @@ defmodule Bee.Extensions.Host do
 
   def handle_cast({:active_editor, window, path, selections}, s) do
     s = watch_window(s, window)
-    {document, editor, s} = editor_state(s, path, selections)
-    {:noreply, notify(s, "activeEditor", %{document: document, editor: editor})}
+    {editor, s} = editor_state(s, path, selections)
+    {:noreply, notify(s, "activeEditor", %{editor: editor})}
   end
 
   @impl true
@@ -459,16 +467,33 @@ defmodule Bee.Extensions.Host do
       when scope == :user or scope == {:workspace, root},
       do: {:noreply, notify(s, "settings", %{settings: Bee.Settings.all(root)})}
 
-  def handle_info({:buffer_opened, path, text}, s), do: {:noreply, sync_document(s, path, text)}
+  def handle_info({:buffer_opened, path, text}, s),
+    do: {:noreply, sync_document(s, path, 0, text)}
 
-  def handle_info({:buffer_changed, path, _version, text}, s),
-    do: {:noreply, sync_document(s, path, text)}
+  # What was typed: Node gets just that, when it has the version before it
+  # (else the whole text, with the `:buffer_changed` that follows).
+  def handle_info({:buffer_delta, path, version, edits}, s) do
+    if s.documents[path] == version - 1 do
+      {:noreply,
+       notify(
+         %{s | documents: Map.put(s.documents, path, version)},
+         "documentChanged",
+         %{path: path, version: version, changes: edits}
+       )}
+    else
+      {:noreply, s}
+    end
+  end
 
-  def handle_info({:buffer_reloaded, path, text}, s), do: {:noreply, sync_document(s, path, text)}
+  def handle_info({:buffer_changed, path, version, text}, s),
+    do: {:noreply, sync_document(s, path, version, text)}
 
-  def handle_info({:buffer_saved, path, text}, s) do
+  def handle_info({:buffer_reloaded, path, version, text}, s),
+    do: {:noreply, sync_document(s, path, version, text)}
+
+  def handle_info({:buffer_saved, path, _text}, s) do
     if inside?(path, s.root),
-      do: {:noreply, s |> sync_document(path, text) |> notify("documentSaved", %{path: path})},
+      do: {:noreply, s |> sync_document(path) |> notify("documentSaved", %{path: path})},
       else: {:noreply, s}
   end
 
@@ -715,7 +740,7 @@ defmodule Bee.Extensions.Host do
            ),
          :ok <- Bee.API.edit(path, edits) do
       # The changed text first: it is there when the edit's promise resolves.
-      s |> sync_document(path, Bee.API.text(path)) |> reply(id, true)
+      s |> sync_document(path) |> reply(id, true)
     else
       _ -> reply(s, id, false)
     end
@@ -1047,53 +1072,67 @@ defmodule Bee.Extensions.Host do
 
   ## Documents, the active editor
 
-  # Tells Node the text of an open file, when it doesn't have that text.
-  defp sync_document(s, path, text) when is_binary(text) do
-    hash = :erlang.phash2(text)
+  # Tells Node the text of an open file, when it doesn't have that version
+  # of it: the open file `path`'s, a buffer's, or `text` of `version`.
+  defp sync_document(s, path) when is_binary(path) do
+    case buffer(path) do
+      nil -> s
+      buffer -> sync_document(s, buffer)
+    end
+  end
 
+  defp sync_document(s, %Buffer{path: path, version: version, text: text}),
+    do: sync_document(s, path, version, text)
+
+  defp sync_document(s, path, version, text) do
     cond do
       not inside?(path, s.root) ->
         s
 
-      s.documents[path] == hash ->
+      s.documents[path] == version ->
         s
 
       Map.has_key?(s.documents, path) ->
         notify(
-          %{s | documents: Map.put(s.documents, path, hash)},
+          %{s | documents: Map.put(s.documents, path, version)},
           "documentChanged",
-          document(path, text)
+          document(path, text, version)
         )
 
       true ->
         notify(
-          %{s | documents: Map.put(s.documents, path, hash)},
+          %{s | documents: Map.put(s.documents, path, version)},
           "documentOpened",
-          document(path, text)
+          document(path, text, version)
         )
     end
   end
 
-  defp sync_document(s, _path, _text), do: s
+  # `{editor, s}` for a window's active file, once Node has its text: its
+  # selections as positions (`[[from, to]]`). They come as positions from
+  # an editor, as byte offsets with a command's context.
+  defp editor_state(s, nil, _selections), do: {nil, s}
 
-  # `{document, editor, s}` for a window's active file: its text if Node
-  # doesn't have it, and its selections in Node's offsets.
-  defp editor_state(s, nil, _selections), do: {nil, nil, s}
+  # (An editor's, in a text Node follows already: nothing to look up, as
+  # the cursor moves.)
+  defp editor_state(%{documents: documents} = s, path, [{%{}, %{}} | _] = selections)
+       when is_map_key(documents, path),
+       do: {%{path: path, selections: Enum.map(selections, &Tuple.to_list/1)}, s}
 
   defp editor_state(s, path, selections) do
-    case inside?(path, s.root) && Bee.API.text(path) do
-      text when is_binary(text) ->
-        hash = :erlang.phash2(text)
-        document = if s.documents[path] == hash, do: nil, else: document(path, text)
-
+    case inside?(path, s.root) && buffer(path) do
+      %Buffer{text: text} = buffer ->
         ranges =
-          for {from, to} <- selections || [], do: [to_utf16(text, from), to_utf16(text, to)]
+          for {from, to} <- selections || [] do
+            if is_integer(from),
+              do: [bytes_to_position(text, from), bytes_to_position(text, to)],
+              else: [from, to]
+          end
 
-        {document, %{path: path, selections: ranges},
-         %{s | documents: Map.put(s.documents, path, hash)}}
+        {%{path: path, selections: ranges}, sync_document(s, buffer)}
 
       _ ->
-        {nil, nil, s}
+        {nil, s}
     end
   end
 
@@ -1122,7 +1161,7 @@ defmodule Bee.Extensions.Host do
            ) do
       case Bee.API.edit(path, edits) do
         :ok ->
-          {:ok, sync_document(s, path, Bee.API.text(path))}
+          {:ok, sync_document(s, path)}
 
         {:error, :not_open} ->
           with {:ok, changed} <- Buffer.apply_edits(text, edits),

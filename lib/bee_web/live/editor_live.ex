@@ -23,6 +23,9 @@ defmodule BeeWeb.EditorLive do
   - `Extensions`, `PluginAPI`: the plugins installed, and what they ask of
     the window (`Bee.API`).
   - `Config`: settings, themes, commands and keybindings, as assigns.
+  - `Derived`: what the page shows that is computed from other assigns
+    (the `when` context, menus, toolbars), kept up to date after every
+    event and message a part handled.
 
   The page itself is editor_live.html.heex, with the components of
   `BeeWeb.Workbench`.
@@ -38,13 +41,13 @@ defmodule BeeWeb.EditorLive do
   alias BeeWeb.EditorLive.{
     Commands,
     Config,
+    Derived,
     Editors,
     Extensions,
     Formatting,
     Json,
     LanguageFeatures,
     Layout,
-    Menus,
     Notifications,
     Output,
     Palette,
@@ -100,7 +103,7 @@ defmodule BeeWeb.EditorLive do
     {:ok,
      socket
      |> attach_parts()
-     |> assign(page_title: Path.basename(root), term_seq: %{}, selection: nil)
+     |> assign(page_title: Path.basename(root), selection: nil)
      |> assign(root: root)
      |> assign(connected: connected?(socket))
      |> assign(view_inputs: %{}, collapsed: MapSet.new(), collapsed_views: MapSet.new())
@@ -128,10 +131,16 @@ defmodule BeeWeb.EditorLive do
        max_entries: 1,
        max_file_size: 200_000_000,
        auto_upload: true,
-       progress: &Extensions.vsix_progress/3
+       progress: &vsix_progress/3
      )
      |> then(&if(problem, do: Notifications.notify(&1, :error, problem), else: &1))
-     |> open_file_param(params["file"])}
+     |> open_file_param(params["file"])
+     |> Derived.sync()}
+  end
+
+  defp vsix_progress(name, entry, socket) do
+    {:noreply, socket} = Extensions.vsix_progress(name, entry, socket)
+    {:noreply, Derived.sync(socket)}
   end
 
   # `{root, problem}`: the folder asked for, or Bee's own with why not.
@@ -162,12 +171,21 @@ defmodule BeeWeb.EditorLive do
   end
 
   # Each part gets the page's events and the window's messages, until one
-  # takes them.
+  # takes them: what the page computes from the assigns it changed is
+  # computed again then (`Derived`).
   defp attach_parts(socket) do
-    Enum.reduce(@hooks, socket, fn {part, stage, fun}, socket ->
-      attach_hook(socket, part, stage, fun)
+    Enum.reduce(@hooks, socket, fn
+      {part, :handle_event, fun}, socket ->
+        attach_hook(socket, part, :handle_event, &handled(fun.(&1, &2, &3)))
+
+      {part, :handle_info, fun}, socket ->
+        attach_hook(socket, part, :handle_info, &handled(fun.(&1, &2)))
     end)
   end
+
+  defp handled({:halt, socket}), do: {:halt, Derived.sync(socket)}
+  defp handled({:halt, reply, socket}), do: {:halt, reply, Derived.sync(socket)}
+  defp handled({:cont, socket}), do: {:cont, socket}
 
   # ?file=… or ?file[]=…: files to open (the desktop app's `bee FILE…`),
   # once connected.

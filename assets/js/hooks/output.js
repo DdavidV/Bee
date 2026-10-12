@@ -7,8 +7,10 @@ const MAX_CHARS = 600_000
 export const Output = {
   mounted() {
     this.channel = null
+    this.length = 0
     this.handleEvent("output:set", ({channel, text}) => {
       this.channel = channel
+      this.length = text.length
       this.el.textContent = text
       this.el.scrollTop = this.el.scrollHeight
     })
@@ -17,9 +19,11 @@ export const Output = {
       const atEnd = this.el.scrollHeight - this.el.scrollTop - this.el.clientHeight < 24
       this.el.append(text)
       // Long output: its start goes (whole pieces, as they came).
-      let length = this.el.textContent.length
-      while (length > MAX_CHARS && this.el.firstChild && this.el.firstChild !== this.el.lastChild) {
-        length -= this.el.firstChild.textContent.length
+      // (Counted as it comes: reading the whole text back for every line
+      // added would cost more the more there is.)
+      this.length += text.length
+      while (this.length > MAX_CHARS && this.el.firstChild && this.el.firstChild !== this.el.lastChild) {
+        this.length -= this.el.firstChild.textContent.length
         this.el.firstChild.remove()
       }
       if (atEnd) this.el.scrollTop = this.el.scrollHeight

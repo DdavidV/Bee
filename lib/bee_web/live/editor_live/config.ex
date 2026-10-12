@@ -78,6 +78,8 @@ defmodule BeeWeb.EditorLive.Config do
     |> assign(
       settings: settings,
       settings_errors: errors,
+      # The settings as `when` keys (config.*), built once per change.
+      config_context: Map.new(settings, fn {key, value} -> {"config." <> key, value} end),
       editor_settings: %{
         fontSize: settings["editor.fontSize"],
         tabSize: settings["editor.tabSize"],
@@ -141,16 +143,26 @@ defmodule BeeWeb.EditorLive.Config do
     end
   end
 
+  # The commands and menus contributed, in the shapes they are asked for
+  # (by id, by menu), so that nothing is searched or sorted per render.
   def load_commands(socket) do
+    commands = CommandRegistry.commands()
+
     socket
-    |> assign(commands: CommandRegistry.commands(), menus: CommandRegistry.menus())
+    |> assign(
+      commands: commands,
+      commands_by_id: Map.new(commands, &{&1.id, &1}),
+      menus: CommandRegistry.menus(),
+      menu_items: CommandRegistry.menu_table(),
+      submenus: CommandRegistry.submenus()
+    )
     |> then(&load_keybindings(&1, &1.assigns.keybindings, &1.assigns.keybinding_errors))
   end
 
   # Bindings of client commands carry their enablement: the browser runs those
   # itself, without a round trip.
   defp load_keybindings(socket, bindings, errors) do
-    commands = Map.new(socket.assigns[:commands] || [], &{&1.id, &1})
+    commands = socket.assigns[:commands_by_id] || %{}
 
     client =
       Enum.map(bindings, fn binding ->
@@ -170,6 +182,11 @@ defmodule BeeWeb.EditorLive.Config do
         end
       end)
 
-    assign(socket, keybindings: bindings, keybinding_errors: errors, client_keybindings: client)
+    assign(socket,
+      keybindings: bindings,
+      keybinding_labels: Keybindings.labels(bindings),
+      keybinding_errors: errors,
+      client_keybindings: client
+    )
   end
 end

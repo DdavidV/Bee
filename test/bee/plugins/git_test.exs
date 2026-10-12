@@ -252,6 +252,53 @@ defmodule BeeGitTest do
       assert Map.keys(decorations) == ["_build"]
     end
 
+    test "git runs again for files that can change its status, not for what it ignores", %{
+      root: root
+    } do
+      repo!(root)
+      File.write!(Path.join(root, ".gitignore"), "_build/\n*.log\n")
+      File.mkdir_p!(Path.join(root, "_build/lib"))
+      File.write!(Path.join(root, "debug.log"), "")
+      sh!(root, ["add", ".gitignore"])
+      sh!(root, ["commit", "-q", "-m", "Ignore"])
+      Plugins.reload()
+      await_view(&(&1.message == "No changes."))
+
+      changed = fn rel ->
+        Phoenix.PubSub.broadcast(Bee.PubSub, "fs", {:fs_changed, Path.join(root, rel)})
+      end
+
+      shown = fn timeout ->
+        receive do
+          {:ui_changed, {:view, "git.changes"}} -> true
+        after
+          timeout -> false
+        end
+      end
+
+      # (Whatever it showed as it started.)
+      Process.sleep(400)
+      while_shown = fn while_shown -> if shown.(0), do: while_shown.(while_shown) end
+      while_shown.(while_shown)
+
+      # A build's output, a log, git's own objects and locks: nothing to it.
+      File.write!(Path.join(root, "_build/lib/a.beam"), "x")
+
+      for rel <- ~w(_build/lib/a.beam debug.log .git/objects/ab/cdef .git/index.lock),
+          do: changed.(rel)
+
+      refute shown.(700)
+
+      # Looked at again, with nothing new: nothing is shown again either.
+      changed.("a.txt")
+      refute shown.(700)
+
+      File.write!(Path.join(root, "a.txt"), "changed\n")
+      changed.("a.txt")
+      assert shown.(3_000)
+      assert labels(group(await_view(&(&1.items != [])), "changes")) == [{"a.txt", "M"}]
+    end
+
     test "discarding asks first", %{root: root} do
       repo!(root)
       path = Path.join(root, "a.txt")

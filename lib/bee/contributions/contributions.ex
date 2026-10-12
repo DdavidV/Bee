@@ -16,13 +16,18 @@ defmodule Bee.Contributions do
     * `Bee.Views` – viewsContainers, views
     * `Bee.IconThemes` – iconThemes (plugins only)
 
-  Reads go straight to ETS. Changes broadcast `{:contributions_changed, keys}`
-  on the `"contributions"` topic, `keys` being the point keys affected.
+  Reads cost nothing: what each point has is kept ready, by point
+  (`:persistent_term`), and built again when a source registers or goes –
+  which is rare, while commands, languages and views are asked for all the
+  time. Changes broadcast `{:contributions_changed, keys}` on the
+  `"contributions"` topic, `keys` being the point keys affected.
   """
   use GenServer
 
   @table __MODULE__
   @topic "contributions"
+  # What `entries/1` reads: %{point key => [{source, data}]}.
+  @entries {__MODULE__, :entries}
 
   @points [
     Bee.Commands.Registry,
@@ -77,8 +82,21 @@ defmodule Bee.Contributions do
   def unregister(source), do: GenServer.call(__MODULE__, {:unregister, source})
 
   @doc "`[{source, data}]` for the point `key`, built-ins first, then in registration order."
-  def entries(key) do
-    for {source, _seq, data} <- sorted(), value = Map.get(data, key), do: {source, value}
+  def entries(key), do: Map.get(:persistent_term.get(@entries, %{}), key, [])
+
+  # Called by the server after every change of the table.
+  defp publish do
+    sorted = sorted()
+
+    entries =
+      Map.new(@points, fn point ->
+        key = point.key()
+
+        {key,
+         for({source, _seq, data} <- sorted, value = Map.get(data, key), do: {source, value})}
+      end)
+
+    :persistent_term.put(@entries, entries)
   end
 
   def sources, do: Enum.map(sorted(), &elem(&1, 0))
@@ -146,6 +164,7 @@ defmodule Bee.Contributions do
     case :ets.lookup(@table, source) do
       [{^source, _, old}] ->
         :ets.delete(@table, source)
+        publish()
         broadcast(changed(old, %{}))
 
       [] ->
@@ -163,6 +182,7 @@ defmodule Bee.Contributions do
       end
 
     :ets.insert(@table, {source, seq, data})
+    publish()
     broadcast(changed(old, data))
     seq + 1
   end

@@ -205,10 +205,11 @@ defmodule Bee.Plugins.Host do
   defp event({:buffer_saved, path, _text}, root), do: mine(path, root, {:buffer_saved, path})
   defp event({:buffer_closed, path}, root), do: mine(path, root, {:buffer_closed, path})
 
-  defp event({:buffer_reloaded, path, _text}, root),
+  defp event({:buffer_reloaded, path, _version, _text}, root),
     do: mine(path, root, {:buffer_changed, path, nil})
 
   defp event({:buffer_edited, _path, _version, _edits, _text}, _root), do: :ignore
+  defp event({:buffer_delta, _path, _version, _edits}, _root), do: :ignore
 
   defp event({:settings_changed, scope}, root) when scope in [:user, {:workspace, root}],
     do: {:settings_changed, Bee.Settings.all(root)}

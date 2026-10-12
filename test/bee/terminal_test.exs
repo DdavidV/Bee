@@ -43,6 +43,37 @@ defmodule Bee.TerminalTest do
     assert seq > 0
   end
 
+  test "a burst of output is told in few pieces, whole and in order", %{dir: dir} do
+    id = start_terminal(dir)
+    [{pid, _}] = Registry.lookup(Bee.Registry, {:terminal, id})
+    os_pid = :sys.get_state(pid).os_pid
+
+    # As the shell's output comes from the pty: many small pieces at once.
+    lines = for n <- 1..500, do: "line #{n}\r\n"
+    for line <- lines, do: send(pid, {:stdout, os_pid, line})
+
+    {output, pieces, seq} = collect(id, IO.iodata_to_binary(lines), "", 0, 0)
+    assert output == IO.iodata_to_binary(lines)
+    # The first at once, the rest together (a few, on a slow machine).
+    assert pieces <= 5
+
+    # What a view attaching now replays is all of it, up to the last piece told.
+    assert {scrollback, ^seq} = Terminal.scrollback(id)
+    assert String.ends_with?(scrollback, "line 500\r\n")
+    refute_receive {:term_data, ^id, _, _}, 50
+  end
+
+  defp collect(_id, expected, acc, pieces, seq) when byte_size(acc) >= byte_size(expected),
+    do: {acc, pieces, seq}
+
+  defp collect(id, expected, acc, pieces, _seq) do
+    receive do
+      {:term_data, ^id, seq, data} -> collect(id, expected, acc <> data, pieces + 1, seq)
+    after
+      2_000 -> flunk("got only #{byte_size(acc)} bytes")
+    end
+  end
+
   test "exiting the shell broadcasts :term_exit and stops the process", %{dir: dir} do
     id = start_terminal(dir)
     [{pid, _}] = Registry.lookup(Bee.Registry, {:terminal, id})

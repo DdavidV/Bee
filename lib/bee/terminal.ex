@@ -4,13 +4,18 @@ defmodule Bee.Terminal do
 
   Output is broadcast on `"term:<id>"` as `{:term_data, id, seq, data}` and
   kept in a bounded scrollback, so a viewer that attaches late can replay it
-  and then skip chunks with `seq <= last_seq`. The terminal exits with its
+  and then skip chunks with `seq <= last_seq`. Output that comes in a burst
+  (a build, `cat`) is sent on at most every few milliseconds, in one piece:
+  what is typed is echoed at once, and a flood costs the window one message
+  per frame instead of thousands. The terminal exits with its
   owner (the LiveView that opened it), and broadcasts `{:term_exit, id, reason}`
   when the shell exits.
   """
   use GenServer, restart: :temporary
 
   @scrollback_bytes 256 * 1024
+  # How long output is gathered after some was sent.
+  @flush_ms 8
 
   def start(opts) do
     DynamicSupervisor.start_child(Bee.TerminalSup, {__MODULE__, opts})
@@ -78,7 +83,17 @@ defmodule Bee.Terminal do
         Process.monitor(owner)
 
         {:ok,
-         %{id: id, owner: owner, exec_pid: exec_pid, os_pid: os_pid, seq: 0, scrollback: <<>>}}
+         %{
+           id: id,
+           owner: owner,
+           exec_pid: exec_pid,
+           os_pid: os_pid,
+           seq: 0,
+           scrollback: <<>>,
+           # Output not sent yet (iodata), while `timer` runs.
+           pending: [],
+           timer: nil
+         }}
 
       {:error, reason} ->
         {:stop, reason}
@@ -86,7 +101,11 @@ defmodule Bee.Terminal do
   end
 
   @impl true
-  def handle_call(:scrollback, _from, state), do: {:reply, {state.scrollback, state.seq}, state}
+  def handle_call(:scrollback, _from, state) do
+    # (What waits is sent first: the scrollback is what `seq` has seen.)
+    state = flush(state)
+    {:reply, {state.scrollback, state.seq}, state}
+  end
 
   @impl true
   def handle_cast({:input, data}, state) do
@@ -102,13 +121,23 @@ defmodule Bee.Terminal do
   @impl true
   def handle_info({stream, os_pid, data}, %{os_pid: os_pid} = state)
       when stream in [:stdout, :stderr] do
-    seq = state.seq + 1
-    Phoenix.PubSub.broadcast(Bee.PubSub, topic(state.id), {:term_data, state.id, seq, data})
-    {:noreply, %{state | seq: seq, scrollback: trim(state.scrollback <> data)}}
+    state = %{state | pending: [state.pending | data]}
+
+    # The first of a burst goes at once; what follows shortly, together.
+    if state.timer,
+      do: {:noreply, state},
+      else: {:noreply, %{flush(state) | timer: Process.send_after(self(), :flush, @flush_ms)}}
+  end
+
+  def handle_info(:flush, state) do
+    if state.pending == [],
+      do: {:noreply, %{state | timer: nil}},
+      else: {:noreply, %{flush(state) | timer: Process.send_after(self(), :flush, @flush_ms)}}
   end
 
   # The shell exited: reason is :normal or {:exit_status, status}.
   def handle_info({:EXIT, exec_pid, reason}, %{exec_pid: exec_pid} = state) do
+    state = flush(state)
     Phoenix.PubSub.broadcast(Bee.PubSub, topic(state.id), {:term_exit, state.id, reason})
     {:stop, :normal, state}
   end
@@ -120,6 +149,15 @@ defmodule Bee.Terminal do
   @impl true
   def terminate(_reason, state) do
     :exec.stop(state.os_pid)
+  end
+
+  defp flush(%{pending: []} = state), do: state
+
+  defp flush(state) do
+    data = IO.iodata_to_binary(state.pending)
+    seq = state.seq + 1
+    Phoenix.PubSub.broadcast(Bee.PubSub, topic(state.id), {:term_data, state.id, seq, data})
+    %{state | seq: seq, pending: [], scrollback: trim(state.scrollback <> data)}
   end
 
   defp trim(buf) when byte_size(buf) > @scrollback_bytes,

@@ -117,7 +117,7 @@ defmodule BeeWeb.EditorLive.Views do
 
   # Views of the shown container whose `when` holds.
   def visible_views(assigns, container \\ nil) do
-    ctx = context(assigns)
+    ctx = assigns.context
     container = container || assigns.sidebar_view
 
     for view <- assigns.views,

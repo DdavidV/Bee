@@ -68,9 +68,15 @@ defmodule BeeWeb.EditorLive.Window do
   end
 
   def tell_extension_host(socket) do
-    ctx = plugin_context(socket.assigns)
-    Bee.Extensions.Host.active_editor(ctx.root, self(), ctx.active_editor, ctx.selections)
+    a = socket.assigns
+    active = Workbench.active_file(workbench(socket))
+    Bee.Extensions.Host.active_editor(a.root, self(), active, selections(a.selection, active))
   end
+
+  # The selections of file `path`, as the editor sent them: `[{from, to}]`,
+  # positions (`Bee.Editor.Positions`).
+  def selections({path, ranges}, path) when path != nil, do: ranges
+  def selections(_selection, _path), do: []
 
   # Every group's tabs, one per editor (a file open in two groups: once).
   def open_tabs(socket),
@@ -79,9 +85,15 @@ defmodule BeeWeb.EditorLive.Window do
   def plugin_context(assigns) do
     active = Workbench.active_file(workbench_from(assigns))
 
+    # Plugins count in bytes: of the text the file has now.
     selections =
-      case assigns.selection do
-        {^active, ranges} when active != nil -> ranges
+      with [_ | _] = ranges <- selections(assigns.selection, active),
+           text when is_binary(text) <- Bee.API.text(active) do
+        for {from, to} <- ranges do
+          {Bee.Extensions.Host.position_to_bytes(text, from),
+           Bee.Extensions.Host.position_to_bytes(text, to)}
+        end
+      else
         _ -> []
       end
 
@@ -98,19 +110,23 @@ defmodule BeeWeb.EditorLive.Window do
   def int(value) when is_integer(value), do: value
   def int(value) when is_binary(value), do: String.to_integer(value)
 
+  # The server half of the `when` context, as it is now. The page and its
+  # menus use the one kept in the assigns (`BeeWeb.EditorLive.Derived`).
   def context(assigns) do
     wb = workbench_from(assigns)
     active = Workbench.active_file(wb)
 
-    wb
-    |> Workbench.context(assigns.settings)
+    assigns.config_context
+    |> Map.merge(Workbench.context(wb))
     |> Map.put(
       "editorHasSelection",
       match?({^active, _}, assigns[:selection]) and active != nil and
         Enum.any?(elem(assigns.selection, 1), fn {from, to} -> from != to end)
     )
     |> Map.put("notificationCenterVisible", assigns[:notifications_open] == true)
-    |> Map.merge(language_context(assigns[:root], active))
+    |> Map.merge(
+      language_context(assigns[:root], active, active && Workbench.language(wb, active))
+    )
     |> Map.merge(assigns[:ui_context] || %{})
   end
 
@@ -132,12 +148,12 @@ defmodule BeeWeb.EditorLive.Window do
     "codeAction" => "editorHasCodeActionsProvider"
   }
 
-  defp language_context(root, path) when is_binary(root) and is_binary(path) do
-    features = Bee.Languages.Features.for_file(root, path)
+  defp language_context(root, path, language) when is_binary(root) and is_binary(path) do
+    features = Bee.Languages.Features.for_file(root, path, language)
     Map.new(@provider_keys, fn {feature, key} -> {key, Map.has_key?(features, feature)} end)
   end
 
-  defp language_context(_root, _path), do: %{}
+  defp language_context(_root, _path, _language), do: %{}
 
   # "file — workspace", like VS Code's window title.
   def window_title(nil, root), do: Path.basename(root)

@@ -181,7 +181,9 @@ defmodule Desktop.Bridge do
     %{s | sockets: Map.delete(s.sockets, sid)}
   end
 
-  defp write(%{io: {:port, port}}, frame), do: Port.command(port, Jason.encode!(frame))
+  defp write(%{io: {:port, port}}, frame),
+    do: Port.command(port, Jason.encode_to_iodata!(frame))
+
   defp write(%{io: {:test, pid}}, frame), do: send(pid, {:bridge_out, frame})
 
   ## Cookies, per window
