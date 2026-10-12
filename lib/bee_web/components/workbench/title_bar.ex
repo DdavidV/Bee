@@ -21,6 +21,7 @@ defmodule BeeWeb.Workbench.TitleBar do
   attr :open_menu, :string, default: nil
   attr :sidebar_open, :boolean, required: true
   attr :panel_open, :boolean, required: true
+  attr :auxiliary_open, :boolean, required: true
 
   def title_bar(assigns) do
     ~H"""
@@ -84,6 +85,22 @@ defmodule BeeWeb.Workbench.TitleBar do
             fill={if @panel_open, do: "currentColor", else: "none"}
           />
           <line x1="2.5" y1="9" x2="13.5" y2="9" stroke="currentColor" />
+        </.layout_toggle>
+        <.layout_toggle
+          id="layout-auxiliarybar"
+          title="Toggle Secondary Side Bar"
+          pressed={@auxiliary_open}
+          command="workbench.action.toggleAuxiliaryBar"
+        >
+          <rect x="2.5" y="3.5" width="11" height="9" rx="1" fill="none" stroke="currentColor" />
+          <rect
+            x="9.5"
+            y="4"
+            width="3.5"
+            height="8"
+            fill={if @auxiliary_open, do: "currentColor", else: "none"}
+          />
+          <line x1="9.5" y1="3.5" x2="9.5" y2="12.5" stroke="currentColor" />
         </.layout_toggle>
       </div>
     </header>

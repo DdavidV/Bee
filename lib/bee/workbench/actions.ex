@@ -156,6 +156,13 @@ defmodule Bee.Workbench.Actions do
   @command "workbench.action.toggleSidebarVisibility"
   def toggle_sidebar_visibility(wb), do: Workbench.toggle_sidebar(wb)
 
+  @command "workbench.action.toggleAuxiliaryBar"
+  def toggle_auxiliary_bar(wb), do: Workbench.toggle_auxiliary(wb)
+
+  @command "workbench.action.closeAuxiliaryBar"
+  def close_auxiliary_bar(%{auxiliary_open: true} = wb), do: Workbench.toggle_auxiliary(wb)
+  def close_auxiliary_bar(wb), do: wb
+
   @command "workbench.view.explorer"
   def show_explorer(wb), do: Workbench.show_view(wb, "explorer")
 

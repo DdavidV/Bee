@@ -345,6 +345,20 @@
         "toggled": "activeViewlet == 'workbench.view.extensions'"
       },
       {
+        "command": "workbench.action.toggleAuxiliaryBar",
+        "category": "View",
+        "title": "Toggle Secondary Side Bar Visibility",
+        "runtime": "server",
+        "toggled": "auxiliaryBarVisible"
+      },
+      {
+        "command": "workbench.action.closeAuxiliaryBar",
+        "category": "View",
+        "title": "Hide Secondary Side Bar",
+        "runtime": "server",
+        "enablement": "auxiliaryBarVisible"
+      },
+      {
         "command": "workbench.action.togglePanel",
         "category": "View",
         "title": "Toggle Panel Visibility",
@@ -716,6 +730,7 @@
       {"key": "ctrl+k enter", "mac": "cmd+k enter", "command": "workbench.action.keepEditor", "when": "activeEditor && !activeEditorIsNotPreview"},
       {"key": "ctrl+b", "mac": "cmd+b", "command": "workbench.action.toggleSidebarVisibility"},
       {"key": "ctrl+j", "mac": "cmd+j", "command": "workbench.action.togglePanel"},
+      {"key": "ctrl+alt+b", "mac": "cmd+alt+b", "command": "workbench.action.toggleAuxiliaryBar"},
       {"key": "ctrl+shift+e", "mac": "cmd+shift+e", "command": "workbench.view.explorer"},
       {"key": "ctrl+shift+x", "mac": "cmd+shift+x", "command": "workbench.view.extensions"},
       {"key": "ctrl+shift+f", "mac": "cmd+shift+f", "command": "workbench.action.findInFiles"},
@@ -905,8 +920,9 @@
         {"command": "workbench.view.search", "group": "2_views@2"},
         {"command": "workbench.view.extensions", "group": "2_views@3"},
         {"command": "workbench.action.toggleSidebarVisibility", "group": "3_layout@1"},
-        {"command": "workbench.action.togglePanel", "group": "3_layout@2"},
-        {"command": "notifications.toggleList", "group": "3_layout@3"},
+        {"command": "workbench.action.toggleAuxiliaryBar", "group": "3_layout@2"},
+        {"command": "workbench.action.togglePanel", "group": "3_layout@3"},
+        {"command": "notifications.toggleList", "group": "3_layout@4"},
         {"command": "workbench.action.splitEditor", "group": "5_split@1"},
         {"command": "workbench.action.splitEditorDown", "group": "5_split@2"}
       ],

@@ -31,7 +31,8 @@ by you.
 
 ### In the browser
 
-The sidebar's width, the panel's height, and the order of the activity bar
+The sidebar's width, the panel's height, the secondary side bar's width
+(the bar on the right, `Ctrl+Alt+B`), and the order of the activity bar
 and panel sections are remembered by the browser, separately for each
 folder. So is what you hide or move: right-click an icon of the activity
 bar or a tab of the panel to **Hide** it, or to move one that can be moved
@@ -265,6 +266,7 @@ On macOS, `Ctrl` is `Cmd` for the entries below unless noted.
 |---|---|
 | `Ctrl+B` | Toggle the sidebar |
 | `Ctrl+J` | Toggle the panel |
+| `Ctrl+Alt+B` | Toggle the secondary side bar |
 | `Ctrl+Shift+E` | Show Explorer |
 | `Ctrl+Shift+F` | Find in Files |
 | `Ctrl+Shift+H` | Replace in Files |

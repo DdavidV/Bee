@@ -65,6 +65,10 @@ defmodule Bee.Workbench do
             # The sections' order, as dragged (container ids).
             panel_order: [],
             panel_maximized: false,
+            # The secondary side bar, on the right of the editors (empty,
+            # as VS Code's is to begin with).
+            auxiliary_open: false,
+            auxiliary_width: 300,
             # Views containers the user moved: container id =>
             # `:activitybar` or `:panel`; and those hidden (container ids).
             # See "Views containers".
@@ -106,6 +110,8 @@ defmodule Bee.Workbench do
     :panel_view,
     :panel_order,
     :panel_maximized,
+    :auxiliary_open,
+    :auxiliary_width,
     :container_locations,
     :hidden_containers,
     :console,
@@ -685,6 +691,9 @@ defmodule Bee.Workbench do
       else: show_container(wb, hd(ids))
   end
 
+  @doc "Shows or hides the secondary side bar (on the right)."
+  def toggle_auxiliary(wb), do: %{wb | auxiliary_open: not wb.auxiliary_open}
+
   @doc """
   Shows sidebar view `view` ("explorer", "extensions" – the plugins); like clicking its
   activity bar icon in VS Code, this hides the sidebar when it is already shown.
@@ -695,11 +704,11 @@ defmodule Bee.Workbench do
   def show_view(wb, view), do: reveal_view(wb, view)
 
   # Sizes in CSS pixels: {default, min, max}.
-  @sizes %{sidebar: {256, 170, 800}, panel: {288, 80, 1200}}
+  @sizes %{sidebar: {256, 170, 800}, panel: {288, 80, 1200}, auxiliarybar: {300, 170, 800}}
 
   @doc """
-  Sets the sidebar width or panel height (dragging their sash), clamped to
-  sensible bounds; `nil` restores the default (double-clicking the sash).
+  Sets the sidebar width, the panel height or the secondary side bar's
+  width (dragging their sash), clamped to sensible bounds; `nil` restores the default (double-clicking the sash).
   """
   def resize(wb, part, size) when is_map_key(@sizes, part) do
     {default, min, max} = @sizes[part]
@@ -708,6 +717,7 @@ defmodule Bee.Workbench do
     case part do
       :sidebar -> %{wb | sidebar_width: size}
       :panel -> %{wb | panel_height: size}
+      :auxiliarybar -> %{wb | auxiliary_width: size}
     end
   end
 
@@ -1131,6 +1141,7 @@ defmodule Bee.Workbench do
       "canRedo" => active != nil and wb.can_redo,
       "sideBarVisible" => wb.sidebar_open,
       "activeViewlet" => wb.sidebar_open && "workbench.view.#{wb.sidebar_view}",
+      "auxiliaryBarVisible" => wb.auxiliary_open,
       "panelVisible" => wb.panel_open,
       "activePanel" => wb.panel_open && wb.panel_view,
       "panelMaximized" => wb.panel_maximized,

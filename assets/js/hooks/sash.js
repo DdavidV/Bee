@@ -1,9 +1,10 @@
 // A sash: the handle between two parts of the layout, VS Code style.
-// data-part: "sidebar" (drag horizontally: the sidebar's width) or "panel"
-// (drag vertically: the panel's height).
+// data-part: "sidebar" (drag horizontally: the sidebar's width), "panel"
+// (drag vertically: the panel's height) or "auxiliarybar" (horizontally:
+// the secondary side bar's width).
 //
 // While dragging, the size goes into a CSS variable of its own on <html>
-// (--drag-sidebar-width / --drag-panel-height), which the layout prefers
+// (--drag-sidebar-width, --drag-panel-height, --drag-auxiliarybar-width), which the layout prefers
 // over the one the server renders on #workbench. LiveView never touches
 // <html>, so no update can put an old size back mid-drag. On release the
 // size goes to the server (`layout_resize`); once it has rendered it, the
@@ -16,11 +17,22 @@
 
 import {saveLayout as save} from "../layout/storage"
 
-const DRAG_VARS = {sidebar: "--drag-sidebar-width", panel: "--drag-panel-height"}
+const DRAG_VARS = {
+  sidebar: "--drag-sidebar-width",
+  panel: "--drag-panel-height",
+  auxiliarybar: "--drag-auxiliarybar-width",
+}
 // Bee.Workbench.resize/3 clamps the same way; the editor keeps some room.
-const MIN = {sidebar: 170, panel: 80}
+const MIN = {sidebar: 170, panel: 80, auxiliarybar: 170}
 const max = part =>
-  part === "sidebar" ? Math.min(800, window.innerWidth - 300) : Math.min(1200, window.innerHeight - 150)
+  part === "panel" ? Math.min(1200, window.innerHeight - 150) : Math.min(800, window.innerWidth - 300)
+// A part's size, from where the pointer is: the sidebar grows from its left
+// edge, the panel from its bottom edge, the secondary side bar from its right one.
+const MEASURE = {
+  sidebar: (ev, box) => ev.clientX - box.left,
+  panel: (ev, box) => box.bottom - ev.clientY,
+  auxiliarybar: (ev, box) => box.right - ev.clientX,
+}
 
 export const Sash = {
   mounted() {
@@ -50,11 +62,10 @@ export const Sash = {
     if (e.button !== 0) return
     e.preventDefault()
     const part = this.part
-    const target = document.getElementById(part === "sidebar" ? "sidebar" : "panel").getBoundingClientRect()
-    // The sidebar grows from its left edge, the panel from its bottom edge.
-    const measure = ev => (part === "sidebar" ? ev.clientX - target.left : target.bottom - ev.clientY)
+    const target = document.getElementById(part).getBoundingClientRect()
+    const measure = ev => MEASURE[part](ev, target)
     // Where on the sash it was grabbed, so the size doesn't jump on the first move.
-    const offset = (part === "sidebar" ? target.width : target.height) - measure(e)
+    const offset = (part === "panel" ? target.height : target.width) - measure(e)
 
     let size = null
     let hide = false
@@ -84,7 +95,7 @@ export const Sash = {
 
     this.el.setPointerCapture(e.pointerId)
     this.el.dataset.dragging = ""
-    document.body.style.cursor = part === "sidebar" ? "col-resize" : "row-resize"
+    document.body.style.cursor = part === "panel" ? "row-resize" : "col-resize"
     document.body.classList.add("select-none")
     this.el.addEventListener("pointermove", move)
     this.el.addEventListener("pointerup", stop)

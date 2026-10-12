@@ -23,6 +23,7 @@
           const style = document.documentElement.style;
           if (layout.sidebar) style.setProperty("--saved-sidebar-width", `${layout.sidebar}px`);
           if (layout.panel) style.setProperty("--saved-panel-height", `${layout.panel}px`);
+          if (layout.auxiliarybar) style.setProperty("--saved-auxiliarybar-width", `${layout.auxiliarybar}px`);
         } catch (_e) {}
       })();
     </script>

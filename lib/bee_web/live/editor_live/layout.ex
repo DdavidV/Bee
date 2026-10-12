@@ -1,7 +1,7 @@
 defmodule BeeWeb.EditorLive.Layout do
   @moduledoc """
-  The window's layout: the sizes of the sidebar and the panel (the Sash
-  hook), the order of the activity bar's icons and the panel's sections,
+  The window's layout: the sizes of the sidebar, the panel and the
+  secondary side bar (the Sash hook), the order of the activity bar's icons and the panel's sections,
   and which views containers were moved or hidden (`Bee.Workbench`, "Views
   containers"). The browser remembers them (assets/js/layout/storage.js).
   """
@@ -19,7 +19,7 @@ defmodule BeeWeb.EditorLive.Layout do
 
   # A sash was dragged (or double-clicked: size nil) – see the Sash hook.
   def handle_event("layout_resize", %{"part" => part, "size" => size}, socket)
-      when part in ["sidebar", "panel"],
+      when part in ["sidebar", "panel", "auxiliarybar"],
       do: {:halt, change(socket, &Workbench.resize(&1, String.to_existing_atom(part), size))}
 
   # A sash was pulled past the minimum and released: hide that part.
@@ -32,6 +32,12 @@ defmodule BeeWeb.EditorLive.Layout do
   def handle_event("layout_hide", %{"part" => "panel"}, socket) do
     if socket.assigns.panel_open,
       do: {:halt, change(socket, &Workbench.toggle_panel/1)},
+      else: {:halt, socket}
+  end
+
+  def handle_event("layout_hide", %{"part" => "auxiliarybar"}, socket) do
+    if socket.assigns.auxiliary_open,
+      do: {:halt, change(socket, &Workbench.toggle_auxiliary/1)},
       else: {:halt, socket}
   end
 
@@ -49,9 +55,13 @@ defmodule BeeWeb.EditorLive.Layout do
     case layout do
       %{} ->
         wb =
-          Enum.reduce([{"sidebar", :sidebar}, {"panel", :panel}], wb, fn {key, part}, wb ->
-            if is_number(layout[key]), do: Workbench.resize(wb, part, layout[key]), else: wb
-          end)
+          Enum.reduce(
+            [{"sidebar", :sidebar}, {"panel", :panel}, {"auxiliarybar", :auxiliarybar}],
+            wb,
+            fn {key, part}, wb ->
+              if is_number(layout[key]), do: Workbench.resize(wb, part, layout[key]), else: wb
+            end
+          )
 
         wb =
           if is_list(layout["activity"]),
@@ -91,12 +101,28 @@ defmodule BeeWeb.EditorLive.Layout do
 
   # The layout's CSS variables. Before the LiveView connects, the sizes the
   # browser saved (root.html.heex) win over the defaults.
-  def layout_style(sidebar_width, panel_height, connected?) do
+  def layout_style(sidebar_width, panel_height, auxiliary_width, connected?) do
     if connected? do
-      "--sidebar-width: #{sidebar_width}px; --panel-height: #{panel_height}px"
+      "--sidebar-width: #{sidebar_width}px; --panel-height: #{panel_height}px; " <>
+        "--auxiliarybar-width: #{auxiliary_width}px"
     else
       "--sidebar-width: var(--saved-sidebar-width, #{sidebar_width}px); " <>
-        "--panel-height: var(--saved-panel-height, #{panel_height}px)"
+        "--panel-height: var(--saved-panel-height, #{panel_height}px); " <>
+        "--auxiliarybar-width: var(--saved-auxiliarybar-width, #{auxiliary_width}px)"
     end
   end
+
+  # The window's columns: the activity bar, the sidebar, the editors and
+  # the secondary side bar – the two bars only while they are open.
+  def grid_class(true, true),
+    do:
+      "grid-cols-[3rem_var(--drag-sidebar-width,var(--sidebar-width))_1fr_var(--drag-auxiliarybar-width,var(--auxiliarybar-width))]"
+
+  def grid_class(true, false),
+    do: "grid-cols-[3rem_var(--drag-sidebar-width,var(--sidebar-width))_1fr]"
+
+  def grid_class(false, true),
+    do: "grid-cols-[3rem_1fr_var(--drag-auxiliarybar-width,var(--auxiliarybar-width))]"
+
+  def grid_class(false, false), do: "grid-cols-[3rem_1fr]"
 end

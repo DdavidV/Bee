@@ -14,13 +14,10 @@
   data-keybindings={Jason.encode!(@client_keybindings)}
   data-context={Jason.encode!(@context)}
   data-root={@root}
-  style={Layout.layout_style(@sidebar_width, @panel_height, @connected)}
+  style={Layout.layout_style(@sidebar_width, @panel_height, @auxiliary_width, @connected)}
   class={[
     "h-screen w-screen grid grid-rows-[auto_1fr_auto] bg-base-100 text-base-content overflow-hidden",
-    if(@sidebar_open,
-      do: "grid-cols-[3rem_var(--drag-sidebar-width,var(--sidebar-width))_1fr]",
-      else: "grid-cols-[3rem_1fr]"
-    )
+    Layout.grid_class(@sidebar_open, @auxiliary_open)
   ]}
 >
   <BeeWeb.Workbench.TitleBar.title_bar
@@ -34,6 +31,7 @@
     open_menu={@open_menu}
     sidebar_open={@sidebar_open}
     panel_open={@panel_open}
+    auxiliary_open={@auxiliary_open}
   />
 
   <%!-- Activity bar and sidebar: views containers and views (Bee.Views) --%>
@@ -137,6 +135,9 @@
       problems_hidden={@problems_hidden}
     />
   </main>
+
+  <%!-- The secondary side bar, on the right --%>
+  <BeeWeb.Workbench.AuxiliaryBar.auxiliary_bar :if={@auxiliary_open} />
 
   <%!-- Status bar --%>
   <footer class="col-span-full h-6 bg-statusbar text-statusbar-fg text-xs flex items-center gap-4 pl-3 pr-2">

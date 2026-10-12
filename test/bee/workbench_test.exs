@@ -373,6 +373,18 @@ defmodule Bee.WorkbenchTest do
     end
   end
 
+  test "the secondary side bar: shown and hidden, its width clamped" do
+    assert %{auxiliary_open: false} = wb()
+    wb = Workbench.toggle_auxiliary(wb())
+    assert wb.auxiliary_open and Workbench.context(wb)["auxiliaryBarVisible"]
+    refute Workbench.toggle_auxiliary(wb).auxiliary_open
+
+    assert Workbench.resize(wb, :auxiliarybar, 412.3).auxiliary_width == 412
+    assert Workbench.resize(wb, :auxiliarybar, 10).auxiliary_width == 170
+    assert Workbench.resize(wb, :auxiliarybar, 5000).auxiliary_width == 800
+    assert Workbench.resize(wb, :auxiliarybar, nil).auxiliary_width == 300
+  end
+
   test "resizing the sidebar and panel clamps, nil restores the default" do
     wb = wb()
     assert Workbench.resize(wb, :sidebar, 300.4).sidebar_width == 300

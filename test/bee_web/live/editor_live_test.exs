@@ -2136,6 +2136,38 @@ defmodule BeeWeb.EditorLiveTest do
     assert ids.(view |> element("#activity-bar") |> render()) == Enum.reverse(default)
   end
 
+  test "the secondary side bar: on the right, toggled, resized, remembered", %{conn: conn} do
+    {:ok, view, _html} = live(conn, ~p"/")
+    refute has_element?(view, "#auxiliarybar")
+    assert has_element?(view, "#layout-auxiliarybar[aria-pressed=false]")
+
+    # Its button in the title bar; it comes after the editors.
+    view |> element("#layout-auxiliarybar") |> render_click()
+    assert has_element?(view, "#workbench > main + #auxiliarybar #sash-auxiliarybar")
+    assert has_element?(view, "#layout-auxiliarybar[aria-pressed=true]")
+
+    render_hook(view, "layout_resize", %{"part" => "auxiliarybar", "size" => 420})
+    assert view |> element("#workbench") |> render() =~ "--auxiliarybar-width: 420px"
+    render_hook(view, "layout_resize", %{"part" => "auxiliarybar", "size" => nil})
+    assert view |> element("#workbench") |> render() =~ "--auxiliarybar-width: 300px"
+
+    # Its sash pulled all the way hides it; the command and the menu show it.
+    render_hook(view, "layout_hide", %{"part" => "auxiliarybar"})
+    refute has_element?(view, "#auxiliarybar")
+    run(view, "workbench.action.toggleAuxiliaryBar")
+    assert has_element?(view, "#auxiliarybar")
+    run(view, "workbench.action.closeAuxiliaryBar")
+    refute has_element?(view, "#auxiliarybar")
+    menu_click(view, "view", "workbench.action.toggleAuxiliaryBar")
+    assert has_element?(view, "#auxiliarybar")
+
+    # The width the browser remembered comes with the connection.
+    {:ok, view, _html} =
+      conn |> put_connect_params(%{"layout" => %{"auxiliarybar" => 500}}) |> live(~p"/")
+
+    assert view |> element("#workbench") |> render() =~ "--auxiliarybar-width: 500px"
+  end
+
   test "activity bar icons and panel tabs: hide, show again, move to the other place", %{
     conn: conn
   } do

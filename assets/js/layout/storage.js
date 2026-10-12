@@ -1,4 +1,5 @@
-// Sidebar width and panel height, remembered per workspace in localStorage
+// Sidebar width, panel height and the secondary side bar's width (and the
+// order and place of the views), remembered per workspace in localStorage
 // (VS Code keeps layout per workspace too). The workspace comes from the
 // bee-workspace meta tag; root.html.heex reads the same key to apply the
 // sizes before the first paint, and app.js sends them with the LiveView

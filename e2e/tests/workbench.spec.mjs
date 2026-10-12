@@ -165,6 +165,48 @@ test("the sidebar is resized by dragging its edge; the width is remembered, a do
   await expect.poll(width).toBe(start)
 })
 
+test("the secondary side bar: on the right, shown by button, key and menu, resized by its edge", async ({page}) => {
+  await openBee(page)
+  const bar = page.locator("#auxiliarybar")
+  await expect(bar).toHaveCount(0)
+  await page.getByRole("button", {name: "Toggle Secondary Side Bar"}).click()
+  await expect(bar).toBeVisible()
+
+  // At the window's right edge, right of the editors, as tall as they and the panel.
+  await page.keyboard.press("Control+j")
+  const box = await bar.boundingBox()
+  const editor = await page.locator("#editor").boundingBox()
+  const bottom = await panel(page).boundingBox()
+  expect(Math.round(box.x + box.width)).toBe(page.viewportSize().width)
+  expect(Math.round(box.x)).toBe(Math.round(editor.x + editor.width))
+  expect(Math.round(box.y)).toBe(Math.round(editor.y))
+  expect(Math.round(box.y + box.height)).toBe(Math.round(bottom.y + bottom.height))
+  await page.screenshot({path: "test-results/secondary-side-bar.png"})
+  await page.keyboard.press("Control+j")
+
+  // Its left edge drags: to the left it grows.
+  const width = async () => Math.round((await bar.boundingBox()).width)
+  const start = await width()
+  const edge = await sash(page, "auxiliarybar").boundingBox()
+  await page.mouse.move(edge.x + edge.width / 2, edge.y + edge.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(edge.x - 120, edge.y + edge.height / 2, {steps: 6})
+  await page.mouse.up()
+  await expect.poll(width).toBeGreaterThan(start + 100)
+  const wide = await width()
+
+  // The key hides and shows it, the View menu too; the width is remembered over a reload.
+  await page.keyboard.press("Control+Alt+b")
+  await expect(bar).toHaveCount(0)
+  await page.reload()
+  await expect(page.locator("[data-phx-main].phx-connected")).toBeVisible()
+  await menuItem(await openMenu(page, "View"), "Toggle Secondary Side Bar Visibility").click()
+  await expect(bar).toBeVisible()
+  expect(Math.abs((await width()) - wide)).toBeLessThanOrEqual(2)
+  await page.keyboard.press("Control+Alt+b")
+  await expect(bar).toHaveCount(0)
+})
+
 test("the panel is resized by dragging its top edge, and can fill the window", async ({page}) => {
   await openBee(page)
   await page.keyboard.press("Control+j")
