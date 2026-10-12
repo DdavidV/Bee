@@ -44,9 +44,12 @@ defmodule BeeWeb.EditorLive.Config do
         socket = socket |> Views.load_views() |> Extensions.load_live()
 
         # The shown container went away with its plugin.
-        if Enum.any?(socket.assigns.containers, &(&1.id == socket.assigns.sidebar_view)),
-          do: socket,
-          else: change(socket, &%{&1 | sidebar_view: "explorer"})
+        if Enum.any?(
+             Bee.Workbench.containers(workbench(socket), :activitybar, socket.assigns.containers),
+             &(&1.id == socket.assigns.sidebar_view)
+           ),
+           do: socket,
+           else: change(socket, &%{&1 | sidebar_view: "explorer"})
       else
         socket
       end

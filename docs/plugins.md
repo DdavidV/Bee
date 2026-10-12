@@ -423,6 +423,10 @@ of Bee's, such as `explorer`.
 
 A view can have a `when` clause that hides it.
 
+The user can hide a container, and move it between the activity bar and
+the panel (its right-click menu). Add `"movable": false` to a container
+that only makes sense where you put it.
+
 There are two ways to fill a view.
 
 #### As data

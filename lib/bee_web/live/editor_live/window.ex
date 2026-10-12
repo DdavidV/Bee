@@ -18,7 +18,7 @@ defmodule BeeWeb.EditorLive.Window do
   alias Bee.Settings
   alias Bee.Workbench
   alias Bee.Commands.Keybindings
-  alias BeeWeb.EditorLive.{Config, Effects, Extensions, Palette, Webviews}
+  alias BeeWeb.EditorLive.{Config, Effects, Extensions, Layout, Palette, Webviews}
 
   # Whether a click opens a file as a preview (workbench.editor.enablePreview).
   def preview?(socket), do: socket.assigns.settings["workbench.editor.enablePreview"] != false
@@ -43,6 +43,7 @@ defmodule BeeWeb.EditorLive.Window do
     |> sync_asked(before)
     |> sync_active_editor(before)
     |> Webviews.sync_webviews(before)
+    |> Layout.sync_containers(before)
   end
 
   # A question asked through the palette (`reply`) that closed, or made way

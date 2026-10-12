@@ -19,7 +19,10 @@ defmodule BeeWeb.Workbench.Panel do
   hook), hover for its kill button, right-click for
   `terminal/title/context` (rename, icon, colour, kill). With one, its name
   stands in the header instead. The sections' tabs can be dragged too
-  (PanelSections; their order is remembered per workspace).
+  (PanelSections; their order is remembered per workspace), and a
+  right-click on one (`viewContainer/title/context`) hides it or – one that
+  is movable – moves it to the activity bar (`Bee.Workbench`, "Views
+  containers").
   """
   use BeeWeb, :html
 
@@ -91,6 +94,7 @@ defmodule BeeWeb.Workbench.Panel do
         <%!-- The sections' tabs: click to show, drag to reorder (PanelSections). --%>
         <nav
           id="panel-sections"
+          data-menu="viewContainer/title/context"
           phx-hook="PanelSections"
           role="tablist"
           class="flex self-stretch mr-2"
@@ -114,6 +118,7 @@ defmodule BeeWeb.Workbench.Panel do
             phx-click="run_command"
             phx-value-command="workbench.action.showPanel"
             phx-value-args={Jason.encode!([section.container.id])}
+            {BeeWeb.Workbench.Sidebar.container_menu(section.container, :panel)}
           >
             <BeeWeb.Icons.named_icon name={section.container.icon} class="size-3.5 shrink-0" />
             {section.container.title}
@@ -122,7 +127,7 @@ defmodule BeeWeb.Workbench.Panel do
         <div class="flex-1" />
         <%!-- One terminal: its name here (with two or more, the list). --%>
         <.terminal_item
-          :if={@active == "terminal" and length(@terminals) == 1}
+          :if={(@shown && @active == "terminal") and length(@terminals) == 1}
           terminal={hd(@terminals)}
           class="px-2 py-0.5 rounded hover:bg-base-content/10"
         />
@@ -131,6 +136,9 @@ defmodule BeeWeb.Workbench.Panel do
         <Toolbar.toolbar id="panel-actions" actions={@actions} />
       </header>
       <div class="flex-1 min-h-0 relative">
+        <p :if={@sections == []} id="panel-empty" class="px-3 py-2 text-xs opacity-60">
+          Every section of the panel is hidden: View: Show or Hide Views… brings one back.
+        </p>
         <div
           :for={section <- @sections}
           id={"panel-body-#{section.container.id}"}
@@ -334,42 +342,17 @@ defmodule BeeWeb.Workbench.Panel do
     """
   end
 
-  # Find All References: every place the symbol is, by file, each with its
-  # line; a click goes there.
+  # Find All References' places, when the user moved References here from
+  # the sidebar.
   defp view_body(%{view: %{id: "workbench.panel.references"}} = assigns) do
     ~H"""
-    <div id="references" class="flex-1 min-w-0 overflow-auto text-xs py-1">
-      <p :if={!@references} id="references-empty" class="px-3 py-1 opacity-60">
-        No references yet: Find All References (in an editor's right-click menu) lists a symbol's.
-      </p>
-      <p :if={@references} id="references-count" class="px-3 py-1 opacity-70">
-        {@references.count} {if @references.count == 1, do: "reference", else: "references"} in {length(
-          @references.files
-        )} {if length(@references.files) == 1, do: "file", else: "files"}
-      </p>
-      <section :for={file <- (@references && @references.files) || []} data-reference-file={file.path}>
-        <h3 class="flex items-center gap-1.5 px-3 py-0.5 font-semibold">
-          <BeeWeb.Workbench.FileIcon.file_icon
-            :if={@icon_theme}
-            theme={@icon_theme}
-            path={file.path}
-            class="shrink-0"
-          />
-          <span class="truncate">{Bee.Workspace.FS.relative(@root, file.path)}</span>
-          <span class="badge badge-xs badge-ghost">{length(file.rows)}</span>
-        </h3>
-        <button
-          :for={row <- file.rows}
-          type="button"
-          data-reference={row.index}
-          class="w-full flex gap-2 pl-8 pr-3 py-0.5 text-left font-mono cursor-pointer hover:bg-list-hover"
-          phx-click="reference_open"
-          phx-value-index={row.index}
-        >
-          <span class="opacity-50 shrink-0 w-10 text-right">{row.line}</span>
-          <span class="truncate whitespace-pre">{row.before}<mark class="bg-warning/30 text-inherit rounded-xs">{row.match}</mark>{row.after}</span>
-        </button>
-      </section>
+    <div class="flex-1 min-w-0 overflow-auto">
+      <BeeWeb.Workbench.ReferencesView.references_view
+        references={@references}
+        root={@root}
+        icon_theme={@icon_theme}
+        collapsed={@collapsed}
+      />
     </div>
     """
   end

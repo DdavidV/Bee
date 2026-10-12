@@ -1,8 +1,9 @@
 defmodule BeeWeb.EditorLive.Layout do
   @moduledoc """
   The window's layout: the sizes of the sidebar and the panel (the Sash
-  hook), and the order of the activity bar's icons and the panel's
-  sections.
+  hook), the order of the activity bar's icons and the panel's sections,
+  and which views containers were moved or hidden (`Bee.Workbench`, "Views
+  containers"). The browser remembers them (assets/js/layout/storage.js).
   """
 
   import Phoenix.LiveView
@@ -57,12 +58,34 @@ defmodule BeeWeb.EditorLive.Layout do
             do: Workbench.reorder_activity(wb, layout["activity"]),
             else: wb
 
-        if is_list(layout["panelSections"]),
-          do: Workbench.reorder_panel(wb, layout["panelSections"]),
-          else: wb
+        wb =
+          if is_list(layout["panelSections"]),
+            do: Workbench.reorder_panel(wb, layout["panelSections"]),
+            else: wb
+
+        case layout["containers"] do
+          %{} = saved -> Workbench.restore_containers(wb, saved["locations"], saved["hidden"])
+          _ -> wb
+        end
 
       _ ->
         wb
+    end
+  end
+
+  # Views containers were moved, hidden or shown again: the browser
+  # remembers where they are, and sends it with the next connection.
+  def sync_containers(socket, before) do
+    a = socket.assigns
+
+    if {a.container_locations, a.hidden_containers} ==
+         {before.container_locations, before.hidden_containers} do
+      socket
+    else
+      push_event(socket, "bee:save_layout", %{
+        key: "containers",
+        value: %{locations: a.container_locations, hidden: a.hidden_containers}
+      })
     end
   end
 

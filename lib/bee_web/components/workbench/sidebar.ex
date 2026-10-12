@@ -4,10 +4,14 @@ defmodule BeeWeb.Workbench.Sidebar do
 
   The activity bar has one button per views container (`show_view`), with
   the summed badges of its plugin views. Its icons can be dragged into
-  another order (the `ActivityBar` hook, `reorder_activity`). The sidebar shows the container's
+  another order (the `ActivityBar` hook, `reorder_activity`), and a
+  right-click on one (`viewContainer/title/context`) hides it or – one that
+  is movable, like References – moves it to the panel; "Show or Hide
+  Views…" there brings a hidden one back (`Bee.Workbench`, "Views
+  containers"). The sidebar shows the container's
   title, then its views: Bee's own (Explorer, Plugins) rendered by their
-  components (Explorer, Search, Plugins, Open VSX – with its search box
-  above the Plugins container's views), plugins' views by
+  components (Explorer, Search, References, Plugins, Open VSX – with its
+  search box above the Plugins container's views), plugins' views by
   `BeeWeb.Workbench.ContributedView`. With a
   single view its `view/title` buttons sit in the container's header,
   otherwise each view gets a header of its own.
@@ -22,6 +26,7 @@ defmodule BeeWeb.Workbench.Sidebar do
     MarketplaceView,
     PluginLive,
     PluginsView,
+    ReferencesView,
     SearchView,
     Toolbar
   }
@@ -34,6 +39,7 @@ defmodule BeeWeb.Workbench.Sidebar do
   }
   @search "workbench.view.search"
   @marketplace "workbench.extensions.marketplace"
+  @references "workbench.panel.references"
 
   attr :containers, :list, required: true, doc: "with :badge"
   attr :sidebar_view, :string, required: true
@@ -45,6 +51,7 @@ defmodule BeeWeb.Workbench.Sidebar do
     <aside
       id="activity-bar"
       phx-hook="ActivityBar"
+      data-menu="viewContainer/title/context"
       class="bg-activitybar flex flex-col items-center gap-1 py-2"
     >
       <button
@@ -62,6 +69,7 @@ defmodule BeeWeb.Workbench.Sidebar do
         aria-label={container.title}
         phx-click="show_view"
         phx-value-container={container.id}
+        {container_menu(container, :activitybar)}
       >
         <BeeWeb.Icons.named_icon name={container.icon} class="size-5" />
         <span
@@ -90,6 +98,24 @@ defmodule BeeWeb.Workbench.Sidebar do
     """
   end
 
+  @doc """
+  The attributes that give a container's icon (or its tab in the panel) its
+  right-click menu, `viewContainer/title/context`: hide it, move it to the
+  other place.
+  """
+  def container_menu(container, location) do
+    %{
+      "data-menu" => "viewContainer/title/context",
+      "data-menu-args" => Jason.encode!([container.id]),
+      "data-menu-context" =>
+        Jason.encode!(%{
+          "viewContainer" => container.id,
+          "viewContainerLocation" => Atom.to_string(location),
+          "viewContainerMovable" => Map.get(container, :movable, true)
+        })
+    }
+  end
+
   # Bee's own containers have a show command with a keybinding.
   defp title(container, labels) do
     case labels["workbench.view.#{container.id}"] do
@@ -110,6 +136,7 @@ defmodule BeeWeb.Workbench.Sidebar do
   attr :collapsed_views, :any, required: true, doc: "MapSet of folded view ids"
   attr :view_sizes, :map, required: true, doc: "view id → height of its body in px"
   attr :search, :map, required: true
+  attr :references, :map, default: nil, doc: "Find All References' places"
   attr :file_decorations, :map, required: true
   attr :icon_theme, :any, required: true
   attr :clipboard, :any, default: nil, doc: "the Explorer's cut or copied files"
@@ -130,7 +157,8 @@ defmodule BeeWeb.Workbench.Sidebar do
         explorer_id: @explorer,
         plugin_views: Map.keys(@plugins),
         search_id: @search,
-        marketplace_id: @marketplace
+        marketplace_id: @marketplace,
+        references_id: @references
       )
 
     assigns = assign(assigns, panes: panes(assigns))
@@ -215,6 +243,13 @@ defmodule BeeWeb.Workbench.Sidebar do
             search={@search}
             icon_theme={@icon_theme}
           />
+          <ReferencesView.references_view
+            :if={pane.view.id == @references_id}
+            references={@references}
+            root={@root}
+            icon_theme={@icon_theme}
+            collapsed={@collapsed}
+          />
           <PluginsView.plugins_view
             :if={pane.view.id in @plugin_views}
             id={pane.view.id}
@@ -240,7 +275,12 @@ defmodule BeeWeb.Workbench.Sidebar do
           <ContributedView.contributed_view
             :if={
               !pane.view[:live] and
-                pane.view.id not in [@explorer_id, @search_id, @marketplace_id | @plugin_views]
+                pane.view.id not in [
+                  @explorer_id,
+                  @search_id,
+                  @marketplace_id,
+                  @references_id | @plugin_views
+                ]
             }
             view={pane.view}
             content={@view_contents[pane.view.id]}

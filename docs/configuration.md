@@ -33,7 +33,12 @@ by you.
 
 The sidebar's width, the panel's height, and the order of the activity bar
 and panel sections are remembered by the browser, separately for each
-folder.
+folder. So is what you hide or move: right-click an icon of the activity
+bar or a tab of the panel to **Hide** it, or to move one that can be moved
+(References, plugins' views) to the other place, **Move View to Panel** /
+**Move View to Side Bar**. **View: Show or Hide Views…** lists them all, to
+bring a hidden one back, and **View: Reset View Locations** puts everything
+where it was.
 
 ## Settings
 

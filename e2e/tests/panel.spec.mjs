@@ -1,5 +1,5 @@
 // The bottom panel: its sections, the terminal list (pick, drag, right-click),
-// maximize.
+// maximize. And where the views are: icons and tabs hidden, References moved.
 import {expect, freshBee, test} from "./helpers.mjs"
 import {openBee} from "./helpers.mjs"
 
@@ -109,4 +109,52 @@ test("the activity bar's icons drag too", async ({page}) => {
   await page.mouse.move(explorer.x + explorer.width / 2, search.y + search.height / 2 + 2, {steps: 8})
   await page.mouse.up()
   await expect.poll(async () => (await order()).slice(0, 2)).toEqual(["search", "explorer"])
+})
+
+test("icons and tabs can be hidden, References moved to the panel: remembered", async ({page}) => {
+  await openBee(page)
+  const icons = () => page.$$eval("#activity-bar [data-container]", s => s.map(x => x.dataset.container))
+  const item = command => page.locator(`#context-menu [data-command='workbench.action.${command}']`)
+  expect(await icons()).toContain("references")
+
+  // An icon's right-click menu hides it. Explorer has no "Move".
+  await page.locator("#view-explorer").click({button: "right"})
+  await expect(item("hideViewContainer")).toBeVisible()
+  await expect(item("moveViewContainerToPanel")).toHaveCount(0)
+  await page.keyboard.press("Escape")
+  await page.locator("#view-search").click({button: "right"})
+  await item("hideViewContainer").click()
+  await expect.poll(icons).not.toContain("search")
+
+  // References: to the panel, a tab there, its view in it.
+  await page.locator("#view-references").click({button: "right"})
+  await item("moveViewContainerToPanel").click()
+  await expect.poll(icons).not.toContain("references")
+  await expect(page.locator("#panel-section-references")).toHaveAttribute("aria-selected", "true")
+  await expect(page.locator("#panel #references-empty")).toBeVisible()
+  await page.screenshot({path: "test-results/references-in-panel.png"})
+
+  // The browser remembers both.
+  await page.reload()
+  await expect(page.locator("[data-phx-main].phx-connected")).toBeVisible()
+  expect(await icons()).toContain("explorer")
+  expect(await icons()).not.toContain("search")
+  expect(await icons()).not.toContain("references")
+
+  // Show or Hide Views…: the hidden one, picked from the list, is back.
+  await page.locator("#activity-bar").click({button: "right", position: {x: 20, y: 300}})
+  await item("toggleViewContainer").click()
+  await page.fill("#palette-input", "search")
+  await page.keyboard.press("Enter")
+  await expect.poll(icons).toContain("search")
+  await expect(page.locator("#sidebar-title")).toHaveText("Search")
+
+  // The tab's menu takes References back to the activity bar.
+  await page.keyboard.press("Control+j")
+  await page.locator("#panel-section-references").click({button: "right"})
+  await item("moveViewContainerToSideBar").click()
+  await expect.poll(icons).toContain("references")
+  await expect(page.locator("#panel-section-references")).toHaveCount(0)
+  await expect(page.locator("#sidebar-title")).toHaveText("References")
+  await page.screenshot({path: "test-results/references-in-sidebar.png"})
 })

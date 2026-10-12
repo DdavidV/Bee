@@ -374,6 +374,36 @@
         "runtime": "server"
       },
       {
+        "command": "workbench.action.moveViewContainerToPanel",
+        "category": "View",
+        "title": "Move View to Panel",
+        "runtime": "server"
+      },
+      {
+        "command": "workbench.action.moveViewContainerToSideBar",
+        "category": "View",
+        "title": "Move View to Side Bar",
+        "runtime": "server"
+      },
+      {
+        "command": "workbench.action.hideViewContainer",
+        "category": "View",
+        "title": "Hide View",
+        "runtime": "server"
+      },
+      {
+        "command": "workbench.action.toggleViewContainer",
+        "category": "View",
+        "title": "Show or Hide Views…",
+        "runtime": "server"
+      },
+      {
+        "command": "workbench.action.resetViewLocations",
+        "category": "View",
+        "title": "Reset View Locations",
+        "runtime": "server"
+      },
+      {
         "command": "workbench.action.terminal.new",
         "category": "Terminal",
         "title": "Create New Terminal",
@@ -705,16 +735,16 @@
 
     "viewsContainers": {
       "activitybar": [
-        {"id": "explorer", "title": "Explorer", "icon": "document-duplicate"},
-        {"id": "search", "title": "Search", "icon": "magnifying-glass"},
-        {"id": "extensions", "title": "Plugins", "icon": "puzzle-piece"}
+        {"id": "explorer", "title": "Explorer", "icon": "document-duplicate", "movable": false},
+        {"id": "search", "title": "Search", "icon": "magnifying-glass", "movable": false},
+        {"id": "extensions", "title": "Plugins", "icon": "puzzle-piece", "movable": false},
+        {"id": "references", "title": "References", "icon": "arrows-right-left"}
       ],
       "panel": [
-        {"id": "terminal", "title": "Terminal", "icon": "command-line"},
-        {"id": "console", "title": "Bee Console", "icon": "code-bracket"},
-        {"id": "output", "title": "Output", "icon": "queue-list"},
-        {"id": "references", "title": "References", "icon": "arrows-right-left"},
-        {"id": "problems", "title": "Problems", "icon": "exclamation-triangle"}
+        {"id": "terminal", "title": "Terminal", "icon": "command-line", "movable": false},
+        {"id": "console", "title": "Bee Console", "icon": "code-bracket", "movable": false},
+        {"id": "output", "title": "Output", "icon": "queue-list", "movable": false},
+        {"id": "problems", "title": "Problems", "icon": "exclamation-triangle", "movable": false}
       ]
     },
 
@@ -803,6 +833,13 @@
       "panel/title": [
         {"command": "workbench.action.toggleMaximizedPanel", "group": "navigation@1"},
         {"command": "workbench.action.closePanel", "group": "navigation@2"}
+      ],
+      "viewContainer/title/context": [
+        {"command": "workbench.action.moveViewContainerToPanel", "group": "1_move@1", "when": "viewContainerMovable && viewContainerLocation == activitybar"},
+        {"command": "workbench.action.moveViewContainerToSideBar", "group": "1_move@1", "when": "viewContainerMovable && viewContainerLocation == panel"},
+        {"command": "workbench.action.hideViewContainer", "group": "2_hide@1", "when": "viewContainer"},
+        {"command": "workbench.action.toggleViewContainer", "group": "3_all@1"},
+        {"command": "workbench.action.resetViewLocations", "group": "3_all@2"}
       ],
       "terminal/title/context": [
         {"command": "workbench.action.terminal.rename", "group": "1_edit@1"},

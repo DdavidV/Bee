@@ -86,7 +86,7 @@ A failed test leaves a screenshot and a description of the page in
 | `preview.spec.mjs` | preview editors: a click reuses one tab; a double click, an edit or Keep Open keeps it; the setting that turns it off |
 | `workbench.spec.mjs` | the window: title, menu bar, sidebar and panel (shown, hidden, resized, remembered), activity bar, opening folders, two windows |
 | `workspaces.spec.mjs` | two windows on two folders: files, terminal, search, git |
-| `panel.spec.mjs` | the bottom panel: sections, the terminal list (rename, colour, drag), maximize |
+| `panel.spec.mjs` | the bottom panel: sections, the terminal list (rename, colour, drag), maximize; hiding icons and tabs, moving References to the panel |
 | `terminal.spec.mjs` | terminals: a shell in the folder, several of them, kept while hidden, ended with the window |
 | `console.spec.mjs` | the Bee Console |
 | `git.spec.mjs` | the Git plugin: changes, staging, committing, discarding, branches, a new repository – checked with git |

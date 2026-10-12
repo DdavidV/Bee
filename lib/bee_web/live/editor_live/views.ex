@@ -99,8 +99,7 @@ defmodule BeeWeb.EditorLive.Views do
     views = Bee.Views.views()
 
     assign(socket,
-      containers: Bee.Views.containers(),
-      panel_containers: Bee.Views.containers(:panel),
+      containers: Bee.Views.all(),
       views: views,
       view_contents: Map.new(views, &{&1.id, Bee.UI.view(socket.assigns.root, &1.id)})
     )
@@ -130,10 +129,10 @@ defmodule BeeWeb.EditorLive.Views do
   # (per item context), for BeeWeb.Workbench.Sidebar.
   def sidebar_views(assigns), do: container_views(assigns, assigns.sidebar_view)
 
-  # The panel's sections (BeeWeb.Workbench.Panel): its containers, with
-  # their views like the sidebar's.
+  # The panel's sections (BeeWeb.Workbench.Panel): the containers there
+  # (Workbench "Views containers"), with their views like the sidebar's.
   def panel_sections(assigns) do
-    for container <- Workbench.sort_containers(assigns.panel_containers, assigns.panel_order),
+    for container <- Workbench.containers(workbench_from(assigns), :panel, assigns.containers),
         do: %{container: container, views: container_views(assigns, container.id)}
   end
 
@@ -189,7 +188,8 @@ defmodule BeeWeb.EditorLive.Views do
 
   # Activity bar entries with the summed badges of their plugin views.
   def activity_bar(assigns) do
-    for container <- Workbench.sort_containers(assigns.containers, assigns.activity_order) do
+    for container <-
+          Workbench.containers(workbench_from(assigns), :activitybar, assigns.containers) do
       badge =
         assigns.views
         |> Enum.filter(&(&1.container == container.id))

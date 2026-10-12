@@ -354,19 +354,34 @@ test("references, highlights and rename: every place a symbol is, in this file a
   await page.keyboard.press("End")
   await expect(page.locator("#editor .cm-language-highlight")).toHaveText(["last"])
 
-  // Find All References (Shift+F12): the panel's section, by file.
+  // Find All References (Shift+F12): the sidebar's References view (its
+  // icon in the activity bar), by file.
   await lines.nth(1).click({position: {x: 50, y: 8}})
   await page.keyboard.press("Shift+F12")
-  await expect(page.locator("#references-count")).toHaveText("4 references in 2 files")
+  await expect(page.locator("#sidebar-title")).toHaveText("References")
+  await expect(page.locator("#panel")).toHaveCount(0)
+  await expect(page.locator("#sidebar #references-count")).toHaveText("4 references in 2 files")
   await expect(page.locator("#references [data-reference-file] h3")).toHaveText([/other\.hl\s*1/, /sample\.hl\s*3/])
   await expect(page.locator("#references [data-reference] mark")).toHaveText(["once", "once", "once", "once"])
+  // A file's header folds its places away, and shows them again.
+  const sampleRefs = page.locator("#references [data-reference-file$='/sample.hl']")
+  await sampleRefs.locator("h3").click()
+  await expect(sampleRefs.locator("h3")).toHaveAttribute("aria-expanded", "false")
+  await expect(sampleRefs.locator("[data-reference]")).toHaveCount(0)
+  await expect(page.locator("#references [data-reference]")).toHaveCount(1)
+  await expect(sampleRefs.locator("h3 > span").first()).not.toHaveClass(/rotate-90/)
+  await page.waitForTimeout(250)
+  await page.screenshot({path: "test-results/references-folded.png"})
+  await sampleRefs.locator("h3").click()
+  await expect(sampleRefs.locator("[data-reference]")).toHaveCount(3)
   // A row: its file, at the place.
   await page.locator("#references [data-reference-file$='/other.hl'] [data-reference]").click()
   await expect(page.locator("[data-tabs] [data-path$='/other.hl']")).toHaveAttribute("data-active", "true")
   await page.keyboard.type("X")
   await expect.poll(() => text(page)).toBe("also Xonce\n")
   await page.keyboard.press("Backspace")
-  await page.keyboard.press("Control+j")
+  await page.click("#view-explorer")
+  await expect(page.locator("#sidebar-title")).toHaveText("Explorer")
 
   // Rename Symbol (F2): the old name to type over; both files change.
   await page.locator("[data-tabs] [data-path$='/sample.hl']").click()

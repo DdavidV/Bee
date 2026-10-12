@@ -44,7 +44,7 @@ import {ExplorerInput} from "./hooks/explorer_input"
 import {PaneSash, Sash} from "./hooks/sash"
 import {VsixInstall} from "./hooks/vsix_install"
 import {Markdown} from "./hooks/markdown"
-import {loadLayout} from "./layout/storage"
+import {loadLayout, saveLayout} from "./layout/storage"
 import {BridgeTransport} from "./bridge_transport"
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
@@ -103,6 +103,10 @@ window.addEventListener("bee:run", e => exec(e.detail.command, e.detail.args || 
 // A folder in a new window: a browser tab, or a window of the desktop app.
 window.addEventListener("phx:bee:open_window", e =>
   window.__bridge ? window.__bridge.openWindow(e.detail.url) : window.open(e.detail.url, "_blank"))
+
+// Layout the server changed (where the views containers are, which are hidden):
+// remembered with the sizes, and sent back when the page connects.
+window.addEventListener("phx:bee:save_layout", e => saveLayout(e.detail.key, e.detail.value))
 
 // An address an extension opens (vscode.env.openExternal).
 window.addEventListener("phx:open-external", e => openExternal(e.detail.url))

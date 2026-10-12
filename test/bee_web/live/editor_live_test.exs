@@ -2136,6 +2136,82 @@ defmodule BeeWeb.EditorLiveTest do
     assert ids.(view |> element("#activity-bar") |> render()) == Enum.reverse(default)
   end
 
+  test "activity bar icons and panel tabs: hide, show again, move to the other place", %{
+    conn: conn
+  } do
+    item = &"#context-menu [data-command='workbench.action.#{&1}']"
+    {:ok, view, _html} = live(conn, ~p"/")
+    assert has_element?(view, "#activity-bar #view-references")
+
+    # An icon's right-click menu hides it; the browser is told, to remember.
+    right_click(view, "#view-references")
+    assert has_element?(view, item.("moveViewContainerToPanel"))
+    refute has_element?(view, item.("moveViewContainerToSideBar"))
+    menu_click(view, "workbench.action.hideViewContainer")
+    refute has_element?(view, "#view-references")
+
+    assert_push_event(view, "bee:save_layout", %{
+      key: "containers",
+      value: %{hidden: ["references"], locations: %{}}
+    })
+
+    # Explorer stays in the sidebar: it can only be hidden.
+    right_click(view, "#view-explorer")
+    assert has_element?(view, item.("hideViewContainer"))
+    refute has_element?(view, item.("moveViewContainerToPanel"))
+    render_hook(view, "close_context_menu", %{})
+
+    # Show or Hide Views…: every container, the hidden one marked; picking it shows it.
+    run(view, "workbench.action.toggleViewContainer")
+    assert view |> element("#palette") |> render() =~ "Side Bar, hidden"
+    run(view, "workbench.action.toggleViewContainer", ["references"])
+    assert has_element?(view, "#view-references")
+    assert has_element?(view, "#sidebar-title", "References")
+    assert has_element?(view, "#sidebar #references-empty")
+
+    # Moved to the panel: a tab there, no icon; the sidebar shows another view.
+    right_click(view, "#view-references")
+    menu_click(view, "workbench.action.moveViewContainerToPanel")
+    refute has_element?(view, "#view-references")
+    assert has_element?(view, "#panel-section-references[aria-selected='true']")
+    assert has_element?(view, "#panel-body-references #references-empty")
+    assert has_element?(view, "#sidebar-title", "Explorer")
+
+    assert_push_event(view, "bee:save_layout", %{
+      key: "containers",
+      value: %{hidden: [], locations: %{"references" => :panel}}
+    })
+
+    # The tab's menu brings it back; a panel section that isn't movable only hides.
+    right_click(view, "#panel-section-references")
+    assert has_element?(view, item.("moveViewContainerToSideBar"))
+    menu_click(view, "workbench.action.moveViewContainerToSideBar")
+    assert has_element?(view, "#view-references")
+    refute has_element?(view, "#panel")
+
+    # What the browser remembered comes with the connection.
+    {:ok, view, _html} =
+      conn
+      |> put_connect_params(%{
+        "layout" => %{
+          "containers" => %{"locations" => %{"references" => "panel"}, "hidden" => ["search"]}
+        }
+      })
+      |> live(~p"/")
+
+    refute has_element?(view, "#view-references")
+    refute has_element?(view, "#view-search")
+    run(view, "workbench.action.showReferences")
+    assert has_element?(view, "#panel-section-references[aria-selected='true']")
+
+    # A hidden one's command shows it again; Reset puts everything back.
+    run(view, "workbench.view.search")
+    assert has_element?(view, "#view-search")
+    run(view, "workbench.action.resetViewLocations")
+    assert has_element?(view, "#activity-bar #view-references")
+    refute has_element?(view, "#panel-section-references")
+  end
+
   describe "workspaces" do
     setup do
       other = Path.join(System.tmp_dir!(), "bee_other_#{System.unique_integer([:positive])}")

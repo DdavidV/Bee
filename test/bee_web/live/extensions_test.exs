@@ -561,7 +561,7 @@ defmodule BeeWeb.ExtensionsTest do
   end
 
   @tag :node
-  test "references in the panel, Rename Symbol, and Go to Symbol", %{conn: conn} do
+  test "references in the sidebar, Rename Symbol, and Go to Symbol", %{conn: conn} do
     root = Bee.Workspace.root()
     path = Path.join(root, "a.hl")
     other = Path.join(root, "b.hl")
@@ -580,16 +580,17 @@ defmodule BeeWeb.ExtensionsTest do
 
     position = fn line, character -> %{"line" => line, "character" => character} end
 
-    # Find All References: the panel's section, by file, each with its line.
+    # Find All References: the sidebar's References view (its icon in the
+    # activity bar), by file, each with its line.
     render_hook(view, "language_goto", %{
       "feature" => "references",
       "path" => path,
       "position" => position.(0, 5)
     })
 
-    eventually(fn ->
-      has_element?(view, "#panel-body-references:not(.invisible) #references-count")
-    end)
+    eventually(fn -> has_element?(view, "#sidebar #references-count") end)
+    assert has_element?(view, "#sidebar-title", "References")
+    refute has_element?(view, "#panel")
 
     assert has_element?(view, "#references-count", "4 references in 2 files")
     assert has_element?(view, "[data-reference-file='#{path}'] h3", "a.hl")
@@ -601,6 +602,14 @@ defmodule BeeWeb.ExtensionsTest do
              "[data-reference-file='#{other}'] [data-reference='3']",
              "uses once"
            )
+
+    # A file's header folds its places away, and shows them again.
+    view |> element("[data-reference-file='#{path}'] h3") |> render_click()
+    refute has_element?(view, "[data-reference-file='#{path}'] [data-reference]")
+    assert has_element?(view, "[data-reference-file='#{path}'] h3[aria-expanded='false']")
+    assert has_element?(view, "[data-reference-file='#{other}'] [data-reference='3']")
+    view |> element("[data-reference-file='#{path}'] h3") |> render_click()
+    assert has_element?(view, "[data-reference-file='#{path}'] [data-reference='0']")
 
     # (Its line's indentation is left out.)
     html = view |> element("[data-reference='2']") |> render()

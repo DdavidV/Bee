@@ -361,9 +361,15 @@ defmodule BeeWeb.EditorLive.LanguageFeatures do
         %{path: path, rows: Enum.map(entries, &reference_row(&1, lines))}
       end)
 
+    # (Files folded in the last list are open in this one.)
+    view = BeeWeb.Workbench.ReferencesView.view_id()
+
     socket
     |> assign(references: %{count: length(places), files: files, places: places})
-    |> change(&Workbench.show_panel(&1, "references"))
+    |> update(:collapsed, fn collapsed ->
+      MapSet.reject(collapsed, &match?({^view, _file}, &1))
+    end)
+    |> change(&Workbench.show_container(&1, "references"))
   end
 
   defp show_references(socket, _none),

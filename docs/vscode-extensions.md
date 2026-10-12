@@ -185,7 +185,7 @@ when there is something to answer. These reach the editor:
 | Hover | `Ctrl+K Ctrl+I` or the mouse |
 | Signature help | `Ctrl+Shift+Space` |
 | Definition, declaration, type definition, implementation | `F12`, `Ctrl+F12`, the right-click menu |
-| References | `Shift+F12`, listed in the References panel |
+| References | `Shift+F12`, listed in the sidebar's References view |
 | Document highlights | Other occurrences of the symbol under the cursor |
 | Document symbols | `Ctrl+Shift+O`, or `@` in Quick Open |
 | Workspace symbols | `Ctrl+T`, or `#` in Quick Open |

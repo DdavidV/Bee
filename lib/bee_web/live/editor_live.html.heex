@@ -45,7 +45,7 @@
   />
 
   <BeeWeb.Workbench.Sidebar.sidebar
-    container={Enum.find(@containers, &(&1.id == @sidebar_view))}
+    container={Enum.find(@activity_bar, &(&1.id == @sidebar_view))}
     views={@sidebar_views}
     sidebar_open={@sidebar_open}
     root={@root}
@@ -57,6 +57,7 @@
     collapsed_views={@collapsed_views}
     view_sizes={@view_sizes}
     search={@search}
+    references={@references}
     file_decorations={@file_decorations}
     icon_theme={@icon_theme}
     clipboard={@clipboard}

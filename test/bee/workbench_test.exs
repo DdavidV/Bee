@@ -307,6 +307,72 @@ defmodule Bee.WorkbenchTest do
     end
   end
 
+  describe "views containers: hidden, moved" do
+    defp ids(wb, location), do: wb |> Workbench.containers(location) |> Enum.map(& &1.id)
+
+    test "References is an icon of the activity bar; Find All References shows it" do
+      wb = Workbench.toggle_sidebar(wb())
+      assert "references" in ids(wb, :activitybar)
+      refute "references" in ids(wb, :panel)
+
+      assert {%{sidebar_open: true, sidebar_view: "references", panel_open: false},
+              [{:panel_shown, "references"}]} = Workbench.show_container(wb, "references")
+    end
+
+    test "a hidden container has no icon until it is shown again; the sidebar moves on" do
+      wb = Workbench.reveal_view(wb(), "references")
+      {wb, _} = Workbench.wrap(Workbench.hide_container(wb, "references"))
+      refute "references" in ids(wb, :activitybar)
+      refute "references" in ids(wb, :panel)
+      assert %{sidebar_open: true, sidebar_view: "explorer"} = wb
+
+      {wb, _} = Workbench.show_container(wb, "references")
+      assert "references" in ids(wb, :activitybar)
+      assert wb.sidebar_view == "references"
+
+      # A panel section too: shown, the panel closes; it opens on another one.
+      {wb, _} = Workbench.show_panel(wb, "problems")
+      {wb, effects} = Workbench.hide_container(wb, "problems")
+      refute "problems" in ids(wb, :panel)
+      assert %{panel_open: false} = wb
+      assert effects == [:panel_hidden]
+      assert {%{panel_open: true, panel_view: "terminal"}, _} = Workbench.toggle_panel(wb)
+    end
+
+    test "References moves to the panel and back; the others stay where they are" do
+      wb = Workbench.reveal_view(wb(), "references")
+      {wb, effects} = Workbench.move_container(wb, "references", :panel)
+      assert "references" in ids(wb, :panel)
+      refute "references" in ids(wb, :activitybar)
+      assert %{panel_open: true, panel_view: "references", sidebar_view: "explorer"} = wb
+      assert {:panel_shown, "references"} in effects
+      assert {%{panel_view: "references"}, _} = Workbench.show_container(wb, "references")
+
+      {wb, _} = Workbench.move_container(wb, "references", :activitybar)
+      assert wb.container_locations == %{}
+      assert %{panel_open: false, sidebar_view: "references"} = wb
+
+      assert Workbench.move_container(wb, "explorer", :panel) == wb
+      assert Workbench.move_container(wb, "terminal", :activitybar) == wb
+    end
+
+    test "what the browser remembered is restored; reset puts everything back" do
+      wb =
+        Workbench.restore_containers(
+          wb(),
+          %{"references" => "panel", "search" => "nowhere", 1 => "panel"},
+          ["search", 2, "search"]
+        )
+
+      assert wb.container_locations == %{"references" => :panel}
+      assert wb.hidden_containers == ["search"]
+      assert Workbench.restore_containers(wb(), nil, nil) == wb()
+
+      {wb, _} = Workbench.wrap(Workbench.reset_containers(wb))
+      assert "search" in ids(wb, :activitybar) and "references" in ids(wb, :activitybar)
+    end
+  end
+
   test "resizing the sidebar and panel clamps, nil restores the default" do
     wb = wb()
     assert Workbench.resize(wb, :sidebar, 300.4).sidebar_width == 300

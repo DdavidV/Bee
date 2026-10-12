@@ -353,7 +353,13 @@ terminal. It is for looking into Bee and driving it. See
 plus an *Extension Host* channel with what extensions print and their
 failures. Only the most recent part of each channel is kept.
 
-**Problems** and **References** list what language extensions found.
+**Problems** lists what language extensions found.
+
+**References**, the places Find All References found, is not in the panel
+but in the sidebar, with an icon of its own in the activity bar as in VS
+Code. Where a views container is shown, the activity bar or the panel, is
+part of the window's state: the user can hide one, and move one that is
+movable to the other place.
 
 **Notifications** are not in the panel but at the bottom right of the
 window, as in VS Code. What Bee, a plugin or an extension tells the user

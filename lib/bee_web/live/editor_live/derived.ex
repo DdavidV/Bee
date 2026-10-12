@@ -23,6 +23,8 @@ defmodule BeeWeb.EditorLive.Derived do
 
   # What the menus and toolbars are made of, besides the context.
   @menus [:commands_by_id, :menu_items, :keybinding_labels]
+  # Where the views containers are, and which are hidden.
+  @placed [:container_locations, :hidden_containers]
   @problems [
     :settings_errors,
     :keybinding_errors,
@@ -40,10 +42,11 @@ defmodule BeeWeb.EditorLive.Derived do
     {:menubar, [:context, :menus, :open_menu | @menus]},
     {:editor_actions, [:context | @menus]},
     {:context_menu_items, [:context, :context_menu, :submenus | @menus]},
-    {:activity_bar, [:containers, :activity_order, :views, :view_contents]},
+    {:activity_bar, [:containers, :activity_order, :views, :view_contents | @placed]},
     {:sidebar_views, [:context, :views, :sidebar_view, :view_contents | @menus]},
     {:panel_sections,
-     [:panel_open, :context, :views, :panel_containers, :panel_order, :view_contents | @menus]},
+     [:panel_open, :context, :views, :containers, :panel_order, :view_contents] ++
+       @placed ++ @menus},
     {:panel_actions, [:panel_open, :panel_maximized, :context | @menus]},
     {:problems, @problems},
     {:problem_entries, [:panel_open | @problems]},

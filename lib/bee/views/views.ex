@@ -7,7 +7,10 @@ defmodule Bee.Views do
       (`viewsContainers.activitybar`: `"explorer"`, `"extensions"`, a
       plugin's `"scm"`…; clicking it shows its views in the sidebar) or a
       section of the bottom panel (`viewsContainers.panel`: `"terminal"`,
-      `"console"`…; its title is the panel's tab)
+      `"console"`…; its title is the panel's tab). That is where it is to
+      begin with: the user can hide it, and move it to the other place
+      (`Bee.Workbench`, "Views containers") unless it says `"movable":
+      false` – Bee's Explorer, Terminal… are drawn for one place only
     * a view is a part of a container. Bee renders its own views (Explorer,
       Plugins, Search, Terminal, Bee Console) itself; a plugin fills its
       views with data through `Bee.API.set_view/3` (stored in `Bee.UI`),
@@ -30,6 +33,7 @@ defmodule Bee.Views do
           title: String.t(),
           icon: String.t(),
           location: location,
+          movable: boolean(),
           source: term()
         }
   @type view :: %{
@@ -49,6 +53,10 @@ defmodule Bee.Views do
   @spec containers(location) :: [container]
   def containers(location \\ :activitybar),
     do: Enum.filter(all_containers(), &(&1.location == location))
+
+  @doc "Every container, wherever it is."
+  @spec all() :: [container]
+  def all, do: all_containers()
 
   defp all_containers,
     do: Enum.flat_map(Contributions.entries(:views), &elem(&1, 1).containers)
@@ -94,7 +102,14 @@ defmodule Bee.Views do
     containers =
       for location <- [:activitybar, :panel],
           c <- get_in(contributes, ["viewsContainers", Atom.to_string(location)]) || [] do
-        %{id: c["id"], title: c["title"], icon: c["icon"], location: location, source: source}
+        %{
+          id: c["id"],
+          title: c["title"],
+          icon: c["icon"],
+          location: location,
+          movable: c["movable"] != false,
+          source: source
+        }
       end
 
     views =

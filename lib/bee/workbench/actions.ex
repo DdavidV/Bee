@@ -206,6 +206,95 @@ defmodule Bee.Workbench.Actions do
   def show_panel(wb, [id]) when is_binary(id), do: Workbench.show_panel(wb, id)
   def show_panel(wb, _args), do: wb
 
+  ## Where the views containers are (Workbench "Views containers")
+  #
+  # The right-click menu of an activity bar icon or a panel tab
+  # (viewContainer/title/context) passes its container id; from the palette
+  # there is none: the container is picked from a list.
+
+  @command "workbench.action.moveViewContainerToPanel"
+  def move_container_to_panel(wb, args), do: move_container(wb, args, :panel)
+
+  @command "workbench.action.moveViewContainerToSideBar"
+  def move_container_to_side_bar(wb, args), do: move_container(wb, args, :activitybar)
+
+  defp move_container(wb, [id | _], location) when is_binary(id),
+    do: Workbench.move_container(wb, id, location)
+
+  defp move_container(wb, _args, location) do
+    {command, name} =
+      case location do
+        :panel -> {"workbench.action.moveViewContainerToPanel", "the panel"}
+        :activitybar -> {"workbench.action.moveViewContainerToSideBar", "the side bar"}
+      end
+
+    pick_container(
+      wb,
+      Enum.filter(
+        Bee.Views.all(),
+        &(&1.movable and Workbench.container_location(wb, &1.id) != location)
+      ),
+      command,
+      "Select what to move to #{name}"
+    )
+  end
+
+  @command "workbench.action.hideViewContainer"
+  def hide_container(wb, [id | _]) when is_binary(id), do: Workbench.hide_container(wb, id)
+
+  def hide_container(wb, _args) do
+    pick_container(
+      wb,
+      Enum.reject(Bee.Views.all(), &Workbench.container_hidden?(wb, &1.id)),
+      "workbench.action.hideViewContainer",
+      "Select what to hide"
+    )
+  end
+
+  # Every container, to hide the one picked, or show it again.
+  @command "workbench.action.toggleViewContainer"
+  def toggle_container(wb, [id | _]) when is_binary(id) do
+    if Workbench.container_hidden?(wb, id),
+      do: Workbench.show_container(wb, id),
+      else: Workbench.hide_container(wb, id)
+  end
+
+  def toggle_container(wb, _args) do
+    pick_container(
+      wb,
+      Bee.Views.all(),
+      "workbench.action.toggleViewContainer",
+      "Select what to show or hide"
+    )
+  end
+
+  @command "workbench.action.resetViewLocations"
+  def reset_view_locations(wb), do: Workbench.reset_containers(wb)
+
+  defp pick_container(wb, [], _command, _placeholder),
+    do: Workbench.set_status(wb, "Nothing to pick")
+
+  defp pick_container(wb, containers, command, placeholder) do
+    items =
+      for c <- containers do
+        where =
+          case Workbench.container_location(wb, c.id) do
+            :activitybar -> "Side Bar"
+            :panel -> "Panel"
+          end
+
+        %{
+          label: c.title,
+          description:
+            if(Workbench.container_hidden?(wb, c.id), do: "#{where}, hidden", else: where),
+          value: c.id,
+          icon: c.icon
+        }
+      end
+
+    Workbench.open_quick_pick(wb, %{items: items, command: command, placeholder: placeholder})
+  end
+
   # An Elixir shell inside Bee, the panel's Bee Console section (Bee.Console).
   @command "bee.console.open"
   def open_console(wb), do: Workbench.show_panel(wb, "console")
@@ -218,7 +307,7 @@ defmodule Bee.Workbench.Actions do
   def show_problems(wb), do: Workbench.show_panel(wb, "problems")
 
   @command "workbench.action.showReferences"
-  def show_references(wb), do: Workbench.show_panel(wb, "references")
+  def show_references(wb), do: Workbench.show_container(wb, "references")
 
   @command "workbench.output.action.clearOutput"
   def clear_output(wb), do: {wb, [:clear_output]}

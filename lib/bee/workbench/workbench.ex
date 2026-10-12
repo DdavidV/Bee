@@ -16,7 +16,8 @@ defmodule Bee.Workbench do
     * `{:stop_terminal, id}` – stop it (`{:forget_terminal, id}` when it already exited)
     * `:clear_output` – empty the Output section's channel (`Bee.Output`)
     * `:panel_hidden` – the panel's xterm views (terminals, console) were unmounted
-    * `{:panel_shown, id}` – panel section `id` is shown (a plugin's starts)
+    * `{:panel_shown, id}` – views container `id` is shown, in the panel or
+      the sidebar (a plugin's starts)
     * `{:exec_client, command}` – run a client-side command in the browser
     * `{:run_plugin_command, command}` – run a plugin's server command
     * `{:run_extension_command, command, args}` – run a command of a VS
@@ -64,6 +65,11 @@ defmodule Bee.Workbench do
             # The sections' order, as dragged (container ids).
             panel_order: [],
             panel_maximized: false,
+            # Views containers the user moved: container id =>
+            # `:activitybar` or `:panel`; and those hidden (container ids).
+            # See "Views containers".
+            container_locations: %{},
+            hidden_containers: [],
             # The window's Bee Console (its id, once started).
             console: nil,
             terminals: [],
@@ -100,6 +106,8 @@ defmodule Bee.Workbench do
     :panel_view,
     :panel_order,
     :panel_maximized,
+    :container_locations,
+    :hidden_containers,
     :console,
     :terminals,
     :active_term,
@@ -666,7 +674,16 @@ defmodule Bee.Workbench do
 
   ## Layout
 
-  def toggle_sidebar(wb), do: %{wb | sidebar_open: not wb.sidebar_open}
+  @doc "Hides the sidebar, or shows it: on the container it showed, or – that one gone – its first."
+  def toggle_sidebar(%{sidebar_open: true} = wb), do: %{wb | sidebar_open: false}
+
+  def toggle_sidebar(wb) do
+    ids = Enum.map(containers(wb, :activitybar), & &1.id)
+
+    if wb.sidebar_view in ids or ids == [],
+      do: %{wb | sidebar_open: true},
+      else: show_container(wb, hd(ids))
+  end
 
   @doc """
   Shows sidebar view `view` ("explorer", "extensions" – the plugins); like clicking its
@@ -719,26 +736,162 @@ defmodule Bee.Workbench do
     |> Enum.map(&elem(&1, 0))
   end
 
-  @doc "Shows sidebar view `view`, also when it is already shown."
-  def reveal_view(wb, view), do: %{wb | sidebar_open: true, sidebar_view: view}
+  @doc "Shows sidebar view `view`, also when it is already shown (or its icon is hidden)."
+  def reveal_view(wb, view) do
+    %{
+      wb
+      | sidebar_open: true,
+        sidebar_view: view,
+        hidden_containers: List.delete(wb.hidden_containers, view)
+    }
+  end
+
+  ## Views containers
+  #
+  # A views container (`Bee.Views`) is shown in one of two places: as an
+  # icon of the activity bar, its views in the sidebar (`:activitybar`), or
+  # as a section of the bottom panel (`:panel`) – where it was contributed
+  # (`viewsContainers.activitybar`, `viewsContainers.panel`), or where the
+  # user moved it (`container_locations`; one that is `movable`). A hidden
+  # one (`hidden_containers`) has no icon or tab until it is shown again.
+  # The browser remembers both (BeeWeb.EditorLive.Layout).
+
+  @locations [:activitybar, :panel]
+
+  @doc "Where container `id` is: `:activitybar` or `:panel`."
+  def container_location(wb, id),
+    do: Map.get(wb.container_locations, id) || default_location(id)
+
+  defp default_location(id) do
+    case Bee.Views.container(id) do
+      %{location: location} -> location
+      nil -> :panel
+    end
+  end
+
+  @doc "Whether container `id` is hidden: it has no icon, no tab."
+  def container_hidden?(wb, id), do: id in wb.hidden_containers
+
+  @doc """
+  The containers shown at `location` (of `containers`, default: all there
+  are): the activity bar's icons or the panel's sections, in their order as
+  dragged.
+  """
+  def containers(wb, location, containers \\ Bee.Views.all()) when location in @locations do
+    containers
+    |> Enum.filter(
+      &(container_location(wb, &1.id) == location and not container_hidden?(wb, &1.id))
+    )
+    |> sort_containers(if(location == :panel, do: wb.panel_order, else: wb.activity_order))
+  end
+
+  @doc """
+  Shows container `id` where it is: its views in the sidebar, or its
+  section of the panel. A hidden one gets its icon (its tab) back.
+  """
+  def show_container(wb, id) do
+    case container_location(wb, id) do
+      :activitybar -> {reveal_view(wb, id), [{:panel_shown, id}]}
+      :panel -> show_panel(wb, id)
+    end
+  end
+
+  @doc """
+  Moves container `id` to `location` (`:activitybar` or `:panel`) and shows
+  it there. Only for a container that is `movable`.
+  """
+  def move_container(wb, id, location) when location in @locations do
+    case Bee.Views.container(id) do
+      %{movable: true} = container ->
+        locations =
+          if container.location == location,
+            do: Map.delete(wb.container_locations, id),
+            else: Map.put(wb.container_locations, id, location)
+
+        %{wb | container_locations: locations} |> settle() |> chain(&show_container(&1, id))
+
+      _ ->
+        wb
+    end
+  end
+
+  @doc "Hides container `id`: its icon or tab goes, until it is shown again."
+  def hide_container(wb, id) do
+    if container_hidden?(wb, id),
+      do: wb,
+      else: settle(%{wb | hidden_containers: wb.hidden_containers ++ [id]})
+  end
+
+  @doc "Every container back where it was contributed, none hidden."
+  def reset_containers(wb), do: settle(%{wb | container_locations: %{}, hidden_containers: []})
+
+  @doc """
+  What the browser remembered: `locations`, container id => `"activitybar"`
+  or `"panel"`, and the `hidden` container ids.
+  """
+  def restore_containers(wb, locations, hidden) do
+    locations =
+      for {id, location} <- if(is_map(locations), do: locations, else: %{}),
+          is_binary(id),
+          location in ["activitybar", "panel"],
+          into: %{},
+          do: {id, String.to_existing_atom(location)}
+
+    hidden = if is_list(hidden), do: hidden |> Enum.filter(&is_binary/1) |> Enum.uniq(), else: []
+    %{wb | container_locations: locations, hidden_containers: hidden}
+  end
+
+  # The container the sidebar or the panel shows is gone from it (moved,
+  # hidden): the sidebar shows its first one instead (or closes with
+  # none); the panel closes (another section of it could start a shell).
+  defp settle(wb) do
+    {wb, []}
+    |> chain(fn wb ->
+      ids = Enum.map(containers(wb, :activitybar), & &1.id)
+
+      cond do
+        not wb.sidebar_open or wb.sidebar_view in ids -> wb
+        ids == [] -> %{wb | sidebar_open: false}
+        true -> show_container(wb, hd(ids))
+      end
+    end)
+    |> chain(fn wb ->
+      if wb.panel_open and wb.panel_view not in Enum.map(containers(wb, :panel), & &1.id),
+        do: toggle_panel(wb),
+        else: wb
+    end)
+  end
 
   ## Panel
   #
-  # Sections (panel views containers, `Bee.Views.containers(:panel)`):
-  # Terminal and Bee Console, and plugins'. Showing one prepares it: the
-  # terminal section starts a shell when there is none, the console section
-  # the window's console when it isn't running.
+  # Sections (the containers at `:panel`): Terminal, Bee Console, Output,
+  # Problems, and plugins'. Showing one prepares it: the terminal section
+  # starts a shell when there is none, the console section the window's
+  # console when it isn't running.
 
   @doc """
   Closing the panel keeps the shells and the console running (their views
-  re-attach on reopen).
+  re-attach on reopen). It opens on the section it showed, or – that one
+  gone – on its first.
   """
   def toggle_panel(%{panel_open: true} = wb), do: {%{wb | panel_open: false}, [:panel_hidden]}
-  def toggle_panel(wb), do: show_panel(wb, wb.panel_view)
 
-  @doc "Opens the panel on section `id`."
+  def toggle_panel(wb) do
+    ids = Enum.map(containers(wb, :panel), & &1.id)
+
+    if wb.panel_view in ids or ids == [],
+      do: show_panel(wb, wb.panel_view),
+      else: show_panel(wb, hd(ids))
+  end
+
+  @doc "Opens the panel on section `id` (a hidden one gets its tab back)."
   def show_panel(wb, id) do
-    wb = %{wb | panel_open: true, panel_view: id}
+    wb = %{
+      wb
+      | panel_open: true,
+        panel_view: id,
+        hidden_containers: List.delete(wb.hidden_containers, id)
+    }
 
     case id do
       "terminal" when wb.terminals == [] -> {wb, [:new_terminal]}
