@@ -1,0 +1,35 @@
+{
+  "$schema": "../../../priv/schemas/manifest.schema.json",
+  "name": "hex-view",
+  "displayName": "Hex Viewer",
+  "description": "Shows any file's bytes: offsets, hex and text, a page at a time. Example of a custom editor: an editor for files, drawn by the plugin's LiveView, chosen with Open With… or opened by a command – and the default one for *.bin and *.dat files.",
+  "version": "0.1.0",
+  "server": {"module": "HexView"},
+  "styles": "style.css",
+  "contributes": {
+    "customEditors": [
+      {
+        "viewType": "hexView.editor",
+        "displayName": "Hex Viewer",
+        "live": "HexView.EditorLive",
+        "selector": [{"filenamePattern": "*.{bin,dat}"}]
+      },
+      {
+        "viewType": "hexView.editor",
+        "priority": "option",
+        "selector": [{"filenamePattern": "*"}]
+      }
+    ],
+    "commands": [
+      {"command": "hexView.open", "category": "Hex Viewer", "title": "Open in Hex Viewer", "runtime": "server"}
+    ],
+    "menus": {
+      "explorer/context": [
+        {"command": "hexView.open", "group": "navigation@4", "when": "!explorerResourceIsFolder"}
+      ],
+      "commandPalette": [
+        {"command": "hexView.open", "when": "resourceScheme == file"}
+      ]
+    }
+  }
+}

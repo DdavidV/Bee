@@ -15,11 +15,34 @@
 //              webviewClosed {id}             its tab was closed
 //              webviewViewResolve {view}      a webview view is shown: draw it
 //
+// And window.registerCustomEditorProvider: such a page as the editor of a
+// file (a customEditors entry of package.json; Bee.CustomEditors). Bee
+// asks for it when a file opens in the editor (customEditorResolve), with
+// the id it gave the tab's page: a panel like any other, drawn by the
+// provider –
+//
+//   resolveCustomTextEditor(document, panel)   the file as a text document
+//                                              (Bee's, when it has it open)
+//   openCustomDocument(uri), then
+//   resolveCustomEditor(document, panel)       a document of the provider's
+//
+// A custom document that says it changed (onDidChangeCustomDocument) has
+// unsaved changes, until saveCustomDocument (customEditorSave) wrote them.
+// Undoing its edits, reverting and backups aren't there.
+//
+//   to Bee     webviewOpen {…, custom: {viewType, path, text}}
+//              customEditorDirty {id, dirty}
+//   from Bee   customEditorResolve {id, viewType, path}
+//              customEditorSave {id}
+//
 // A local file is loaded through `asWebviewUri`: a stand-in address that
 // Bee turns into the panel's own (it alone knows where the page is served).
 "use strict"
 
+const fs = require("fs")
+const path = require("path")
 const {CancellationTokenSource, Disposable, EventEmitter, Uri, ViewColumn} = require("./types")
+const {TextDocument} = require("./documents")
 
 // Replaced in the page's HTML by BeeWeb.WebviewController.
 const RESOURCE = "file.bee-webview.invalid"
@@ -116,6 +139,8 @@ class WebviewPanel {
     this._disposed = true
     this._webviews.panels.delete(this._id)
     this._webviews.host.notify("webviewDispose", {id: this._id})
+    // (A custom editor's: its document may go with it.)
+    if (this._closed) this._closed()
     this._onDispose.fire()
     this._onDispose.dispose()
     this._onViewState.dispose()
@@ -173,6 +198,119 @@ class Webviews {
     this.next = 0
     this.providers = new Map() // view id → {extension, provider, options}
     this.wanted = new Set() // views shown before their provider was there
+    this.editors = new Map() // viewType → {extension, provider, options, documents}
+    this.wantedEditors = [] // files opened before their editor's provider was there
+  }
+
+  registerCustomEditorProvider(extension, viewType, provider, options) {
+    const type = String(viewType)
+    if (this.editors.has(type)) throw new Error(`a custom editor provider for '${type}' is already registered`)
+    // documents: path → {ready: a promise of the custom document, panels, dirty}
+    const entry = {extension, provider, options: options || {}, documents: new Map()}
+    this.editors.set(type, entry)
+    if (provider && typeof provider.onDidChangeCustomDocument === "function") {
+      entry.changes = provider.onDidChangeCustomDocument(event => this.customChanged(entry, event && event.document))
+    }
+    const waiting = this.wantedEditors.filter(wanted => wanted.viewType === type)
+    this.wantedEditors = this.wantedEditors.filter(wanted => wanted.viewType !== type)
+    for (const wanted of waiting) queueMicrotask(() => this.resolveCustomEditor(wanted))
+    return new Disposable(() => {
+      if (this.editors.get(type) !== entry) return
+      this.editors.delete(type)
+      if (entry.changes) entry.changes.dispose()
+      for (const panel of [...this.panels.values()]) if (panel._entry === entry) panel.dispose()
+    })
+  }
+
+  // From Bee: the file at `path` is opened in the editor `viewType`, in a
+  // tab whose page is `id`.
+  async resolveCustomEditor({id, viewType, path: file}) {
+    const entry = this.editors.get(viewType)
+    if (!entry) return this.wantedEditors.push({id, viewType, path: file})
+    if (this.panels.has(id)) return
+    const {provider} = entry
+    const text = typeof provider.resolveCustomTextEditor === "function"
+    const panel = new WebviewPanel(this, entry.extension, id, viewType, path.basename(file), entry.options.webviewOptions)
+    panel._entry = entry
+    this.panels.set(id, panel)
+    this.host.notify("webviewOpen", {
+      id,
+      custom: {viewType, path: file, text},
+      extension: entry.extension.name,
+      viewType,
+      title: panel.title,
+      ...plainOptions(panel, panel.webview.options),
+    })
+    const source = new CancellationTokenSource()
+    try {
+      if (text) {
+        // Bee's document when it has the file open: what the provider
+        // edits (workspace.applyEdit) and hears of. Else as it is on disk.
+        const document =
+          this.host.documents.get(file) || new TextDocument(file, await fs.promises.readFile(file, "utf8"), undefined, 1)
+        await provider.resolveCustomTextEditor(document, panel, source.token)
+      } else {
+        let held = entry.documents.get(file)
+        if (!held) {
+          held = {panels: new Set(), dirty: false}
+          held.ready = Promise.resolve(
+            provider.openCustomDocument(Uri.file(file), {backupId: undefined, untitledDocumentData: undefined}, source.token),
+          )
+          entry.documents.set(file, held)
+        }
+        held.panels.add(panel)
+        panel._closed = () => this.customClosed(entry, file, held, panel)
+        const document = await held.ready
+        held.document = document
+        if (panel._disposed) return
+        if (held.dirty) this.host.notify("customEditorDirty", {id, dirty: true})
+        await provider.resolveCustomEditor(document, panel, source.token)
+      }
+    } catch (e) {
+      console.error(`custom editor ${viewType} failed to open ${file}: ${(e && e.stack) || e}`)
+      if (!panel._disposed && !panel.webview.html) {
+        const message = String((e && e.message) || e).replace(/[&<>]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;"})[c])
+        panel.webview.html = `<!DOCTYPE html><html><body><p>The editor could not open this file: ${message}</p></body></html>`
+      }
+    }
+  }
+
+  // The last editor of a custom document closed: the document goes.
+  customClosed(entry, file, held, panel) {
+    held.panels.delete(panel)
+    if (held.panels.size > 0 || entry.documents.get(file) !== held) return
+    entry.documents.delete(file)
+    held.ready.then(document => document && typeof document.dispose === "function" && document.dispose()).catch(() => {})
+  }
+
+  // A provider's onDidChangeCustomDocument: the document has unsaved changes.
+  customChanged(entry, document) {
+    for (const held of entry.documents.values()) {
+      if (held.document !== document) continue
+      held.dirty = true
+      for (const panel of held.panels) this.host.notify("customEditorDirty", {id: panel._id, dirty: true})
+    }
+  }
+
+  // From Bee: Save, in the tab whose page is `id`.
+  async saveCustomEditor({id}) {
+    const panel = this.panels.get(id)
+    const entry = panel && panel._entry
+    if (!entry) return
+    for (const held of entry.documents.values()) {
+      if (!held.panels.has(panel) || !held.document) continue
+      if (typeof entry.provider.saveCustomDocument !== "function") return
+      try {
+        await entry.provider.saveCustomDocument(held.document, new CancellationTokenSource().token)
+        held.dirty = false
+        for (const other of held.panels) this.host.notify("customEditorDirty", {id: other._id, dirty: false})
+      } catch (e) {
+        console.error(`saving ${held.document.uri && held.document.uri.fsPath} failed: ${(e && e.stack) || e}`)
+        this.host
+          .request("showMessage", {extension: entry.extension.name, level: "error", text: `Could not save: ${(e && e.message) || e}`, items: []})
+          .catch(() => {})
+      }
+    }
   }
 
   registerViewProvider(extension, viewId, provider, options) {
@@ -249,6 +387,11 @@ class Webviews {
   forget(extension) {
     for (const panel of [...this.panels.values()]) if (panel._extension === extension) panel.dispose()
     for (const [id, entry] of [...this.providers]) if (entry.extension === extension) this.providers.delete(id)
+    for (const [type, entry] of [...this.editors]) {
+      if (entry.extension !== extension) continue
+      this.editors.delete(type)
+      if (entry.changes) entry.changes.dispose()
+    }
   }
 
   api(extension) {
@@ -257,6 +400,8 @@ class Webviews {
       // Panels aren't kept over a restart of Bee: nothing to bring back.
       registerWebviewPanelSerializer: () => new Disposable(() => {}),
       registerWebviewViewProvider: (viewId, provider, options) => this.registerViewProvider(extension, viewId, provider, options),
+      registerCustomEditorProvider: (viewType, provider, options) =>
+        this.registerCustomEditorProvider(extension, viewType, provider, options),
     }
   }
 }

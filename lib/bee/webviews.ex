@@ -23,7 +23,12 @@ defmodule Bee.Webviews do
 
   Changes are broadcast on the workspace's topic (`subscribe/1`) as
   `{:webview, id, event}`: `:opened`, `:changed` (title, HTML, options),
-  `:revealed`, `{:message, data}` (posted to its page), `:disposed`.
+  `:revealed`, `{:message, data}` (posted to its page), `:disposed`, and –
+  a custom editor's – `{:dirty, boolean}`.
+
+  A custom editor of an extension (`window.registerCustomEditorProvider`)
+  is such a panel too, its `custom` naming the file: the page of that
+  file's tab in the window that opened it, which gave it its id.
   """
   use GenServer
 
@@ -60,9 +65,12 @@ defmodule Bee.Webviews do
           state: nil,
           # A webview view's: the view (`Bee.Views`) it is the page of.
           view: nil,
+          # A custom editor's: the file it is the editor of, `%{view_type,
+          # path, text?}` (`Bee.CustomEditors`) – shown in that file's tab.
+          custom: nil,
           token: Base.url_encode64(:crypto.strong_rand_bytes(24), padding: false)
         },
-        Map.take(attrs, [:extension, :view_type, :title, :scripts?, :roots, :view])
+        Map.take(attrs, [:extension, :view_type, :title, :scripts?, :roots, :view, :custom])
       )
 
     :ets.insert(@table, {{root, id}, panel})
@@ -129,6 +137,9 @@ defmodule Bee.Webviews do
     do: Map.new(map, fn {key, value} -> {key, localize(value, panel)} end)
 
   defp localize(other, _panel), do: other
+
+  @doc "A custom editor's document has unsaved changes (`dirty?`), or none any more."
+  def dirty(root, id, dirty?), do: tell(root, id, {:dirty, dirty? == true})
 
   @doc "Brings the panel's tab to the front."
   def reveal(root, id), do: tell(root, id, :revealed)

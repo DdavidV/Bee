@@ -156,13 +156,14 @@
         },
         "customEditors": {
           "type": "array",
-          "description": "Editors for files that aren't shown as text, like VS Code's: what files open in one. Bee has VS Code's previews of images (viewType \"imagePreview.previewEditor\"), audio (\"vscode.audioPreview\") and video (\"vscode.videoPreview\"): an entry with one of these adds files to it. Entries for other viewTypes open nothing.",
+          "description": "Editors for files that aren't shown as text, like VS Code's: what files open in one. Bee has VS Code's previews of images (viewType \"imagePreview.previewEditor\"), audio (\"vscode.audioPreview\") and video (\"vscode.videoPreview\"): an entry with one of these adds files to it. A plugin's own editor is an entry with a viewType of its own and \"live\": the LiveView (Bee.Plugin.LiveView) that draws a file, whose path is its @bee.params[\"path\"]. Entries for other viewTypes open nothing.",
           "items": {
             "type": "object",
             "required": ["viewType", "selector"],
             "properties": {
               "viewType": {"type": "string", "minLength": 1},
               "displayName": {"type": "string", "minLength": 1},
+              "live": {"$ref": "#/definitions/liveModule"},
               "priority": {
                 "enum": ["default", "builtin", "option"],
                 "default": "default",

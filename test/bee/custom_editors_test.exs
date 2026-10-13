@@ -108,6 +108,81 @@ defmodule Bee.CustomEditorsTest do
     assert CustomEditors.pattern("/ws/Makefile") == "Makefile"
   end
 
+  describe "a plugin's own editor (live)" do
+    defp manifest(name, editors, server \\ %{"module" => "Hex"}) do
+      %{"name" => name, "contributes" => %{"customEditors" => editors}}
+      |> Map.merge(if server, do: %{"server" => server}, else: %{})
+    end
+
+    defp register(name, editors) do
+      source = {:plugin, name}
+      assert :ok = Contributions.register(source, manifest(name, editors))
+      on_exit(fn -> Contributions.unregister(source) end)
+    end
+
+    @hex %{
+      "viewType" => "hex.editor",
+      "displayName" => "Hex",
+      "live" => "Hex.EditorLive",
+      "selector" => [%{"filenamePattern" => "*.bin"}]
+    }
+
+    test "opens the files it is for, and is one to open others with" do
+      register("hex", [
+        @hex,
+        %{
+          "viewType" => "hex.editor",
+          "priority" => "option",
+          "selector" => [%{"filenamePattern" => "*"}]
+        }
+      ])
+
+      assert CustomEditors.live_editor("hex.editor") ==
+               %{plugin: "hex", live: "Hex.EditorLive", view_type: "hex.editor"}
+
+      assert CustomEditors.live_editors() == [CustomEditors.live_editor("hex.editor")]
+      assert CustomEditors.available?("hex.editor")
+      assert CustomEditors.viewer("hex.editor") == nil
+
+      assert CustomEditors.for_file("/ws/a.bin") == "hex.editor"
+      # Only an option for the rest – unless the user says otherwise.
+      assert CustomEditors.for_file("/ws/a.txt") == nil
+      assert CustomEditors.for_file("/ws/a.txt", %{"*.txt" => "hex.editor"}) == "hex.editor"
+
+      assert CustomEditors.choices("/ws/a.png") == [
+               %{id: "default", label: "Text Editor"},
+               %{id: "imagePreview.previewEditor", label: "Image Preview"},
+               %{id: "hex.editor", label: "Hex"}
+             ]
+    end
+
+    test "another plugin adds files to it, but can't draw it too" do
+      register("hex", [@hex])
+
+      register("more-hex", [
+        %{"viewType" => "hex.editor", "selector" => [%{"filenamePattern" => "*.rom"}]}
+      ])
+
+      assert CustomEditors.for_file("/ws/a.rom") == "hex.editor"
+
+      assert {:error, message} =
+               Contributions.register({:plugin, "hex-two"}, manifest("hex-two", [@hex]))
+
+      assert message =~ ~s(custom editor "hex.editor" is already defined)
+    end
+
+    test "it needs a server part, and a viewType of its own" do
+      assert {:error, message} =
+               Contributions.register({:plugin, "hex"}, manifest("hex", [@hex], nil))
+
+      assert message =~ "needs a plugin with a \"server\" part"
+
+      mine = %{@hex | "viewType" => "imagePreview.previewEditor"}
+      assert {:error, message} = Contributions.register({:plugin, "hex"}, manifest("hex", [mine]))
+      assert message =~ "is Bee's own editor"
+    end
+  end
+
   test "a manifest's customEditors must name their files" do
     manifest = %{
       "name" => "broken",

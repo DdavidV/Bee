@@ -169,7 +169,9 @@ Not every file is text, and Bee opens the others as VS Code does:
 | Any other binary file | A note that it is binary or in an unsupported encoding, with **Open Anyway** |
 
 Which files are images, audio or video is a contribution, by file name, like
-everything else (`customEditors`, with VS Code's ids and patterns). A file is
+everything else (`customEditors`, with VS Code's ids and patterns). A plugin
+contributes editors of its own the same way: it names the files and the
+LiveView that draws them, and such a file's tab shows that LiveView. A file is
 very large from `workbench.editorLargeFileConfirmation` megabytes on (50
 unless set: the whole text of a file goes to the page). It is binary when it
 has a NUL byte near its start, which is VS Code's test, or is not UTF-8, the

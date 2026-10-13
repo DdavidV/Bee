@@ -457,6 +457,8 @@ const notifications = {
   webviewState: params => host.webviews.state(params),
   webviewClosed: params => host.webviews.closed(params),
   webviewViewResolve: params => host.webviews.resolveView(params),
+  customEditorResolve: params => host.webviews.resolveCustomEditor(params),
+  customEditorSave: params => host.webviews.saveCustomEditor(params),
   // A diff's tab (virtual.js): shown or not, closed.
   diffState: params => host.virtual.state(params),
   diffClosed: params => host.virtual.closed(params),

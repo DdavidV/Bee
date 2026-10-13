@@ -159,7 +159,7 @@ defmodule Bee.Extensions.Host do
   @doc """
   What a window has to say about webview panel `id` of workspace `root`
   (`Bee.Webviews`): `{:message, data}` its page posted, `{:state, active?,
-  visible?}` of its tab, or `:closed`.
+  visible?}` of its tab, `:closed`, or – a custom editor's – `:save`.
   """
   def webview(root, id, event) do
     case whereis(root) do
@@ -178,6 +178,19 @@ defmodule Bee.Extensions.Host do
     case whereis(root) do
       nil -> :ok
       pid -> GenServer.cast(pid, {:resolve_view, view_id})
+    end
+  end
+
+  @doc """
+  The file at `path` is opened in the custom editor `view_type` of an
+  extension (`Bee.CustomEditors`), in a tab of a window of workspace
+  `root`: its provider is asked to draw it (`resolveCustomEditor`), once
+  its code runs, as webview panel `id`. `:error` without a host to ask.
+  """
+  def resolve_custom_editor(root, id, view_type, path) do
+    case whereis(root) do
+      nil -> :error
+      pid -> GenServer.cast(pid, {:resolve_custom_editor, id, view_type, path})
     end
   end
 
@@ -496,6 +509,13 @@ defmodule Bee.Extensions.Host do
     do: {:noreply, notify(s, "diffState", %{id: id, active: active?})}
 
   def handle_cast({:diff, id, :closed}, s), do: {:noreply, notify(s, "diffClosed", %{id: id})}
+
+  def handle_cast({:resolve_custom_editor, id, view_type, path}, s),
+    do: {:noreply, notify(s, "customEditorResolve", %{id: id, viewType: view_type, path: path})}
+
+  # Save, in a custom editor whose document is its provider's.
+  def handle_cast({:webview, id, :save}, s),
+    do: {:noreply, notify(s, "customEditorSave", %{id: id})}
 
   def handle_cast({:resolve_view, view_id}, s),
     do: {:noreply, notify(s, "webviewViewResolve", %{view: view_id})}
@@ -1099,6 +1119,15 @@ defmodule Bee.Extensions.Host do
       view_type: params["viewType"],
       title: to_string(params["title"]),
       view: if(is_binary(params["view"]), do: params["view"]),
+      custom:
+        case params["custom"] do
+          %{"viewType" => view_type, "path" => path} = custom
+          when is_binary(view_type) and is_binary(path) ->
+            %{view_type: view_type, path: path, text?: custom["text"] == true}
+
+          _ ->
+            nil
+        end,
       scripts?: params["scripts"] == true,
       roots: Enum.filter(List.wrap(params["roots"]), &is_binary/1)
     })
@@ -1129,6 +1158,11 @@ defmodule Bee.Extensions.Host do
 
   defp handle_notification("webviewReveal", %{"id" => id}, s) do
     Bee.Webviews.reveal(s.root, id)
+    s
+  end
+
+  defp handle_notification("customEditorDirty", %{"id" => id} = params, s) do
+    Bee.Webviews.dirty(s.root, id, params["dirty"])
     s
   end
 

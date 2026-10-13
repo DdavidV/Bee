@@ -248,7 +248,8 @@ defmodule BeeWeb.EditorLive.Editors do
   # video is shown or played (`Bee.CustomEditors`), a very large file
   # (`workbench.editorLargeFileConfirmation`) or another binary one
   # (`Bee.Editor.Buffer`) only said to be so. `editor` asks for one way: the
-  # text editor (`"default"`: Open Anyway, Open With…), or a `viewType`.
+  # text editor (`"default"`: Open Anyway, Open With…), or a `viewType` –
+  # also a plugin's editor, whose LiveView then draws the file.
   # Without it a file open already opens the same way again.
   def open_buffer(socket, path, text \\ nil, preview? \\ false, editor \\ nil) do
     text_editor = Bee.CustomEditors.text()
@@ -259,7 +260,7 @@ defmodule BeeWeb.EditorLive.Editors do
       cond do
         editor != nil -> editor
         text != nil or Enum.any?(tabs, &(&1.kind == :file)) -> text_editor
-        open = Enum.find(tabs, &(&1.kind == :media)) -> open.view_type
+        open = Enum.find(tabs, &(&1.kind in [:media, :custom])) -> open.view_type
         true -> Bee.CustomEditors.for_file(path, settings["workbench.editorAssociations"])
       end
 
@@ -292,11 +293,20 @@ defmodule BeeWeb.EditorLive.Editors do
       |> LanguageFeatures.push_language_features(path)
     else
       false ->
-        case Bee.CustomEditors.viewer(editor) do
-          nil ->
-            cannot_open(socket, path, "no editor #{editor}")
+        case {Bee.CustomEditors.viewer(editor), Bee.CustomEditors.live_editor(editor)} do
+          {nil, nil} ->
+            case Bee.CustomEditors.extension_editor(editor) do
+              nil -> cannot_open(socket, path, "there is no editor #{editor}")
+              %{plugin: plugin} -> open_extension_editor(socket, path, editor, plugin, preview?)
+            end
 
-          media ->
+          # A plugin's: its LiveView draws the file (its code must run).
+          {nil, %{plugin: plugin}} ->
+            Bee.Plugins.activate(plugin, socket.assigns.root)
+            tab = %{kind: :custom, view_type: editor, plugin: plugin}
+            open_viewer(socket, path, tab, preview?)
+
+          {media, _} ->
             tab = %{
               kind: :media,
               view_type: editor,
@@ -326,6 +336,60 @@ defmodule BeeWeb.EditorLive.Editors do
     case File.stat(path) do
       {:ok, %{size: size}} when is_number(limit) and size > limit * 1024 * 1024 -> :large
       _ -> :ok
+    end
+  end
+
+  # A file in a custom editor of a VS Code extension: a tab whose page is a
+  # webview panel the extension's provider draws (`Bee.Webviews`; the id
+  # is made here). The file has that editor once in the window: open
+  # already, it is shown. A text file is open as text too – its buffer is
+  # what the provider reads and edits, and what Save writes.
+  defp open_extension_editor(socket, path, view_type, plugin, preview?) do
+    wb = workbench(socket)
+    mine? = &(&1.path == path and &1.kind == :custom and &1[:webview] != nil)
+
+    case Enum.find(Workbench.groups(wb), fn group -> Enum.any?(group.tabs, mine?) end) do
+      %{id: group} ->
+        change(socket, &Workbench.activate_editor(&1, group, path))
+
+      nil ->
+        root = socket.assigns.root
+        id = "custom-" <> Base.url_encode64(:crypto.strong_rand_bytes(9), padding: false)
+        Bee.Plugins.activate(plugin, root)
+
+        buffer =
+          with :ok <- small_enough(path, socket.assigns.settings),
+               {:ok, buffer} <- Buffer.open(path) do
+            buffer
+          else
+            _ -> nil
+          end
+
+        tab = %{
+          kind: :custom,
+          view_type: view_type,
+          plugin: plugin,
+          webview: id,
+          dirty: buffer != nil and Buffer.dirty?(buffer)
+        }
+
+        socket = open_viewer(socket, path, tab, preview?)
+
+        cond do
+          not Enum.any?(open_tabs(socket), &(&1[:webview] == id)) ->
+            if buffer && not Workbench.open?(workbench(socket), path), do: Buffer.close(path)
+            socket
+
+          Bee.Extensions.Host.resolve_custom_editor(root, id, view_type, path) == :error ->
+            Notifications.notify(
+              socket,
+              :error,
+              "#{plugin} isn't running: it can't show the file"
+            )
+
+          true ->
+            socket
+        end
     end
   end
 

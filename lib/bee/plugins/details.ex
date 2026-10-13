@@ -159,6 +159,10 @@ defmodule Bee.Plugins.Details do
       table("JSON Validation", ["Files", "Schema"], contributes["jsonValidation"], fn v ->
         [Enum.join(List.wrap(v["fileMatch"]), " "), v["url"]]
       end),
+      table("Custom Editors", ["Editor", "Files"], contributes["customEditors"], fn e ->
+        patterns = for %{"filenamePattern" => pattern} <- List.wrap(e["selector"]), do: pattern
+        [e["displayName"] || e["viewType"], Enum.join(patterns, " ")]
+      end),
       table("Snippets", ["Language", "File"], contributes["snippets"], fn sn ->
         [sn["language"] || "all languages", sn["path"]]
       end),

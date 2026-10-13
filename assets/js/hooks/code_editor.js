@@ -294,6 +294,8 @@ export const CodeEditor = {
     this.unregisterCommands = [
       registerCommand("workbench.action.files.save", () => {
         if (this.active) this.save(this.active)
+        // (No text editor shown: an extension's custom editor may save.)
+        else this.pushEvent("save_active", {})
       }),
       registerCommand("undo", () => this.runHistory(undo)),
       registerCommand("redo", () => this.runHistory(redo)),

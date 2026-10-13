@@ -251,6 +251,7 @@ defmodule Bee.Plugins.VSCode.Manifest do
       {"grammars", &grammar(&1, dir)},
       {"snippets", &snippet(&1, dir)},
       {"jsonValidation", &json_validation(&1, dir)},
+      {"customEditors", &custom_editor(&1, nls, main?)},
       {"iconThemes", &icon_theme(&1, nls)},
       {"themes", &theme(&1, nls)}
     ]
@@ -630,6 +631,40 @@ defmodule Bee.Plugins.VSCode.Manifest do
   end
 
   defp json_validation(_entry, _dir), do: {:drop, "needs a fileMatch and a url"}
+
+  # A custom editor: the files it is for. Its code draws them
+  # (window.registerCustomEditorProvider).
+  defp custom_editor(%{"viewType" => view_type, "selector" => selector} = editor, nls, main?)
+       when is_binary(view_type) and view_type != "" and is_list(selector) do
+    patterns =
+      for %{"filenamePattern" => pattern} when is_binary(pattern) and pattern != "" <- selector,
+          do: %{"filenamePattern" => pattern}
+
+    priority = editor["priority"]
+
+    cond do
+      patterns == [] ->
+        {:drop, "has no filenamePattern"}
+
+      not main? ->
+        {:drop, "needs the extension's code, which Bee can't run"}
+
+      true ->
+        {:ok,
+         %{"viewType" => view_type, "selector" => patterns}
+         |> Map.merge(
+           if priority in ~w(default builtin option), do: %{"priority" => priority}, else: %{}
+         )
+         |> Map.merge(
+           case text(editor["displayName"], nls) do
+             nil -> %{}
+             name -> %{"displayName" => name}
+           end
+         )}
+    end
+  end
+
+  defp custom_editor(_editor, _nls, _main?), do: {:drop, "needs a viewType and a selector"}
 
   # Snippet files that are in the extension.
   defp snippet(%{"path" => path} = s, dir) when is_binary(path) do

@@ -82,6 +82,7 @@ installed again.
 | Snippets | Yes |
 | JSON schema associations | Yes |
 | Views and their containers | Webview views (`"type": "webview"`) in a container of the extension's in the activity bar, the panel or the secondary side bar (on the right), or in Bee's Explorer or Search. Tree views are left out |
+| Custom editors | Yes: the files they are for, their names and priorities. The extension's code draws them, see below |
 | Localized texts (`%key%`) | Resolved from the extension's default language file |
 | Anything else | Ignored for now |
 
@@ -142,7 +143,8 @@ setting, set a context key, show a status bar item, run a command.
 As with plugins, declaring is immediate and running is lazy. An extension's
 code starts in a folder on its activation events: with the folder, when the
 folder contains a matching file, when a file of one of its languages is
-opened, when one of its commands is run, or when one of its views is shown.
+opened, when one of its commands is run, when one of its views is shown, or
+when a file is opened in one of its custom editors.
 An extension that declares a language is started for that language's files
 even if it did not say so.
 
@@ -165,6 +167,7 @@ are installed and their code runs.
 | Extension state | Global and per-folder state and storage folders |
 | Languages | See below |
 | Webview panels and views | See below |
+| Custom editors | `window.registerCustomEditorProvider`. See below |
 | Terminals | `window.createTerminal`: a terminal in the panel beside yours, with its name, shell, folder and environment; text sent to it, shown, disposed of. What an extension adds to the environment of every new terminal (`environmentVariableCollection`) is applied. There is no shell integration |
 | Documents that aren't files | `registerFileSystemProvider` and `registerTextDocumentContentProvider`: what `workspace.openTextDocument` and `workspace.fs` give for another scheme than `file` |
 | Diffs | The `vscode.diff` command: a tab with the lines that differ. See below |
@@ -237,6 +240,30 @@ or in the secondary side bar on the right (`Ctrl+Alt+B`), where VS Code
 version. Its extension starts and draws it when the view is first shown. In
 either side bar the page stays loaded while it is not shown.
 
+### Custom editors
+
+An extension can be the editor of a kind of file: a visual editor for a data
+format, a viewer for a binary one. It declares the files in its
+`package.json` and registers a provider for them
+(`window.registerCustomEditorProvider`).
+
+A matching file then opens in the extension's editor instead of as text:
+the file's own tab, showing a webview page like the ones above, which the
+provider draws when the tab opens. An editor declared as only an `option`
+is offered under **Open With…**, where the text editor is always the other
+choice, and `workbench.editorAssociations` decides as for every editor.
+
+| The provider | In Bee |
+|---|---|
+| `CustomTextEditorProvider` | The file is a text document. It is Bee's own document for the file: what the extension edits appears in a text editor of the same file, and the other way round. The tab shows unsaved changes, and Save writes the file |
+| `CustomReadonlyEditorProvider` | The provider opens its own document for the file and draws it |
+| `CustomEditorProvider` | As above. When the provider reports a change, the tab shows unsaved changes, and Save asks the provider to save |
+
+Not there yet: undo and redo of a custom document's edits from Bee's own
+commands, Revert, Save As, backups for hot exit, and the same editor in two
+groups at once (splitting). A file has an extension's editor once in a window.
+Closing a tab with unsaved changes asks first, as for any file.
+
 ### Diffs
 
 `vscode.diff` opens a tab comparing two documents, files or documents of
@@ -289,7 +316,7 @@ One package then works in both editors, with the richer integration in Bee.
 
 ## Limits worth knowing
 
-- Only what the tables above list is used. Tree views, custom editors,
+- Only what the tables above list is used. Tree views,
   debuggers, tasks, notebooks, comments and source control providers are
   not available. An extension built mainly around
   one of those will load and do little.

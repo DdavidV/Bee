@@ -168,7 +168,7 @@ defmodule BeeWeb.EditorLive.Extensions do
   end
 
   # The LiveViews plugins draw their views and editors with
-  # (BeeWeb.Workbench.PluginLive): `{:view | :editor, id} => %{plugin, name,
+  # (BeeWeb.Workbench.PluginLive): `{:view | :editor | :custom_editor, id} => %{plugin, name,
   # module, status, load_id}`, `module` once the plugin's code is loaded.
   def load_live(socket) do
     plugins = Map.new(socket.assigns[:plugins] || [], &{&1.name, &1})
@@ -182,6 +182,10 @@ defmodule BeeWeb.EditorLive.Extensions do
         for(
           %{live: live, source: {:plugin, name}} = e <- Bee.Views.editors(),
           do: {{:editor, e.id}, name, live}
+        ) ++
+        for(
+          %{plugin: name, live: live, view_type: view_type} <- Bee.CustomEditors.live_editors(),
+          do: {{:custom_editor, view_type}, name, live}
         )
 
     live =
@@ -213,7 +217,7 @@ defmodule BeeWeb.EditorLive.Extensions do
       ]
 
       on_screen =
-        for(%{kind: :live, plugin: name} <- socket.assigns[:tabs] || [], do: name) ++
+        for(%{kind: kind, plugin: name} <- open_tabs(socket), kind in [:live, :custom], do: name) ++
           for %{live: live, container: container, source: {:plugin, name}} <- Bee.Views.views(),
               live != nil and container in shown,
               do: name

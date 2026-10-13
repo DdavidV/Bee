@@ -1,0 +1,42 @@
+/* The hex viewer, in Bee's theme: the --vscode-* variables are the color
+   theme's. Class names carry the plugin's name: the sheet is the page's. */
+.hex-view { min-height: 100%; font-size: 13px; }
+.hex-view-bar {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--vscode-editor-background);
+  border-bottom: 1px solid var(--vscode-editorGroup-border, rgb(128 128 128 / 0.3));
+}
+.hex-view-name { font-weight: 600; }
+.hex-view-grow { flex: 1; }
+.hex-view-bar button {
+  padding: 1px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  background: var(--vscode-button-secondaryBackground, rgb(128 128 128 / 0.2));
+  color: var(--vscode-button-secondaryForeground, inherit);
+}
+.hex-view-bar button:disabled { opacity: 0.4; cursor: default; }
+.hex-view-bar input {
+  width: 11em;
+  padding: 1px 6px;
+  border: 1px solid var(--vscode-input-border, transparent);
+  border-radius: 3px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+}
+.hex-view table {
+  margin: 8px 12px;
+  border-collapse: collapse;
+  font-family: var(--vscode-editor-font-family, ui-monospace, monospace);
+  white-space: pre;
+}
+.hex-view th { padding-right: 16px; font-weight: normal; text-align: left; opacity: 0.55; }
+.hex-view-bytes { padding-right: 16px; }
+.hex-view-text { color: var(--vscode-textPreformat-foreground, inherit); }
+.hex-view-note { padding: 12px; opacity: 0.7; }

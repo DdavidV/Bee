@@ -47,7 +47,10 @@ defmodule Bee.Plugin.LiveView do
 
     * `plugin`, `root` – the plugin and the folder of the window's workspace
     * `id` – the view's or editor's id; `kind` – `:view` or `:editor`
-    * `params` – what `Bee.API.open_editor/3` was given (`%{}` for a view)
+    * `params` – what `Bee.API.open_editor/3` was given (`%{}` for a view);
+      for a custom editor (`contributes.customEditors` with `live`, see
+      `Bee.CustomEditors`) `%{"path" => the file's absolute path}`, `id`
+      being its `viewType` and `kind` `:editor`
     * `window` – the window's process
 
   and these helpers imported:

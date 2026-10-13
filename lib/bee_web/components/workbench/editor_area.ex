@@ -15,7 +15,7 @@ defmodule BeeWeb.Workbench.EditorArea do
   def tab_menu_context(tab, group \\ nil)
 
   def tab_menu_context(%{kind: kind, path: path} = tab, group)
-      when kind in [:file, :media, :binary] do
+      when kind in [:file, :media, :custom, :binary] do
     %{
       # (A right-click acts on the tab's group: it is focused first.)
       "editorGroup" => group,
@@ -317,6 +317,49 @@ defmodule BeeWeb.Workbench.EditorArea do
           active={tab.path == @group.active}
           focused={@focused}
         />
+        <%!-- A file in an editor a plugin draws (its LiveView, mounted while
+             the tab is open). --%>
+        <div
+          :for={tab <- @group.tabs}
+          :if={tab.kind == :custom and tab[:webview] == nil}
+          id={"custom-editor-#{@group.id}-#{:erlang.phash2(tab.path)}"}
+          data-custom-editor={tab.view_type}
+          data-path={tab.path}
+          class={[
+            "absolute inset-0 overflow-auto bg-editor text-editor-fg",
+            tab.path != @group.active && "hidden"
+          ]}
+        >
+          <BeeWeb.Workbench.PluginLive.plugin_live
+            socket={@socket}
+            state={@live[{:custom_editor, tab.view_type}]}
+            kind="editor"
+            id={tab.view_type}
+            key={"#{@group.id}:#{tab.path}"}
+            root={@root}
+            params={%{"path" => tab.path}}
+          />
+        </div>
+        <%!-- A file in a custom editor of a VS Code extension: its page,
+             once the extension's provider is there to draw it. --%>
+        <div
+          :for={tab <- @group.tabs}
+          :if={tab.kind == :custom and tab[:webview] != nil}
+          data-custom-editor={tab.view_type}
+          data-path={tab.path}
+          class={["absolute inset-0 bg-editor text-editor-fg", tab.path != @group.active && "hidden"]}
+        >
+          <BeeWeb.Workbench.Webview.webview
+            :if={@webviews[tab.webview]}
+            panel={@webviews[tab.webview]}
+            theme={@color_theme_id}
+            active={tab.path == @group.active}
+            origin={@webview_origin}
+          />
+          <div :if={!@webviews[tab.webview]} class="px-4 py-2 text-xs opacity-50">
+            Waiting for {tab.plugin} to show the file…
+          </div>
+        </div>
         <BeeWeb.Workbench.BinaryEditor.binary_editor
           :for={tab <- @group.tabs}
           :if={tab.kind == :binary and tab.path == @group.active}
@@ -394,8 +437,9 @@ defmodule BeeWeb.Workbench.EditorArea do
   end
 
   # A tab's name: the file's, or "Extension: <plugin>".
-  def tab_label(%{kind: kind, path: path}, _details) when kind in [:file, :media, :binary],
-    do: Path.basename(path)
+  def tab_label(%{kind: kind, path: path}, _details)
+      when kind in [:file, :media, :custom, :binary],
+      do: Path.basename(path)
 
   def tab_label(%{kind: :settings}, _details), do: "Settings"
   def tab_label(%{kind: :live, title: title}, _details), do: title

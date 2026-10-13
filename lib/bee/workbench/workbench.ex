@@ -172,10 +172,14 @@ defmodule Bee.Workbench do
   # says which, see `Bee.CustomEditors` and `BeeWeb.Workbench.MediaPreview`)
   # or, for a file not opened as text – `reason` `:binary`, or `:large` –
   # a note saying so (`kind: :binary`, `BeeWeb.Workbench.BinaryEditor`). Like a text file's, these can be open
-  # in several groups, and as a preview.
+  # in several groups, and as a preview. So is a file in an editor a plugin
+  # draws (`kind: :custom`; `view_type` and `plugin` say which: a LiveView
+  # of the plugin's, see `Bee.CustomEditors`) – or a VS Code extension, in
+  # a webview: then `webview` is its panel's id (`Bee.Webviews`), and the
+  # file has that editor once in the window.
 
   @doc "Whether `tab` is the editor of a file (as text or not): its `path` is the file's."
-  def file?(tab), do: tab.kind in [:file, :media, :binary]
+  def file?(tab), do: tab.kind in [:file, :media, :custom, :binary]
 
   @doc "Whether `path` has an editor, in any group."
   def open?(wb, path), do: Enum.any?(all_tabs(wb), &(&1.path == path))
@@ -241,7 +245,8 @@ defmodule Bee.Workbench do
   file shown.
   """
   def split(wb, direction) when direction in [:right, :down] do
-    case Enum.find(wb.tabs, &(&1.path == wb.active and file?(&1))) do
+    # (An extension's custom editor is open once: it has one page.)
+    case Enum.find(wb.tabs, &(&1.path == wb.active and file?(&1) and &1[:webview] == nil)) do
       nil ->
         wb
 
@@ -554,15 +559,22 @@ defmodule Bee.Workbench do
     }
 
     case Enum.find(wb.tabs, &(&1.path == path)) do
-      %{kind: :file} -> activate_editor(wb, path)
+      %{kind: :file} ->
+        activate_editor(wb, path)
+
       # Shown as text after all (Open Anyway): in the tab that said it isn't.
-      %{} = old -> {replace_tab(wb, %{tab | preview: preview?(old)}), []}
-      nil -> place(wb, tab, preview?)
+      # (An extension's editor there is told; the buffer is the text's now.)
+      %{} = old ->
+        {replace_tab(wb, %{tab | preview: preview?(old)}),
+         if(old[:webview], do: [{:webview_closed, old.webview}], else: [])}
+
+      nil ->
+        place(wb, tab, preview?)
     end
   end
 
   @doc """
-  Shows a file that isn't text – `tab`, of `kind: :media` or `:binary` –
+  Shows a file that isn't text – `tab`, of `kind: :media`, `:custom` or `:binary` –
   in the focused group, as `editor_opened/5` does a text file: as a
   preview (`preview?`) in the group's preview tab.
   """
@@ -604,10 +616,47 @@ defmodule Bee.Workbench do
   defp replace_tab(wb, %{path: path} = tab),
     do: %{wb | tabs: Enum.map(wb.tabs, &if(&1.path == path, do: tab, else: &1)), active: path}
 
-  # `{wb, effects}` once the focused group's tab `old` is no more: a text
-  # file's editor closes.
-  defp file_gone(wb, %{kind: :file, path: path}), do: {wb, file_closed(wb, path, true)}
-  defp file_gone(wb, _old), do: {wb, []}
+  # `{wb, effects}` once the focused group's tab `old` is no more.
+  defp file_gone(wb, old), do: {wb, editor_closed(wb, old, true)}
+
+  # The effects of the focused group's editor `tab` going (`gone?` false:
+  # it is only moving to another group): a text file's editor closes, an
+  # extension is told that its panel or its custom editor is disposed of.
+  defp editor_closed(wb, %{kind: :file, path: path}, gone?), do: file_closed(wb, path, gone?)
+  defp editor_closed(_wb, %{kind: :webview, webview: id}, true), do: [{:webview_closed, id}]
+  defp editor_closed(_wb, %{kind: :diff, diff: id}, true), do: [{:diff_closed, id}]
+
+  # (A custom editor of a text file has its buffer too.)
+  defp editor_closed(wb, %{kind: :custom, webview: id, path: path}, true),
+    do: [{:webview_closed, id}] ++ if(elsewhere?(wb, path), do: [], else: [{:close_buffer, path}])
+
+  defp editor_closed(_wb, _tab, _gone?), do: []
+
+  @doc "Whether the custom editor whose page is webview `id` has unsaved changes."
+  def set_webview_dirty(wb, id, dirty) do
+    update = fn tabs ->
+      Enum.map(tabs, fn
+        %{webview: ^id, kind: :custom} = tab ->
+          tab = %{tab | dirty: dirty}
+          if dirty, do: Map.put(tab, :preview, false), else: tab
+
+        tab ->
+          tab
+      end)
+    end
+
+    %{wb | tabs: update.(wb.tabs), others: Enum.map(wb.others, &%{&1 | tabs: update.(&1.tabs)})}
+  end
+
+  @doc "Closes the custom editor whose page is webview `id` (its extension disposed of it)."
+  def close_custom_editor(wb, id) do
+    Enum.reduce(groups(wb), {wb, []}, fn group, acc ->
+      case Enum.find(group.tabs, &(&1.kind == :custom and &1[:webview] == id)) do
+        nil -> acc
+        %{path: path} -> chain(acc, &close_editor(&1, group.id, path))
+      end
+    end)
+  end
 
   @doc "What is known of the file shown in `path`'s tabs (`kind: :media`): its size, its version."
   def set_file_info(wb, path, info),
@@ -695,14 +744,7 @@ defmodule Bee.Workbench do
       index ->
         remaining = List.delete_at(wb.tabs, index)
 
-        effects =
-          case Enum.at(wb.tabs, index) do
-            %{kind: :file} -> file_closed(wb, path, gone?)
-            # Its extension is told: the panel is disposed of.
-            %{kind: :webview, webview: id} when gone? -> [{:webview_closed, id}]
-            %{kind: :diff, diff: id} when gone? -> [{:diff_closed, id}]
-            _ -> []
-          end
+        effects = editor_closed(wb, Enum.at(wb.tabs, index), gone?)
 
         wb = %{wb | tabs: remaining}
 

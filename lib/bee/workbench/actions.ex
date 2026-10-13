@@ -121,7 +121,7 @@ defmodule Bee.Workbench.Actions do
 
     Workbench.chain(wb, fn wb ->
       case Enum.find(wb.tabs, &(&1.path == tab_path(wb, args))) do
-        %{kind: kind, path: path} when kind in [:media, :binary] ->
+        %{kind: kind, path: path} when kind in [:media, :custom, :binary] ->
           {wb, [{:open_file, path, {:with, Bee.CustomEditors.text()}}]}
 
         _ ->
@@ -190,7 +190,10 @@ defmodule Bee.Workbench.Actions do
 
   # The editor a tab shows its file in, as Open With… names them.
   defp editor_id(%{kind: :file}), do: Bee.CustomEditors.text()
-  defp editor_id(%{kind: :media, view_type: view_type}), do: view_type
+
+  defp editor_id(%{kind: kind, view_type: view_type}) when kind in [:media, :custom],
+    do: view_type
+
   defp editor_id(_other), do: nil
 
   defp default_editor(wb, path) do

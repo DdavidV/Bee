@@ -8,6 +8,10 @@ defmodule BeeWeb.EditorLive.Webviews do
   panel that is the page of a view, shown in the sidebar or the panel
   (`BeeWeb.Workbench.Sidebar`). Its extension is asked to draw it when the
   view is first shown here.
+
+  And their custom editors (`window.registerCustomEditorProvider`,
+  `Bee.CustomEditors`): a panel that is the page of a file's tab, asked
+  for when the file opens in it (`BeeWeb.EditorLive.Editors`).
   """
 
   import Phoenix.Component, only: [assign: 2, update: 3]
@@ -32,6 +36,27 @@ defmodule BeeWeb.EditorLive.Webviews do
       do: Bee.Webviews.put_state(socket.assigns.root, id, params["state"])
 
     {:halt, socket}
+  end
+
+  # Save (the key, the menu) with no text editor shown: an extension's
+  # custom editor saves – the file's buffer, or its provider's document.
+  def handle_event("save_active", _params, socket) do
+    wb = workbench(socket)
+
+    case Enum.find(wb.tabs, &(&1.path == wb.active)) do
+      %{kind: :custom, webview: id, path: path} ->
+        case socket.assigns.webviews[id] do
+          %{custom: %{text?: false}} ->
+            Bee.Extensions.Host.webview(socket.assigns.root, id, :save)
+            {:halt, socket}
+
+          _ ->
+            {:halt, BeeWeb.EditorLive.Editors.save_file(socket, path, nil)}
+        end
+
+      _ ->
+        {:halt, socket}
+    end
   end
 
   def handle_event(_event, _params, socket), do: {:cont, socket}
@@ -74,12 +99,18 @@ defmodule BeeWeb.EditorLive.Webviews do
   def handle_info({:webview, id, {:message, message}}, socket),
     do: {:halt, push_event(socket, "webview:message", %{id: id, message: message})}
 
+  # A custom editor's document (its provider's) has unsaved changes, or
+  # was saved.
+  def handle_info({:webview, id, {:dirty, dirty?}}, socket),
+    do: {:halt, change(socket, &Workbench.set_webview_dirty(&1, id, dirty?))}
+
   def handle_info({:webview, id, :disposed}, socket) do
     {:halt,
      socket
      |> put_private(:resolved_views, MapSet.delete(resolved(socket), id))
      |> update(:webviews, &Map.delete(&1, id))
-     |> change(&Workbench.close_editor(&1, "webview:" <> id))}
+     |> change(&Workbench.close_editor(&1, "webview:" <> id))
+     |> change(&Workbench.close_custom_editor(&1, id))}
   end
 
   def handle_info(_message, socket), do: {:cont, socket}
@@ -117,6 +148,11 @@ defmodule BeeWeb.EditorLive.Webviews do
   defp show_webview(socket, %{view: view} = panel, _activate?) when is_binary(view),
     do: update(socket, :webviews, &Map.put(&1, panel.id, panel))
 
+  # Nor is a custom editor's: the tab of its file shows it, in the window
+  # that opened it.
+  defp show_webview(socket, %{custom: %{}} = panel, _activate?),
+    do: update(socket, :webviews, &Map.put(&1, panel.id, panel))
+
   defp show_webview(socket, panel, activate?) do
     socket
     |> update(:webviews, &Map.put(&1, panel.id, panel))
@@ -126,7 +162,8 @@ defmodule BeeWeb.EditorLive.Webviews do
   # A page of this window's: a panel in one of its tabs, or a view's.
   defp shown?(socket, id) do
     Workbench.open?(workbench(socket), "webview:" <> id) or
-      match?(%{view: view} when is_binary(view), socket.assigns.webviews[id])
+      match?(%{view: view} when is_binary(view), socket.assigns.webviews[id]) or
+      Enum.any?(open_tabs(socket), &(&1.kind == :custom and &1[:webview] == id))
   end
 
   # The webview views this window asked their extensions to draw.
@@ -154,7 +191,7 @@ defmodule BeeWeb.EditorLive.Webviews do
     # The panels shown: each group's active editor, when it is one.
     shown = fn wb ->
       for group <- Workbench.groups(wb),
-          %{kind: :webview, webview: id, path: path} <- group.tabs,
+          %{kind: kind, webview: id, path: path} when kind in [:webview, :custom] <- group.tabs,
           path == group.active,
           into: views_shown(wb, views),
           do: id

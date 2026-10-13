@@ -37,9 +37,16 @@ defmodule Bee.API do
   @doc """
   Opens `path` (absolute, or relative to the workspace) in an editor.
   Options: `line:` (1-based) to go to, or `selection: {from, to}` (UTF-8 byte
-  offsets) to select.
+  offsets) to select; or `with:` – the editor to open it in, as Open With…
+  does: `"default"` (the text editor) or a custom editor's `viewType`, such
+  as the plugin's own (`contributes.customEditors`).
   """
-  def open_file(%Context{} = ctx, path, opts \\ []) do
+  def open_file(ctx, path, opts \\ [])
+
+  def open_file(%Context{} = ctx, path, [{:with, editor} | _]),
+    do: window(ctx, {:open_file_with, Path.expand(to_string(path), ctx.root), to_string(editor)})
+
+  def open_file(%Context{} = ctx, path, opts) do
     reveal =
       cond do
         line = opts[:line] -> %{line: line}

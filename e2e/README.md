@@ -101,6 +101,8 @@ A failed test leaves a screenshot and a description of the page in
 | `plugins.spec.mjs` | plugins as folders that appear, change and go; enable and disable; broken ones; a folder's own plugins; Install from VSIX |
 | `example-plugins.spec.mjs` | Bee's example plugins: `word-count`, `upcase`, `insert-date`, `dotenv`, `todos` |
 | `plugin-liveview.spec.mjs` | a plugin's own LiveViews (the `todos-live` example) |
+| `extension-custom-editor.spec.mjs` | custom editors of VS Code extensions (Bee's `hello-editor`): a file in the extension's page, edited through its document or the extension's own, saved; Open With… |
+| `custom-editor.spec.mjs` | a plugin's own editor for files (the `hex-view` example): its files open in it, Open With…, the plugin's command |
 | `extension-details.spec.mjs` | a plugin's details page: README (sanitized), Features |
 | `open-vsx.spec.mjs` | searching and installing from Open VSX (the stand-in), the rate limit |
 | `vscode-extension.spec.mjs` | a VS Code extension's commands, menus, keys, settings, output (Bee's `hello` test extension) |

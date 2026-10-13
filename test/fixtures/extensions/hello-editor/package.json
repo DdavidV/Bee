@@ -1,0 +1,33 @@
+{
+  "name": "hello-editor",
+  "displayName": "Hello Editor",
+  "description": "Bee's test custom editor extension: an editor for *.cards text files (a CustomTextEditorProvider: a line per card, edited through the document), one for *.tally files with a document of its own (a CustomEditorProvider: changed, saved), and one that is only an option, for *.md files.",
+  "version": "0.1.0",
+  "publisher": "bee-tests",
+  "engines": {"vscode": "^1.100.0"},
+  "main": "./extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "customEditors": [
+      {
+        "viewType": "helloEditor.cards",
+        "displayName": "%cards.name%",
+        "selector": [{"filenamePattern": "*.cards"}]
+      },
+      {
+        "viewType": "helloEditor.tally",
+        "displayName": "Tally",
+        "selector": [{"filenamePattern": "*.tally"}],
+        "priority": "default"
+      },
+      {
+        "viewType": "helloEditor.cards",
+        "displayName": "%cards.name%",
+        "selector": [{"filenamePattern": "*.md"}],
+        "priority": "option"
+      },
+      {"viewType": "helloEditor.broken", "displayName": "Broken", "selector": [{"filenamePattern": "*.broken"}]},
+      {"viewType": "helloEditor.nothing", "displayName": "Nothing", "selector": []}
+    ]
+  }
+}

@@ -94,6 +94,12 @@ defmodule BeeWeb.EditorLive.PluginAPI do
     end
   end
 
+  def plugin_request(socket, {:open_file_with, path, editor}) do
+    if File.regular?(path),
+      do: change(socket, &Bee.Workbench.Actions.open_with(&1, [path, editor])),
+      else: Notifications.notify(socket, :error, "Cannot open #{path}: no such file")
+  end
+
   def plugin_request(socket, {:execute_command, id}), do: Commands.run_command(socket, id)
 
   def plugin_request(socket, {:execute_command, id, args}),

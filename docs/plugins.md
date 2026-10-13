@@ -520,6 +520,51 @@ and for an editor the parameters it was opened with.
 one, optionally with a title, parameters and a key. One tab is kept per key,
 so the same editor can be open for several things at once.
 
+**An editor for files.** A LiveView can also be the editor of a kind of
+file, a custom editor as VS Code calls it. Declare it under
+`customEditors`, with the files it is for:
+
+```json
+"customEditors": [
+  {
+    "viewType": "hexView.editor",
+    "displayName": "Hex Viewer",
+    "live": "HexView.EditorLive",
+    "selector": [{"filenamePattern": "*.{bin,dat}"}]
+  },
+  {
+    "viewType": "hexView.editor",
+    "priority": "option",
+    "selector": [{"filenamePattern": "*"}]
+  }
+]
+```
+
+- `viewType` is the editor's id, `displayName` what **Open With…** calls it.
+- `live` is the LiveView. It is mounted in the file's tab, once per tab, and
+  finds the file's absolute path in `@bee.params["path"]`. It reads the
+  file itself.
+- `selector` lists the files, by name. Case is ignored.
+- `priority` says whether those files open in it by themselves (`default`,
+  which is what you get without one) or only when the user chooses it with
+  **Open With…** (`option`). Several entries may share a `viewType`, as
+  above: the default for some files, an option for all.
+
+The tab is the file's own: it carries the file's name and icon, follows the
+file when it is renamed, and offers the text editor again under **Reopen
+Editor With…**. The user can make your editor the default for other files,
+or take it away from yours, with `workbench.editorAssociations`. Opening a
+file in your editor starts your plugin.
+
+(A VS Code extension's custom editors work too, drawn by its code in a
+webview: see [VS Code extensions](vscode-extensions.md#custom-editors).)
+
+To open a file in it from your own code:
+
+```elixir
+Bee.API.open_file(ctx, path, with: "hexView.editor")
+```
+
 **Styling.** A LiveView can use the color theme's CSS variables, named as in
 VS Code (`--vscode-editor-background` and so on), and the classes of Bee's
 own styles, so it follows the theme. Anything more goes in a stylesheet
@@ -615,7 +660,7 @@ format, for comments, brackets, auto-closing pairs, indentation and folding.
 | `iconThemes` | File icon themes in VS Code's format. Only image icons, not icon fonts |
 | `snippets` | Snippet files in VS Code's format, for one language or all |
 | `jsonValidation` | A JSON Schema for JSON files matching a pattern. Gives them validation, completion and hover |
-| `customEditors` | More files for Bee's image, audio and video previews, by file name: an entry with the `viewType` `imagePreview.previewEditor`, `vscode.audioPreview` or `vscode.videoPreview` and a `selector` of `filenamePattern`s, as in VS Code. Other `viewType`s open nothing |
+| `customEditors` | An editor of your own for a kind of file, drawn by a LiveView (see step 6). Or more files for Bee's image, audio and video previews: an entry with the `viewType` `imagePreview.previewEditor`, `vscode.audioPreview` or `vscode.videoPreview` and a `selector` of `filenamePattern`s, as in VS Code |
 | `menubar` | A new menu in the menu bar |
 
 ### 10. Choose when to start
@@ -671,6 +716,7 @@ files from the start needs `*`.
 | `dotenv` | A language and its highlighting mode |
 | `todos` | Views as data: a tree, an input box, inline buttons, a pick list, a status bar item, editor decorations, and a hover that asks the server part |
 | `todos-live` | LiveViews: a sidebar view and an editor tab drawn by the plugin, asking the server part and receiving its messages, a stylesheet, a hook |
+| `hex-view` | A custom editor: a LiveView that shows any file's bytes, the default for `*.bin` and `*.dat`, an option under Open With… for every file, and a command that opens a file in it |
 
 The built-in Git plugin, in `priv/plugins/git`, is a larger example of all
 of it together.
