@@ -219,6 +219,50 @@
         "runtime": "server"
       },
       {
+        "command": "imagePreview.zoomIn",
+        "category": "Image Preview",
+        "title": "Zoom In",
+        "runtime": "client",
+        "enablement": "activeCustomEditorId == 'imagePreview.previewEditor'"
+      },
+      {
+        "command": "imagePreview.zoomOut",
+        "category": "Image Preview",
+        "title": "Zoom Out",
+        "runtime": "client",
+        "enablement": "activeCustomEditorId == 'imagePreview.previewEditor'"
+      },
+      {
+        "command": "workbench.action.reopenWithEditor",
+        "category": "View",
+        "title": "Reopen Editor With…",
+        "runtime": "server",
+        "enablement": "resourceScheme == file"
+      },
+      {
+        "command": "explorer.openWith",
+        "category": "File",
+        "title": "Open With…",
+        "runtime": "server"
+      },
+      {
+        "command": "bee.openWith",
+        "title": "Open With Editor",
+        "runtime": "server"
+      },
+      {
+        "command": "bee.setDefaultEditor",
+        "title": "Set Default Editor",
+        "runtime": "server"
+      },
+      {
+        "command": "workbench.action.reopenTextEditor",
+        "category": "View",
+        "title": "Reopen Editor With Text Editor",
+        "runtime": "server",
+        "enablement": "activeCustomEditorId || activeEditorIsBinary"
+      },
+      {
         "command": "workbench.action.closeActiveEditor",
         "category": "View",
         "title": "Close Editor",
@@ -869,11 +913,13 @@
         {"command": "workbench.action.keepEditor", "group": "1_close@4", "when": "!activeEditorIsNotPreview"},
         {"command": "workbench.action.splitEditor", "group": "3_split@1", "when": "resourceScheme == file"},
         {"command": "workbench.action.splitEditorDown", "group": "3_split@2", "when": "resourceScheme == file"},
-        {"command": "copyFilePath", "group": "2_copy@1", "when": "resourceScheme == file"}
+        {"command": "copyFilePath", "group": "2_copy@1", "when": "resourceScheme == file"},
+        {"command": "workbench.action.reopenWithEditor", "group": "4_open@1", "when": "resourceScheme == file"}
       ],
       "explorer/context": [
         {"command": "explorer.newFile", "group": "navigation@1", "when": "explorerResourceIsFolder"},
         {"command": "explorer.newFolder", "group": "navigation@2", "when": "explorerResourceIsFolder"},
+        {"command": "explorer.openWith", "group": "navigation@3", "when": "!explorerResourceIsFolder"},
         {"command": "filesExplorer.cut", "group": "5_cutcopypaste@1", "when": "!explorerResourceIsRoot"},
         {"command": "filesExplorer.copy", "group": "5_cutcopypaste@2", "when": "!explorerResourceIsRoot"},
         {"command": "filesExplorer.paste", "group": "5_cutcopypaste@3"},
@@ -882,6 +928,13 @@
       ],
       "commandPalette": [
         {"command": "workbench.action.keepEditor", "when": "activeEditor && !activeEditorIsNotPreview"},
+        {"command": "workbench.action.reopenTextEditor", "when": "activeCustomEditorId || activeEditorIsBinary"},
+        {"command": "workbench.action.reopenWithEditor", "when": "resourceScheme == file"},
+        {"command": "explorer.openWith", "when": "false"},
+        {"command": "bee.openWith", "when": "false"},
+        {"command": "bee.setDefaultEditor", "when": "false"},
+        {"command": "imagePreview.zoomIn", "when": "activeCustomEditorId == 'imagePreview.previewEditor'"},
+        {"command": "imagePreview.zoomOut", "when": "activeCustomEditorId == 'imagePreview.previewEditor'"},
         {"command": "editor.action.clipboardCutAction", "when": "false"},
         {"command": "editor.action.clipboardCopyAction", "when": "false"},
         {"command": "editor.action.clipboardPasteAction", "when": "false"},

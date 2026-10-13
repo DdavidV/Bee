@@ -337,3 +337,32 @@ html[data-pane-drag] .view-pane {
 }
 [data-editor-area][data-drop="right"]::after { left: 50%; }
 [data-editor-area][data-drop="down"]::after { top: 50%; }
+
+/* A file shown as it is (the MediaPreview hook): centred, scrolled when
+   zoomed past the editor; see-through parts of an image over a chequer. */
+.media-box {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  overflow: auto;
+  --chequer: color-mix(in srgb, var(--color-editor-fg) 10%, transparent);
+}
+.media-box > * { margin: auto; flex: none; }
+.media-box img {
+  cursor: zoom-in;
+  max-width: none;
+  background-image:
+    linear-gradient(45deg, var(--chequer) 25%, transparent 25%, transparent 75%, var(--chequer) 75%),
+    linear-gradient(45deg, var(--chequer) 25%, transparent 25%, transparent 75%, var(--chequer) 75%);
+  background-position: 0 0, 8px 8px;
+  background-size: 16px 16px;
+}
+.media-box.zoom-out img { cursor: zoom-out; }
+.media-box img.fit { max-width: 100%; max-height: 100%; object-fit: contain; }
+.media-box img.pixelated { image-rendering: pixelated; }
+.media-box video { max-width: 100%; max-height: 100%; }
+.media-box audio { width: min(100% - 2rem, 32rem); }
+.media-error { padding: 1.5rem; text-align: center; font-size: 0.875rem; }
+.media-error > * + * { margin-top: 0.5rem; }
+#status-media { display: flex; gap: 1rem; }
+#status-media:empty { display: none; }

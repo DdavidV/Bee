@@ -84,6 +84,7 @@ A failed test leaves a screenshot and a description of the page in
 | `tabs.spec.mjs` | editor tabs: dragging, middle click, the right-click menu |
 | `split.spec.mjs` | editor groups: split right and down, one file in two groups typed in both, tabs dragged between groups and onto an editor's edge, a group going with its last tab |
 | `preview.spec.mjs` | preview editors: a click reuses one tab; a double click, an edit or Keep Open keeps it; the setting that turns it off |
+| `binary-files.spec.mjs` | files that aren't text: an image shown and zoomed, its status bar, following the disk; audio; a binary file's note and Open Anyway; SVGs and Open With…, the default editor for a kind of file; a very large file's note |
 | `workbench.spec.mjs` | the window: title, menu bar, sidebar and panel (shown, hidden, resized, remembered), activity bar, opening folders, two windows |
 | `workspaces.spec.mjs` | two windows on two folders: files, terminal, search, git |
 | `panel.spec.mjs` | the bottom panel: sections, the terminal list (rename, colour, drag), maximize; hiding icons and tabs, moving References to the panel |

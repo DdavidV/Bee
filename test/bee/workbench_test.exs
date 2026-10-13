@@ -15,6 +15,15 @@ defmodule Bee.WorkbenchTest do
     end)
   end
 
+  defp with_editors_in(wb, paths) do
+    Enum.reduce(paths, wb, fn rel, wb ->
+      {wb, _} =
+        Workbench.wrap(Workbench.editor_opened(wb, Path.join(@root, rel), false, "plaintext"))
+
+      wb
+    end)
+  end
+
   describe "editors" do
     test "opening a closed file asks for it; opening an open one activates it" do
       assert {%{tabs: []}, [{:open_file, "/ws/a"}]} = Workbench.open_editor(wb(), "/ws/a")
@@ -24,6 +33,98 @@ defmodule Bee.WorkbenchTest do
 
       assert {%{active: "/ws/a"}, [{:push, "cm:activate", %{path: "/ws/a"}}]} =
                Workbench.open_editor(wb, "/ws/a")
+    end
+
+    test "a file that isn't text has an editor of another kind, in a tab like a file's" do
+      image = %{
+        path: "/ws/a.png",
+        kind: :media,
+        media: :image,
+        view_type: "imagePreview.previewEditor"
+      }
+
+      # CodeMirror puts its file away.
+      {wb, effects} = Workbench.viewer_opened(with_editors(["a"]), image)
+
+      assert [%{path: "/ws/a"}, %{path: "/ws/a.png", kind: :media, dirty: false, preview: false}] =
+               wb.tabs
+
+      assert wb.active == "/ws/a.png"
+      assert effects == [{:push, "cm:deactivate", %{group: wb.group}}]
+
+      assert Workbench.active_file(wb) == nil
+      assert Workbench.active_resource(wb) == "/ws/a.png"
+
+      assert %{
+               "resourcePath" => "/ws/a.png",
+               "resourceScheme" => "file",
+               "resourceExtname" => ".png",
+               "activeCustomEditorId" => "imagePreview.previewEditor",
+               "activeEditorIsBinary" => false,
+               "editorLangId" => nil
+             } = Workbench.context(wb)
+
+      # Open here: shown.
+      assert {%{active: "/ws/a.png"}, [{:push, "cm:deactivate", _}]} =
+               wb
+               |> Workbench.activate_editor("/ws/a")
+               |> elem(0)
+               |> Workbench.open_editor("/ws/a.png")
+
+      {wb, _} = Workbench.viewer_opened(wb, %{path: "/ws/b.bin", kind: :binary})
+
+      assert %{"activeCustomEditorId" => nil, "activeEditorIsBinary" => true} =
+               Workbench.context(wb)
+
+      # Closing one has no buffer to close.
+      assert {%{active: "/ws/a.png"}, [{:push, "cm:deactivate", _}]} =
+               Workbench.close_editor(wb, "/ws/b.bin")
+    end
+
+    test "previews: an image takes a previewed file's tab, and a file an image's" do
+      {wb, _} = Workbench.wrap(Workbench.editor_opened(wb(), "/ws/a", false, "plaintext", true))
+
+      {wb, effects} = Workbench.viewer_opened(wb, %{path: "/ws/a.png", kind: :media}, true)
+      assert [%{path: "/ws/a.png", preview: true}] = wb.tabs
+      assert {:close_buffer, "/ws/a"} in effects
+      assert {:push, "cm:close", %{path: "/ws/a", group: wb.group}} in effects
+
+      assert {%{tabs: [%{path: "/ws/b", kind: :file}]}, []} =
+               Workbench.wrap(Workbench.editor_opened(wb, "/ws/b", false, "plaintext", true))
+
+      wb = Workbench.keep_editor(wb, "/ws/a.png")
+      {wb, _} = Workbench.viewer_opened(wb, %{path: "/ws/c.bin", kind: :binary}, true)
+      assert [%{path: "/ws/a.png", preview: false}, %{path: "/ws/c.bin", preview: true}] = wb.tabs
+    end
+
+    test "a file shown as something else becomes text in its tab (Open Anyway)" do
+      {wb, _} =
+        Workbench.viewer_opened(with_editors(["a"]), %{path: "/ws/b.bin", kind: :binary}, true)
+
+      wb = with_editors_in(wb, ["c"])
+
+      {wb, []} = Workbench.wrap(Workbench.editor_opened(wb, "/ws/b.bin", false, "plaintext"))
+
+      assert [
+               %{path: "/ws/a"},
+               %{path: "/ws/b.bin", kind: :file, preview: true},
+               %{path: "/ws/c"}
+             ] =
+               wb.tabs
+
+      assert wb.active == "/ws/b.bin"
+      assert Workbench.active_file(wb) == "/ws/b.bin"
+    end
+
+    test "an image splits like a file, and follows its file's size" do
+      {wb, _} =
+        Workbench.viewer_opened(wb(), %{path: "/ws/a.png", kind: :media, size: 1, version: 1})
+
+      assert {%{others: [_]}, effects} = Workbench.split(wb, :right)
+      assert {:open_file, "/ws/a.png"} in effects
+
+      wb = Workbench.set_file_info(wb, "/ws/a.png", %{size: 2, version: 7})
+      assert [%{size: 2, version: 7}] = wb.tabs
     end
 
     test "a plugin's details open as a preview: in the preview tab, until kept" do

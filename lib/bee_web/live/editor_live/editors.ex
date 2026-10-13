@@ -141,6 +141,7 @@ defmodule BeeWeb.EditorLive.Editors do
   # and then at most every @fs_ms while changes keep coming (a build, a
   # log), each folder once.
   def handle_info({:fs_changed, path}, socket) do
+    socket = media_changed(socket, path)
     dir = Path.dirname(path)
 
     case socket.private[:fs_dirs] do
@@ -242,8 +243,31 @@ defmodule BeeWeb.EditorLive.Editors do
   # Opens `path` in a new tab. `text`: unsaved text to carry over (a file
   # that was moved with unsaved changes).
   # `preview?`: in the tab that the next previewed file reuses.
-  def open_buffer(socket, path, text \\ nil, preview? \\ false) do
-    with {:ok, buffer} <- Buffer.open(path) do
+  #
+  # As VS Code does, not every file is opened as text: an image, audio or
+  # video is shown or played (`Bee.CustomEditors`), a very large file
+  # (`workbench.editorLargeFileConfirmation`) or another binary one
+  # (`Bee.Editor.Buffer`) only said to be so. `editor` asks for one way: the
+  # text editor (`"default"`: Open Anyway, Open With…), or a `viewType`.
+  # Without it a file open already opens the same way again.
+  def open_buffer(socket, path, text \\ nil, preview? \\ false, editor \\ nil) do
+    text_editor = Bee.CustomEditors.text()
+    settings = socket.assigns.settings
+    tabs = Enum.filter(Workbench.all_tabs(workbench(socket)), &(&1.path == path))
+
+    editor =
+      cond do
+        editor != nil -> editor
+        text != nil or Enum.any?(tabs, &(&1.kind == :file)) -> text_editor
+        open = Enum.find(tabs, &(&1.kind == :media)) -> open.view_type
+        true -> Bee.CustomEditors.for_file(path, settings["workbench.editorAssociations"])
+      end
+
+    as_text? = editor == text_editor
+
+    with true <- as_text? or editor == nil,
+         :ok <- if(as_text?, do: :ok, else: small_enough(path, settings)),
+         {:ok, buffer} <- Buffer.open(path, self(), binary: as_text?) do
       buffer = if text, do: Buffer.update(path, text), else: buffer
       RecentFiles.add(socket.assigns.root, path)
       lang = Languages.detect(path, first_line: Languages.first_line(buffer.text))
@@ -267,9 +291,88 @@ defmodule BeeWeb.EditorLive.Editors do
       |> LanguageFeatures.push_language_diagnostics(path)
       |> LanguageFeatures.push_language_features(path)
     else
+      false ->
+        case Bee.CustomEditors.viewer(editor) do
+          nil ->
+            cannot_open(socket, path, "no editor #{editor}")
+
+          media ->
+            tab = %{
+              kind: :media,
+              view_type: editor,
+              media: media,
+              src: BeeWeb.MediaController.url(path)
+            }
+
+            open_viewer(socket, path, tab, preview?)
+        end
+
+      :large ->
+        open_viewer(socket, path, %{kind: :binary, reason: :large}, preview?)
+
+      {:error, :binary_file} ->
+        open_viewer(socket, path, %{kind: :binary, reason: :binary}, preview?)
+
       {:error, reason} ->
-        message = "Cannot open #{display_path(socket.assigns.root, path)}: #{inspect(reason)}"
-        Notifications.notify(socket, :error, message)
+        cannot_open(socket, path, inspect(reason))
+    end
+  end
+
+  # Whether the file is one to open as text without asking: `:ok`, or
+  # `:large` (workbench.editorLargeFileConfirmation, in MB).
+  defp small_enough(path, settings) do
+    limit = settings["workbench.editorLargeFileConfirmation"]
+
+    case File.stat(path) do
+      {:ok, %{size: size}} when is_number(limit) and size > limit * 1024 * 1024 -> :large
+      _ -> :ok
+    end
+  end
+
+  # A file that isn't shown as text: `tab` says as what (`Bee.Workbench`).
+  defp open_viewer(socket, path, tab, preview?) do
+    case file_info(path) do
+      {:ok, info} ->
+        RecentFiles.add(socket.assigns.root, path)
+        tab = tab |> Map.merge(info) |> Map.put(:path, path)
+        change(socket, &Workbench.viewer_opened(&1, tab, preview?))
+
+      {:error, reason} ->
+        cannot_open(socket, path, inspect(reason))
+    end
+  end
+
+  defp cannot_open(socket, path, reason) do
+    message = "Cannot open #{display_path(socket.assigns.root, path)}: #{reason}"
+    Notifications.notify(socket, :error, message)
+  end
+
+  # What an editor shows of a file besides its content: its `size`, and a
+  # `version` that is another one once the file has changed.
+  defp file_info(path) do
+    case File.stat(path, time: :posix) do
+      {:ok, %{type: :regular, size: size, mtime: mtime}} ->
+        {:ok, %{size: size, version: :erlang.phash2({mtime, size})}}
+
+      {:ok, _other} ->
+        {:error, :eisdir}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  # An image (audio, video) shown changed on disk: shown as it is now.
+  defp media_changed(socket, path) do
+    with %{} = tab <-
+           Enum.find(
+             Workbench.all_tabs(workbench(socket)),
+             &(&1.path == path and &1.kind == :media)
+           ),
+         {:ok, info} when info != %{size: tab.size, version: tab.version} <- file_info(path) do
+      change(socket, &Workbench.set_file_info(&1, path, info))
+    else
+      _ -> socket
     end
   end
 
@@ -382,7 +485,10 @@ defmodule BeeWeb.EditorLive.Editors do
 
       if path == Keybindings.user_path(), do: Keybindings.reload()
 
-      change(socket, fn wb ->
+      # (Shown as an image in another group: as saved, at once.)
+      socket
+      |> media_changed(path)
+      |> change(fn wb ->
         wb
         |> Workbench.set_dirty(path, false)
         |> Workbench.set_status("Saved #{display_path(wb.root, path)}")

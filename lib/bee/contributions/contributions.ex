@@ -15,6 +15,7 @@ defmodule Bee.Contributions do
     * `Bee.Settings.Configuration` – configuration (settings)
     * `Bee.Views` – viewsContainers, views
     * `Bee.IconThemes` – iconThemes (plugins only)
+    * `Bee.CustomEditors` – customEditors (what opens as an image, audio, video)
 
   Reads cost nothing: what each point has is kept ready, by point
   (`:persistent_term`), and built again when a source registers or goes –
@@ -37,13 +38,14 @@ defmodule Bee.Contributions do
     Bee.IconThemes,
     Bee.ColorThemes,
     Bee.Snippets,
-    Bee.JSONValidation
+    Bee.JSONValidation,
+    Bee.CustomEditors
   ]
 
   # Bee's own manifests, embedded and schema-checked at compile time (see
   # Bee.Priv): a mistake fails `mix compile`. Point checks that need other
   # modules (command handlers) run at boot.
-  @builtin ~w(bee languages)
+  @builtin ~w(bee languages media-preview)
   # The modules implementing a built-in manifest's server commands.
   @builtin_handlers %{"bee" => [Bee.Workbench.Actions]}
 

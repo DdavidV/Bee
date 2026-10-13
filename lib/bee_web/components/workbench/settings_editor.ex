@@ -36,6 +36,16 @@ defmodule BeeWeb.Workbench.SettingsEditor do
         do: assign(socket, errors: %{}),
         else: socket
 
+    # Opened to look for something (`search`: `{text, ref}`, once per ref).
+    socket =
+      case assigns[:search] do
+        {query, _ref} = search ->
+          if search == socket.assigns[:search], do: socket, else: assign(socket, query: query)
+
+        _ ->
+          socket
+      end
+
     {:ok, socket |> assign(assigns) |> load()}
   end
 

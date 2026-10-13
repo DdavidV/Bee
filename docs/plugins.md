@@ -615,6 +615,7 @@ format, for comments, brackets, auto-closing pairs, indentation and folding.
 | `iconThemes` | File icon themes in VS Code's format. Only image icons, not icon fonts |
 | `snippets` | Snippet files in VS Code's format, for one language or all |
 | `jsonValidation` | A JSON Schema for JSON files matching a pattern. Gives them validation, completion and hover |
+| `customEditors` | More files for Bee's image, audio and video previews, by file name: an entry with the `viewType` `imagePreview.previewEditor`, `vscode.audioPreview` or `vscode.videoPreview` and a `selector` of `filenamePattern`s, as in VS Code. Other `viewType`s open nothing |
 | `menubar` | A new menu in the menu bar |
 
 ### 10. Choose when to start

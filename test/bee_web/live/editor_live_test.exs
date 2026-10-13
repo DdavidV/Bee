@@ -497,7 +497,8 @@ defmodule BeeWeb.EditorLiveTest do
                "workbench.action.closeAllEditors",
                "copyFilePath",
                "workbench.action.splitEditor",
-               "workbench.action.splitEditorDown"
+               "workbench.action.splitEditorDown",
+               "workbench.action.reopenWithEditor"
              ]
 
       # Copy Path runs in the page (the clipboard wants the click itself).

@@ -33,6 +33,11 @@ defmodule BeeWeb.EditorLive.Effects do
   def run_effect({:open_file, path, :replace}, socket),
     do: Editors.open_buffer(socket, path, nil, :replace)
 
+  # In the editor asked for (Open With…, Open Anyway): the text editor
+  # ("default"), or the image, audio or video preview.
+  def run_effect({:open_file, path, {:with, editor}}, socket),
+    do: Editors.open_buffer(socket, path, nil, false, editor)
+
   def run_effect({:format, path, what}, socket), do: Formatting.format(socket, path, what, false)
 
   def run_effect({:webview_closed, id}, socket) do
@@ -177,7 +182,10 @@ defmodule BeeWeb.EditorLive.Effects do
   # Applied at once (the change notice comes later): a picked color theme
   # replaces the previewed one without showing the old one in between.
   def run_effect({:update_setting, key, value}, socket) do
-    case Settings.update(:user, key, fn _ -> value end) do
+    # (A function makes the new value of the one the file has.)
+    update = if is_function(value, 1), do: value, else: fn _ -> value end
+
+    case Settings.update(:user, key, update) do
       :ok ->
         root = socket.assigns.root
         Config.load_settings(socket, Settings.all(root), Settings.errors(root))

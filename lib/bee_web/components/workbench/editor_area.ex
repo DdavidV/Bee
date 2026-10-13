@@ -3,8 +3,8 @@ defmodule BeeWeb.Workbench.EditorArea do
   The editor area: the editor groups – one, or the area split in rows and
   columns – each with its tabs and what its active one shows: a file in
   the group's pane (CodeMirror's, the `CodeEditor` hook), or another kind
-  of editor (a plugin's details, the settings, a plugin's LiveView, a
-  webview panel).
+  of editor (a file that isn't text: an image, a binary file; a plugin's
+  details, the settings, a plugin's LiveView, a webview panel).
   """
 
   use BeeWeb, :html
@@ -14,7 +14,8 @@ defmodule BeeWeb.Workbench.EditorArea do
   # `when` keys of a tab's right-click menu (editor/title/context).
   def tab_menu_context(tab, group \\ nil)
 
-  def tab_menu_context(%{kind: :file, path: path} = tab, group) do
+  def tab_menu_context(%{kind: kind, path: path} = tab, group)
+      when kind in [:file, :media, :binary] do
     %{
       # (A right-click acts on the tab's group: it is focused first.)
       "editorGroup" => group,
@@ -23,7 +24,9 @@ defmodule BeeWeb.Workbench.EditorArea do
       "resourceFilename" => Path.basename(path),
       "resourceExtname" => Path.extname(path),
       # (VS Code's name for it: Keep Open is offered for previews.)
-      "activeEditorIsNotPreview" => not Workbench.preview?(tab)
+      "activeEditorIsNotPreview" => not Workbench.preview?(tab),
+      "activeCustomEditorId" => Map.get(tab, :view_type),
+      "activeEditorIsBinary" => kind == :binary
     }
   end
 
@@ -173,7 +176,7 @@ defmodule BeeWeb.Workbench.EditorArea do
             title={tab.title}
           >
             <BeeWeb.Workbench.FileIcon.file_icon
-              :if={@icon_theme && tab.kind == :file}
+              :if={@icon_theme && tab.file}
               theme={@icon_theme}
               path={tab.path}
               language={tab.lang}
@@ -266,6 +269,7 @@ defmodule BeeWeb.Workbench.EditorArea do
             module={BeeWeb.Workbench.SettingsEditor}
             id="settings-editor"
             scope={tab.scope}
+            search={tab[:search]}
             root={@root}
             settings={@settings}
             plugins={@plugins}
@@ -301,6 +305,24 @@ defmodule BeeWeb.Workbench.EditorArea do
           theme={@color_theme_id}
           active={tab.path == @group.active}
           origin={@webview_origin}
+        />
+        <%!-- Files that aren't shown as text: an image, audio or video (each
+             stays while its tab is open: its zoom, where it plays), or a
+             note that the file is binary. --%>
+        <BeeWeb.Workbench.MediaPreview.media_preview
+          :for={tab <- @group.tabs}
+          :if={tab.kind == :media}
+          tab={tab}
+          group={@group.id}
+          active={tab.path == @group.active}
+          focused={@focused}
+        />
+        <BeeWeb.Workbench.BinaryEditor.binary_editor
+          :for={tab <- @group.tabs}
+          :if={tab.kind == :binary and tab.path == @group.active}
+          tab={tab}
+          group={@group.id}
+          limit={@settings["workbench.editorLargeFileConfirmation"]}
         />
         <%!-- Documents an extension compares (vscode.diff). --%>
         <BeeWeb.Workbench.DiffView.diff_view
@@ -351,6 +373,7 @@ defmodule BeeWeb.Workbench.EditorArea do
       group: group.id,
       path: tab.path,
       kind: tab.kind,
+      file: Workbench.file?(tab),
       lang: tab.lang,
       active: active,
       dimmed: active and not assigns.focused,
@@ -359,11 +382,11 @@ defmodule BeeWeb.Workbench.EditorArea do
       italic: tab.kind == :extension or preview,
       label: tab_label(tab, assigns.extension_details),
       title:
-        if(tab.kind == :file,
+        if(Workbench.file?(tab),
           do: Bee.Workspace.FS.relative(assigns.root, tab.path),
           else: tab_label(tab, assigns.extension_details)
         ),
-      color: tab.kind == :file && tab_color(assigns.file_decorations, assigns.root, tab.path),
+      color: Workbench.file?(tab) && tab_color(assigns.file_decorations, assigns.root, tab.path),
       menu_args: Jason.encode!([tab.path]),
       menu_context: Jason.encode!(tab_menu_context(tab, group.id)),
       close_args: Jason.encode!([tab.path, group.id])
@@ -371,7 +394,8 @@ defmodule BeeWeb.Workbench.EditorArea do
   end
 
   # A tab's name: the file's, or "Extension: <plugin>".
-  def tab_label(%{kind: :file, path: path}, _details), do: Path.basename(path)
+  def tab_label(%{kind: kind, path: path}, _details) when kind in [:file, :media, :binary],
+    do: Path.basename(path)
 
   def tab_label(%{kind: :settings}, _details), do: "Settings"
   def tab_label(%{kind: :live, title: title}, _details), do: title

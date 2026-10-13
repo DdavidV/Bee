@@ -31,6 +31,11 @@ defmodule BeeWeb.Router do
     get "/:token/*path", WebviewController, :show
   end
 
+  # Files shown as they are (images, audio, video): by a signed address.
+  scope "/media", BeeWeb do
+    get "/:token/:name", MediaController, :show
+  end
+
   if Application.compile_env(:bee, :dev_routes) do
     import Phoenix.LiveDashboard.Router
 

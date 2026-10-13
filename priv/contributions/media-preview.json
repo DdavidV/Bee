@@ -1,0 +1,27 @@
+{
+  "$schema": "../schemas/manifest.schema.json",
+  "name": "media-preview",
+  "description": "The files Bee shows as an image, or plays, instead of opening them as text: the ones of VS Code's media-preview extension, under its ids. Plugins add files to these editors in the same format.",
+  "contributes": {
+    "customEditors": [
+      {
+        "viewType": "imagePreview.previewEditor",
+        "displayName": "Image Preview",
+        "priority": "builtin",
+        "selector": [{"filenamePattern": "*.{jpg,jpe,jpeg,png,bmp,gif,ico,webp,avif,svg}"}]
+      },
+      {
+        "viewType": "vscode.audioPreview",
+        "displayName": "Audio Preview",
+        "priority": "builtin",
+        "selector": [{"filenamePattern": "*.{mp3,wav,ogg,oga}"}]
+      },
+      {
+        "viewType": "vscode.videoPreview",
+        "displayName": "Video Preview",
+        "priority": "builtin",
+        "selector": [{"filenamePattern": "*.{mp4,webm}"}]
+      }
+    ]
+  }
+}

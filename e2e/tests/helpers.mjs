@@ -158,6 +158,16 @@ export const answer = async (page, text) => {
   await page.keyboard.press("Enter")
 }
 
+// ---- Files that aren't text
+
+// The focused group's image, audio or video preview, and what it shows.
+export const mediaPreview = page => page.locator("#editor [data-media-preview][data-current=true]")
+export const shownImage = page => mediaPreview(page).locator("img")
+// What the status bar says of it: its "zoom", "dimensions" or "size".
+export const mediaStatus = (page, part) => page.locator(`#status-media [data-media=${part}]`)
+// The note an editor shows instead of a binary file.
+export const binaryEditor = page => page.locator("#editor [data-binary-editor]")
+
 // ---- Menus
 
 // The menu bar's menu `name` ("File"), opened.

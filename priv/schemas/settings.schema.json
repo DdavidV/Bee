@@ -51,6 +51,18 @@
       "default": true,
       "description": "A single click on a file (in the Explorer, on a search result) opens it as a preview: in a tab, its name in italics, that the next file opened that way reuses. Double-click the file or its tab, or edit it, to keep it open. false: every file opens in a tab of its own."
     },
+    "workbench.editorAssociations": {
+      "type": "object",
+      "additionalProperties": {"type": "string", "minLength": 1},
+      "default": {},
+      "description": "Glob pattern to the editor its files open in, e.g. {\"*.svg\": \"default\"}: \"default\" for the text editor, \"imagePreview.previewEditor\", \"vscode.audioPreview\" or \"vscode.videoPreview\". Patterns containing a slash match the end of the path, others the file name. Wins over what the editors say they are for. Open With… (a file's right-click menu) sets it."
+    },
+    "workbench.editorLargeFileConfirmation": {
+      "type": "number",
+      "minimum": 1,
+      "default": 50,
+      "description": "The size, in MB, from which a file isn't opened as text before you say so (Open Anyway): the whole text of a file goes to the page."
+    },
     "workbench.quickOpen.recentFiles": {
       "type": "integer",
       "minimum": 0,

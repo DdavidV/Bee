@@ -168,6 +168,51 @@ defmodule Bee.Editor.BufferTest do
     assert {:error, :enoent} = Buffer.open(Path.join(dir, "missing"))
   end
 
+  test "a NUL byte near the start makes a file binary, as in VS Code", %{dir: dir} do
+    refute Buffer.text?("ab" <> <<0>> <> "cd")
+    refute Buffer.text?(<<0xC3, 0x28>>)
+    assert Buffer.text?("")
+    assert Buffer.text?("héllo")
+    # (Only the first 512 bytes are looked at.)
+    assert Buffer.text?(String.duplicate("a", 512) <> <<0>>)
+
+    nul = Path.join(dir, "nul.dat")
+    File.write!(nul, "ab" <> <<0>> <> "cd")
+    assert {:error, :binary_file} = Buffer.open(nul)
+  end
+
+  describe "binary: true" do
+    test "opens a binary file as the text that can be read of it", %{dir: dir} do
+      bin = Path.join(dir, "img.bin")
+      File.write!(bin, "ok" <> <<0xFF>> <> "end")
+
+      assert {:ok, %Buffer{text: "ok\uFFFDend", binary: true} = buffer} =
+               Buffer.open(bin, self(), binary: true)
+
+      refute Buffer.dirty?(buffer)
+      # Open now: also for those that don't ask for it.
+      assert {:ok, %Buffer{text: "ok\uFFFDend"}} = Buffer.open(bin)
+    end
+
+    test "follows the file on disk, and saves what is shown", %{dir: dir} do
+      bin = Path.join(dir, "img.bin")
+      File.write!(bin, <<0xFF>> <> "a")
+      {:ok, _} = Buffer.open(bin, self(), binary: true)
+
+      File.write!(bin, <<0xFF>> <> "b")
+      Phoenix.PubSub.broadcast(Bee.PubSub, "fs", {:fs_changed, bin})
+      assert_receive {:buffer_reloaded, ^bin, 1, "\uFFFDb"}
+
+      assert {:ok, _} = Buffer.save(bin, "\uFFFDc")
+      assert File.read!(bin) == "\uFFFDc"
+    end
+
+    test "a text file is opened as it is", %{path: path} do
+      assert {:ok, %Buffer{text: "hello", binary: false}} =
+               Buffer.open(path, self(), binary: true)
+    end
+  end
+
   describe "lifecycle" do
     test "stops when the last client closes it", %{path: path} do
       other = spawn_client()

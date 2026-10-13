@@ -137,6 +137,8 @@ the formatter is told it.
 | `workbench.colorTheme` | `"dark"` | The color theme of the workbench, editor and terminal: `"dark"`, `"light"`, or the id of one a plugin or extension contributes |
 | `workbench.iconTheme` | `null` | The file icon theme, by id. `null` uses Bee's own icons |
 | `workbench.editor.enablePreview` | `true` | A single click on a file, in the Explorer or on a search result, opens it as a preview: a tab with its name in italics that the next file opened that way reuses. Double-click the file or its tab, or edit it, to keep it open. `false` gives every file its own tab |
+| `workbench.editorAssociations` | `{}` | Glob pattern to the editor its files open in, for example `{"*.svg": "default"}`: `default` is the text editor, the others are `imagePreview.previewEditor`, `vscode.audioPreview` and `vscode.videoPreview`. Wins over what the editors declare. **Open With…** sets it |
+| `workbench.editorLargeFileConfirmation` | `50` | The size, in MB, from which a file is not opened as text before you choose **Open Anyway** |
 | `workbench.quickOpen.recentFiles` | `10` | How many recently opened files Quick Open lists before you type (0–100) |
 | `workbench.notifications.maxCount` | `20` | How many notifications a window keeps. The bell in the status bar lists the last ones, older ones are dropped (1–500) |
 | `workbench.notifications.toastTimeout` | `8` | Seconds a new notification stays popped up at the bottom right before it goes to the notification list. `0` keeps it until it is closed |

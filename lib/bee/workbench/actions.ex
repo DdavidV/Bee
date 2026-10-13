@@ -112,6 +112,138 @@ defmodule Bee.Workbench.Actions do
   def keep_editor(%{active: nil} = wb, _args), do: wb
   def keep_editor(wb, _args), do: Workbench.keep_editor(wb, wb.active)
 
+  # A file shown as an image (or played), or one that isn't shown (binary,
+  # very large), as text instead, in the same tab: the editor of `path`, or
+  # the active one (the Open Anyway of such a file's editor).
+  @command "workbench.action.reopenTextEditor"
+  def reopen_text_editor(wb, args) do
+    wb = in_tab_group(wb, args)
+
+    Workbench.chain(wb, fn wb ->
+      case Enum.find(wb.tabs, &(&1.path == tab_path(wb, args))) do
+        %{kind: kind, path: path} when kind in [:media, :binary] ->
+          {wb, [{:open_file, path, {:with, Bee.CustomEditors.text()}}]}
+
+        _ ->
+          wb
+      end
+    end)
+  end
+
+  ## Open With…
+  #
+  # Like VS Code's: a pick of the editors a file can be opened with – the
+  # text editor, and the ones for its name (`Bee.CustomEditors`) – and, last,
+  # a way to make one of them the default for files like it
+  # (workbench.editorAssociations).
+
+  # A tab's (its right-click menu: [path, group]), or the active editor's.
+  @command "workbench.action.reopenWithEditor"
+  def reopen_with_editor(wb, args) do
+    wb = in_tab_group(wb, args)
+
+    Workbench.chain(wb, fn wb ->
+      case Enum.find(wb.tabs, &(&1.path == tab_path(wb, args))) do
+        %{path: path} = tab -> if Workbench.file?(tab), do: pick_editor(wb, path), else: wb
+        nil -> wb
+      end
+    end)
+  end
+
+  # A file's in the Explorer (its right-click menu: [path]).
+  @command "explorer.openWith"
+  def explorer_open_with(wb, [path | _]) when is_binary(path) do
+    if File.regular?(path), do: pick_editor(wb, path), else: wb
+  end
+
+  def explorer_open_with(wb, _args), do: wb
+
+  @configure "configure"
+
+  defp pick_editor(wb, path) do
+    active = editor_id(Enum.find(wb.tabs, &(&1.path == path)))
+    default = default_editor(wb, path)
+
+    items =
+      for %{id: id, label: label} <- Bee.CustomEditors.choices(path) do
+        notes =
+          if(id == active, do: ["Active"], else: []) ++
+            if(id == default, do: ["Default"], else: [])
+
+        %{label: label, description: Enum.join(notes, " and "), value: id}
+      end
+
+    configure = %{
+      label: "Configure default editor for '#{Bee.CustomEditors.pattern(path)}'…",
+      description: "",
+      value: @configure
+    }
+
+    Workbench.open_quick_pick(wb, %{
+      items: items ++ [configure],
+      index: Enum.find_index(items, &(&1.value == active)) || 0,
+      command: "bee.openWith",
+      arguments: [path],
+      placeholder: "Select editor for '#{Path.basename(path)}'"
+    })
+  end
+
+  # The editor a tab shows its file in, as Open With… names them.
+  defp editor_id(%{kind: :file}), do: Bee.CustomEditors.text()
+  defp editor_id(%{kind: :media, view_type: view_type}), do: view_type
+  defp editor_id(_other), do: nil
+
+  defp default_editor(wb, path) do
+    associations = Bee.Settings.get("workbench.editorAssociations", wb.root)
+    Bee.CustomEditors.for_file(path, associations) || Bee.CustomEditors.text()
+  end
+
+  # The pick's choice: [path, editor].
+  @command "bee.openWith"
+  def open_with(wb, [path, @configure]) when is_binary(path) do
+    default = default_editor(wb, path)
+    pattern = Bee.CustomEditors.pattern(path)
+
+    items =
+      for %{id: id, label: label} <- Bee.CustomEditors.choices(path) do
+        %{label: label, description: if(id == default, do: "Default", else: ""), value: id}
+      end
+
+    Workbench.open_quick_pick(wb, %{
+      items: items,
+      index: Enum.find_index(items, &(&1.value == default)) || 0,
+      command: "bee.setDefaultEditor",
+      arguments: [pattern],
+      placeholder: "Select new default editor for '#{pattern}'"
+    })
+  end
+
+  def open_with(wb, [path, editor]) when is_binary(path) and is_binary(editor) do
+    case Enum.find(wb.tabs, &(&1.path == path)) do
+      # (Its text would go with its editor.)
+      %{kind: :file, dirty: true} when editor != "default" ->
+        if Workbench.elsewhere?(wb, path),
+          do: {wb, [{:open_file, path, {:with, editor}}]},
+          else:
+            {wb,
+             [{:notify, :error, "Save #{Path.basename(path)} to open it with another editor"}]}
+
+      _ ->
+        {wb, [{:open_file, path, {:with, editor}}]}
+    end
+  end
+
+  def open_with(wb, _args), do: wb
+
+  # The second pick's choice: [pattern, editor], kept in the user settings.
+  @command "bee.setDefaultEditor"
+  def set_default_editor(wb, [pattern, editor]) when is_binary(pattern) and is_binary(editor) do
+    put = fn current -> Map.put(if(is_map(current), do: current, else: %{}), pattern, editor) end
+    {wb, [{:update_setting, "workbench.editorAssociations", put}]}
+  end
+
+  def set_default_editor(wb, _args), do: wb
+
   # The confirmation's answer: [paths] ("" is Cancel).
   @command "workbench.action.closeEditors.confirmed"
   def close_editors_confirmed(wb, [paths]) when is_list(paths),
@@ -452,8 +584,14 @@ defmodule Bee.Workbench.Actions do
 
   # The settings page (BeeWeb.Workbench.SettingsEditor), on the user's
   # settings or the folder's.
+  # (With a text, as in VS Code: the settings it finds.)
   @command "workbench.action.openSettings"
-  def open_settings(wb), do: Workbench.open_settings(wb, :user)
+  def open_settings(wb, args \\ [])
+
+  def open_settings(wb, [query | _]) when is_binary(query),
+    do: Workbench.open_settings(wb, :user, {query, System.unique_integer([:positive])})
+
+  def open_settings(wb, _args), do: Workbench.open_settings(wb, :user)
 
   @command "workbench.action.openWorkspaceSettings"
   def open_workspace_settings(wb), do: Workbench.open_settings(wb, :workspace)

@@ -12,6 +12,13 @@ defmodule Bee.Editor.Buffer do
   (`edit/2`, e.g. plugins): those are pushed to every editor showing the
   file.
 
+  A file is text when it is UTF-8 without a NUL byte near its start (VS
+  Code's test for a binary file): another one isn't opened
+  (`{:error, :binary_file}`) unless asked for (`open/3` with
+  `binary: true`, VS Code's Open Anyway). Its text is then what can be
+  read of it as UTF-8, with U+FFFD for the bytes that are none – which is
+  also what saving it writes.
+
   Every change of the text makes a new `version`. An editor says which
   version its change is of: one of another version isn't applied
   (`{:error, :stale}`), and the editor sends its whole text instead. That
@@ -38,25 +45,40 @@ defmodule Bee.Editor.Buffer do
 
   # `line`: a line of the text and where it starts, known from the last
   # change (`Bee.Editor.Positions.to_bytes/3`).
-  defstruct [:path, :text, :disk_text, version: 0, clients: %{}, line: {0, 0}]
+  # `binary`: opened though it isn't text (its text is `decode/1`d).
+  defstruct [:path, :text, :disk_text, version: 0, clients: %{}, line: {0, 0}, binary: false]
+
+  # How much of a file is searched for a NUL byte (as VS Code does).
+  @sniff 512
 
   def subscribe, do: Phoenix.PubSub.subscribe(Bee.PubSub, @topic)
 
   @doc """
   Finds or starts the buffer for an absolute path and attaches `client` to it.
+
+  `binary: true` opens a file that isn't text too (see above); without it
+  that is `{:error, :binary_file}` – unless the buffer is open already.
   """
-  def open(path, client \\ self(), retries \\ 1) do
+  def open(path, client \\ self(), opts \\ []) do
+    {retries, opts} = Keyword.pop(opts, :retries, 1)
+
     result =
-      case DynamicSupervisor.start_child(Bee.BufferSup, {__MODULE__, path}) do
+      case DynamicSupervisor.start_child(Bee.BufferSup, {__MODULE__, {path, opts}}) do
         {:ok, pid} -> attach(pid, client)
         {:error, {:already_started, pid}} -> attach(pid, client)
         {:error, reason} -> {:error, reason}
       end
 
     case result do
-      {:error, :closed} when retries > 0 -> open(path, client, retries - 1)
+      {:error, :closed} when retries > 0 -> open(path, client, [retries: retries - 1] ++ opts)
       result -> result
     end
+  end
+
+  @doc "Whether `bytes` (a file's) are text: UTF-8, no NUL byte near the start."
+  def text?(bytes) do
+    start = binary_part(bytes, 0, min(byte_size(bytes), @sniff))
+    not String.contains?(start, <<0>>) and String.valid?(bytes)
   end
 
   @doc "Detaches `client`; the buffer stops when no clients remain."
@@ -67,7 +89,8 @@ defmodule Bee.Editor.Buffer do
     end
   end
 
-  def start_link(path), do: GenServer.start_link(__MODULE__, path, name: via(path))
+  def start_link({path, opts}),
+    do: GenServer.start_link(__MODULE__, {path, opts}, name: via(path))
 
   def get(path), do: GenServer.call(via(path), :get)
   def update(path, text), do: GenServer.call(via(path), {:update, text})
@@ -173,13 +196,16 @@ defmodule Bee.Editor.Buffer do
   defp via(path), do: {:via, Registry, {Bee.Registry, {:buffer, path}}}
 
   @impl true
-  def init(path) do
+  def init({path, opts}) do
+    binary? = opts[:binary] == true
+
     case File.read(path) do
-      {:ok, text} ->
-        if String.valid?(text) do
+      {:ok, bytes} ->
+        if binary? or text?(bytes) do
+          text = decode(bytes)
           Phoenix.PubSub.subscribe(Bee.PubSub, "fs")
           broadcast({:buffer_opened, path, text})
-          {:ok, %__MODULE__{path: path, text: text, disk_text: text}}
+          {:ok, %__MODULE__{path: path, text: text, disk_text: text, binary: not text?(bytes)}}
         else
           {:stop, :binary_file}
         end
@@ -188,6 +214,9 @@ defmodule Bee.Editor.Buffer do
         {:stop, reason}
     end
   end
+
+  # A file's bytes as text: U+FFFD for what isn't UTF-8.
+  defp decode(bytes), do: if(String.valid?(bytes), do: bytes, else: String.replace_invalid(bytes))
 
   @impl true
   def handle_call({:attach, client}, _from, state) do
@@ -265,8 +294,9 @@ defmodule Bee.Editor.Buffer do
 
   def handle_info({:fs_changed, path}, %{path: path} = state) do
     with false <- dirty?(state),
-         {:ok, disk} when disk != state.text <- File.read(path),
-         true <- String.valid?(disk) do
+         {:ok, bytes} <- File.read(path),
+         true <- state.binary or text?(bytes),
+         disk when disk != state.text <- decode(bytes) do
       state = %{state | text: disk, disk_text: disk, version: state.version + 1, line: {0, 0}}
       broadcast({:buffer_reloaded, path, state.version, disk})
       {:noreply, state}

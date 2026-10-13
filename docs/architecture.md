@@ -159,6 +159,36 @@ Everything that needs the current text reads the buffer, not the disk. Search
 finds matches in unsaved text. Plugins read unsaved text. Extensions are
 sent every change.
 
+Not every file is text, and Bee opens the others as VS Code does:
+
+| The file | What its tab shows |
+|---|---|
+| An image, SVG included | The image: as large as fits, zoomed with a click (with Ctrl, out) or the wheel with Ctrl. The status bar gives its zoom, its size in pixels and the file's size |
+| Audio, video | A player |
+| A very large file | A note saying so and how large, with **Open Anyway** and **Configure Limit** |
+| Any other binary file | A note that it is binary or in an unsupported encoding, with **Open Anyway** |
+
+Which files are images, audio or video is a contribution, by file name, like
+everything else (`customEditors`, with VS Code's ids and patterns). A file is
+very large from `workbench.editorLargeFileConfirmation` megabytes on (50
+unless set: the whole text of a file goes to the page). It is binary when it
+has a NUL byte near its start, which is VS Code's test, or is not UTF-8, the
+one encoding Bee reads. None of these has a buffer: the page loads an image
+or a recording itself, from an address Bee signed for that file, and loads
+it again when the file changes on disk.
+
+**Open Anyway** opens the file as text in the same tab. What is not UTF-8
+shows as `�`, and saving writes the file as it is shown, as in VS Code.
+Looking does not change it.
+
+**Open With…**, in a file's right-click menu in the Explorer, and **Reopen
+Editor With…** in a tab's, list the editors the file has: the text editor,
+and the preview for its name. That is how an SVG is edited. Split the
+editor and choose the text editor in one group, and the picture in the
+other follows every save. The last entry, *Configure default editor for
+'\*.svg'…*, makes the choice the rule for such files
+(`workbench.editorAssociations`).
+
 Two ways of counting positions meet here. Bee counts bytes of UTF-8, the
 browser's editor and VS Code extensions count lines and UTF-16 units.
 What the editor and extensions say to each other passes through as it is.
@@ -188,6 +218,7 @@ A manifest declares, among other things:
 - languages and how to highlight them
 - color themes and file icon themes
 - snippets and JSON schemas
+- which files open as an image, audio or video instead of text
 
 Bee's own interface is declared this way, in the same format plugins use.
 The File menu, the Explorer, the terminal panel and the default keybindings

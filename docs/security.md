@@ -144,6 +144,11 @@ Every file path that arrives from the page is resolved against the open
 folder and refused if it would land outside it. Explorer operations (create,
 rename, move, delete) are confined the same way.
 
+The files an editor shows as they are (images, audio, video) are the one
+thing the page loads by address. That address is not a path: Bee signs it
+for a file it opened, and serves only addresses it signed. Such a file is
+served so that, opened on its own, it cannot run scripts as Bee.
+
 ## Opening links
 
 Bee opens only web links outside itself: `http` and `https`, and in the

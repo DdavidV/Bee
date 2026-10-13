@@ -27,6 +27,7 @@ defmodule Bee.Workbench do
     * `:reload_plugins`
     * `{:set_plugin_enabled, name, enabled?}` – see `Bee.Plugins.set_enabled/2`
     * `{:update_setting, key, value}` – write it to the user settings file
+      (`value` a function: of the value the file has)
     * `{:uninstall_plugin, name}` – see `Bee.Plugins.uninstall/1`
     * `{:open_folder, path, :this_window | :new_window}` – another workspace
     * `{:pick_folder, "same" | "new", title}` – the desktop app's folder
@@ -165,6 +166,16 @@ defmodule Bee.Workbench do
   # of a VS Code extension (`kind: :webview`, path "webview:<id>", see
   # `Bee.Webviews`), or two documents an extension compares (`kind: :diff`,
   # path "diff:<id>", `vscode.diff`; see `BeeWeb.Workbench.DiffView`).
+  #
+  # A file that isn't shown as text has an editor of its own, its absolute
+  # path the id as well: an image, audio or video (`kind: :media`; `media`
+  # says which, see `Bee.CustomEditors` and `BeeWeb.Workbench.MediaPreview`)
+  # or, for a file not opened as text – `reason` `:binary`, or `:large` –
+  # a note saying so (`kind: :binary`, `BeeWeb.Workbench.BinaryEditor`). Like a text file's, these can be open
+  # in several groups, and as a preview.
+
+  @doc "Whether `tab` is the editor of a file (as text or not): its `path` is the file's."
+  def file?(tab), do: tab.kind in [:file, :media, :binary]
 
   @doc "Whether `path` has an editor, in any group."
   def open?(wb, path), do: Enum.any?(all_tabs(wb), &(&1.path == path))
@@ -184,6 +195,14 @@ defmodule Bee.Workbench do
     case Enum.find(wb.tabs, &(&1.path == wb.active)) do
       %{kind: :file, path: path} -> path
       _ -> nil
+    end
+  end
+
+  @doc "The file the active editor shows, as text or as something else (an image), or nil."
+  def active_resource(wb) do
+    case Enum.find(wb.tabs, &(&1.path == wb.active)) do
+      %{path: path} = tab -> if file?(tab), do: path
+      nil -> nil
     end
   end
 
@@ -222,11 +241,11 @@ defmodule Bee.Workbench do
   file shown.
   """
   def split(wb, direction) when direction in [:right, :down] do
-    case active_file(wb) do
+    case Enum.find(wb.tabs, &(&1.path == wb.active and file?(&1))) do
       nil ->
         wb
 
-      path ->
+      %{path: path} ->
         {wb, id} = add_group(wb, wb.group, direction)
         wb |> focus_group(id) |> wrap() |> chain(&{&1, [{:open_file, path}]})
     end
@@ -419,15 +438,18 @@ defmodule Bee.Workbench do
   @doc """
   Shows the settings page (`BeeWeb.Workbench.SettingsEditor`) in an editor
   tab, on the user's settings (`:user`) or the folder's (`:workspace`): its
-  own tab, or the open one, turned to that scope.
+  own tab, or the open one, turned to that scope. `search` – `{text, ref}`,
+  `ref` another one each time – is what the page looks for.
   """
-  def open_settings(wb, scope) when scope in [:user, :workspace] do
+  def open_settings(wb, scope, search \\ nil) when scope in [:user, :workspace] do
     path = "settings:"
 
     if open?(wb, path) do
-      wb |> update_tab(path, &%{&1 | scope: scope}) |> reveal(path)
+      wb
+      |> update_tab(path, &Map.merge(&1, %{scope: scope, search: search || Map.get(&1, :search)}))
+      |> reveal(path)
     else
-      tab = %{path: path, kind: :settings, scope: scope, dirty: false, lang: nil}
+      tab = %{path: path, kind: :settings, scope: scope, search: search, dirty: false, lang: nil}
       activate_editor(%{wb | tabs: wb.tabs ++ [tab]}, path)
     end
   end
@@ -531,25 +553,65 @@ defmodule Bee.Workbench do
       preview: preview? == true and not dirty
     }
 
+    case Enum.find(wb.tabs, &(&1.path == path)) do
+      %{kind: :file} -> activate_editor(wb, path)
+      # Shown as text after all (Open Anyway): in the tab that said it isn't.
+      %{} = old -> {replace_tab(wb, %{tab | preview: preview?(old)}), []}
+      nil -> place(wb, tab, preview?)
+    end
+  end
+
+  @doc """
+  Shows a file that isn't text – `tab`, of `kind: :media` or `:binary` –
+  in the focused group, as `editor_opened/5` does a text file: as a
+  preview (`preview?`) in the group's preview tab.
+  """
+  def viewer_opened(wb, %{path: path} = tab, preview? \\ false) do
+    tab = Map.merge(%{dirty: false, lang: nil, preview: preview? == true}, tab)
+
+    case Enum.find(wb.tabs, &(&1.path == path)) do
+      nil ->
+        wb |> place(tab, preview?) |> wrap() |> chain(&activate_editor(&1, path))
+
+      # (What the file is can change while it is open: a text file moved
+      # over an image's name.)
+      old ->
+        wb
+        |> replace_tab(%{tab | preview: preview?(old)})
+        |> file_gone(old)
+        |> chain(&activate_editor(&1, path))
+    end
+  end
+
+  # `tab`, new in the focused group and active: at the place asked for
+  # (`insert_at`), in the preview tab, or last.
+  defp place(wb, %{path: path} = tab, preview?) do
     {index, wb} = insert_index(wb, path)
 
     cond do
-      here?(wb, path) ->
-        activate_editor(wb, path)
-
       # (`:replace`: kept, but where the preview is – a double click whose
       # second click came before the first one's file was open.)
       old = (tab.preview or preview? == :replace) && Enum.find_index(wb.tabs, &preview?/1) ->
         closed = Enum.at(wb.tabs, old)
-
         # (A plugin's details previewed there have no file to close.)
-        {%{wb | tabs: List.replace_at(wb.tabs, old, tab), active: path},
-         if(closed.kind == :file, do: file_closed(wb, closed.path, true), else: [])}
+        file_gone(%{wb | tabs: List.replace_at(wb.tabs, old, tab), active: path}, closed)
 
       true ->
         %{wb | tabs: insert(wb.tabs, tab, index), active: path}
     end
   end
+
+  defp replace_tab(wb, %{path: path} = tab),
+    do: %{wb | tabs: Enum.map(wb.tabs, &if(&1.path == path, do: tab, else: &1)), active: path}
+
+  # `{wb, effects}` once the focused group's tab `old` is no more: a text
+  # file's editor closes.
+  defp file_gone(wb, %{kind: :file, path: path}), do: {wb, file_closed(wb, path, true)}
+  defp file_gone(wb, _old), do: {wb, []}
+
+  @doc "What is known of the file shown in `path`'s tabs (`kind: :media`): its size, its version."
+  def set_file_info(wb, path, info),
+    do: update_tab(wb, path, &if(&1.kind == :media, do: Map.merge(&1, info), else: &1))
 
   defp insert_index(%{insert_at: {path, index}} = wb, path), do: {index, %{wb | insert_at: nil}}
   defp insert_index(wb, _path), do: {nil, %{wb | insert_at: nil}}
@@ -1186,22 +1248,28 @@ defmodule Bee.Workbench do
   exist). `settings` adds `config.*`. The browser adds focus keys.
   """
   def context(wb, settings \\ %{}) do
-    # resource*, editorLangId, undo/redo: the active editor's file, if it is one.
+    # editorLangId, undo/redo: the active editor's file, if it is shown as
+    # text; resource*: also when it is shown as something else (an image).
     active = active_file(wb)
+    tab = Enum.find(wb.tabs, &(&1.path == wb.active))
+    resource = tab && file?(tab) && tab.path
 
     settings
     |> Map.new(fn {key, value} -> {"config." <> key, value} end)
     |> Map.merge(%{
       "activeEditor" =>
-        if(active, do: Bee.Workspace.FS.relative(wb.root, active), else: wb.active),
+        if(resource, do: Bee.Workspace.FS.relative(wb.root, resource), else: wb.active),
+      # (VS Code's: the custom editor shown, e.g. "imagePreview.previewEditor".)
+      "activeCustomEditorId" => tab && Map.get(tab, :view_type),
+      "activeEditorIsBinary" => tab != nil and tab.kind == :binary,
       "activeEditorIsDirty" => Enum.any?(wb.tabs, &(&1.path == active and &1.dirty)),
       "activeEditorIsNotPreview" =>
         not Enum.any?(wb.tabs, &(&1.path == wb.active and preview?(&1))),
-      "resourceScheme" => wb.active && if(active, do: "file", else: "extension"),
-      "resourceFilename" => active && Path.basename(active),
-      "resourceExtname" => active && Path.extname(active),
-      "resourcePath" => active,
-      "resourceDirname" => active && Path.dirname(active),
+      "resourceScheme" => wb.active && if(resource, do: "file", else: "extension"),
+      "resourceFilename" => resource && Path.basename(resource),
+      "resourceExtname" => resource && Path.extname(resource),
+      "resourcePath" => resource,
+      "resourceDirname" => resource && Path.dirname(resource),
       "resourceLangId" => active && language(wb, active),
       "editorLangId" => active && language(wb, active),
       "editorReadonly" => false,

@@ -154,6 +154,37 @@
             }
           }
         },
+        "customEditors": {
+          "type": "array",
+          "description": "Editors for files that aren't shown as text, like VS Code's: what files open in one. Bee has VS Code's previews of images (viewType \"imagePreview.previewEditor\"), audio (\"vscode.audioPreview\") and video (\"vscode.videoPreview\"): an entry with one of these adds files to it. Entries for other viewTypes open nothing.",
+          "items": {
+            "type": "object",
+            "required": ["viewType", "selector"],
+            "properties": {
+              "viewType": {"type": "string", "minLength": 1},
+              "displayName": {"type": "string", "minLength": 1},
+              "priority": {
+                "enum": ["default", "builtin", "option"],
+                "default": "default",
+                "description": "default: matching files open in it; builtin: the same, unless another editor is the default; option: only when asked for."
+              },
+              "selector": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["filenamePattern"],
+                  "properties": {
+                    "filenamePattern": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "A glob for the file's name (\"*.png\"), or – with a / – for the end of its path. Case is ignored."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
         "iconThemes": {"type": "array", "items": {"$ref": "#/definitions/iconTheme"}},
         "themes": {"type": "array", "items": {"$ref": "#/definitions/colorTheme"}}
       }

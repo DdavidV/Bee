@@ -68,6 +68,7 @@ test("the right-click menu: Copy Path, Close Others", async ({page}) => {
     "Copy Path",
     "Split Editor Right",
     "Split Editor Down",
+    "Reopen Editor With…",
   ])
 
   await page.click("#context-menu [data-command='copyFilePath']")

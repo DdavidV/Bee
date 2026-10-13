@@ -47,7 +47,7 @@
     views={@sidebar_views}
     sidebar_open={@sidebar_open}
     root={@root}
-    active={Workbench.active_file(%Workbench{tabs: @tabs, active: @active})}
+    active={Workbench.active_resource(%Workbench{tabs: @tabs, active: @active})}
     plugins={@plugins}
     view_contents={@view_contents}
     view_inputs={@view_inputs}
@@ -185,6 +185,8 @@
     <%!-- Filled in by the Keybindings hook while a chord is pending --%>
     <span id="keybinding-status" phx-update="ignore"></span>
     <span :if={@status} id="status" class="truncate">{@status}</span>
+    <%!-- Filled in by the MediaPreview hook: an image's zoom, its size --%>
+    <span id="status-media" phx-update="ignore"></span>
     <span
       :if={lang = @active && Workbench.language(%Workbench{tabs: @tabs}, @active)}
       id="status-lang"
