@@ -61,6 +61,13 @@ defmodule BeeWeb.Workbench.Panel do
 
   attr :problems_hidden, :list, default: [], doc: "the severities not listed"
 
+  attr :webview_views, :list,
+    default: [],
+    doc: "the pages of extensions' webview views here: [{panel, shown?}] (Bee.Webviews)"
+
+  attr :webview_origin, :string, default: nil
+  attr :color_theme_id, :string, default: nil
+
   attr :references, :map,
     default: nil,
     doc:
@@ -159,6 +166,9 @@ defmodule BeeWeb.Workbench.Panel do
             references={@references}
             problems={@problems}
             problems_hidden={@problems_hidden}
+            webview_views={@webview_views}
+            webview_origin={@webview_origin}
+            color_theme_id={@color_theme_id}
             terminals={@terminals}
             active_term={@active_term}
             console={@console}
@@ -415,6 +425,32 @@ defmodule BeeWeb.Workbench.Panel do
         tabindex="0"
         class="flex-1 min-h-0 overflow-auto px-3 py-1 font-mono leading-snug whitespace-pre-wrap break-words select-text"
       ></pre>
+    </div>
+    """
+  end
+
+  # A webview view of an extension's: its page (Bee.Webviews), once its
+  # extension has drawn it.
+  defp view_body(%{view: %{webview: true}} = assigns) do
+    assigns =
+      assign(
+        assigns,
+        :page,
+        Enum.find_value(assigns.webview_views, fn {panel, _} ->
+          panel.view == assigns.view.id && panel
+        end)
+      )
+
+    ~H"""
+    <div id={"webview-view-#{@view.id}"} data-webview-view={@view.id} class="flex-1 min-w-0 relative">
+      <p :if={!@page} class="px-3 py-2 text-xs opacity-60">Starting {@view.name}…</p>
+      <BeeWeb.Workbench.Webview.webview
+        :if={@page}
+        panel={@page}
+        theme={@color_theme_id}
+        active
+        origin={@webview_origin}
+      />
     </div>
     """
   end

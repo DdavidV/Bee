@@ -40,6 +40,11 @@ defmodule BeeWeb.EditorLive.Effects do
     socket
   end
 
+  def run_effect({:diff_closed, id}, socket) do
+    Bee.Extensions.Host.diff(socket.assigns.root, id, :closed)
+    update(socket, :diffs, &Map.delete(&1, id))
+  end
+
   def run_effect({:explorer_edit, edit}, socket) do
     send_update(BeeWeb.Workbench.FileTree, id: "explorer", edit: edit)
     socket
@@ -69,16 +74,11 @@ defmodule BeeWeb.EditorLive.Effects do
   end
 
   def run_effect(:new_terminal, socket) do
-    id = System.unique_integer([:positive])
-    shell = Terminal.default_shell(socket.assigns.root)
-    Phoenix.PubSub.subscribe(Bee.PubSub, Terminal.topic(id))
-
-    case Terminal.start(id: id, owner: self(), shell: shell, cwd: socket.assigns.root) do
-      {:ok, _pid} ->
-        change(socket, &Workbench.terminal_started(&1, id, Path.basename(shell)))
+    case Terminals.start(socket, %{}) do
+      {:ok, id, name} ->
+        change(socket, &Workbench.terminal_started(&1, id, name))
 
       {:error, reason} ->
-        Phoenix.PubSub.unsubscribe(Bee.PubSub, Terminal.topic(id))
         Notifications.notify(socket, :error, "Could not start terminal: #{inspect(reason)}")
     end
   end

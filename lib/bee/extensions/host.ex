@@ -47,6 +47,7 @@ defmodule Bee.Extensions.Host do
   alias Bee.Plugins.Context
 
   @commands Bee.Extensions.Commands
+  @environment Module.concat(__MODULE__, Environment)
   @activation_timeout 30_000
   @log_lines 500
 
@@ -67,13 +68,54 @@ defmodule Bee.Extensions.Host do
     System.find_executable(if(is_binary(setting) and setting != "", do: setting, else: "node"))
   end
 
-  @doc "The table of the commands extensions registered: `{{root, id}, plugin_name}`."
+  @doc """
+  The table of the commands extensions registered: `{{root, id},
+  plugin_name}`. And the one of what they want in the environment of new
+  terminals: `{{root, plugin_name}, variables}`.
+  """
   def create_commands_table do
-    if :ets.whereis(@commands) == :undefined,
-      do: :ets.new(@commands, [:named_table, :public, read_concurrency: true])
+    for table <- [@commands, @environment],
+        :ets.whereis(table) == :undefined,
+        do: :ets.new(table, [:named_table, :public, read_concurrency: true])
 
     :ok
   end
+
+  @doc """
+  What the extensions of workspace `root` add to the environment of a new
+  terminal (`ExtensionContext.environmentVariableCollection`): `%{name =>
+  value}`, with what they append or prepend put around the value Bee has.
+  """
+  def terminal_env(root) do
+    for {{^root, _name}, variables} <- :ets.tab2list(@environment),
+        {name, %{"value" => value} = mutator} when is_binary(name) and is_binary(value) <-
+          variables,
+        into: %{} do
+      case mutator["type"] do
+        2 -> {name, (System.get_env(name) || "") <> value}
+        3 -> {name, value <> (System.get_env(name) || "")}
+        _ -> {name, value}
+      end
+    end
+  rescue
+    ArgumentError -> %{}
+  end
+
+  @doc """
+  A window says it starts terminal `id` an extension asked for
+  (`{:create_terminal, host, id, spec}`): true for the first that does.
+  """
+  def claim_terminal(host, id) do
+    GenServer.call(host, {:claim_terminal, id, self()})
+  catch
+    :exit, _ -> false
+  end
+
+  @doc """
+  The window that claimed terminal `id` has it running as its terminal
+  `term` (`Bee.Terminal`), or (`nil`) couldn't start it.
+  """
+  def terminal_started(host, id, term), do: GenServer.cast(host, {:terminal_started, id, term})
 
   @doc """
   The extension that registered command `id` in workspace `root`, or nil:
@@ -124,6 +166,30 @@ defmodule Bee.Extensions.Host do
       # No host: nobody to tell, and the panel is nobody's.
       nil -> if event == :closed, do: Bee.Webviews.dispose(root, id), else: :ok
       pid -> GenServer.cast(pid, {:webview, id, event})
+    end
+  end
+
+  @doc """
+  Webview view `view_id` (`Bee.Views`, a view of `type` `"webview"`) is
+  shown in a window of workspace `root` and has no page yet: its extension
+  is asked to draw it (`resolveWebviewView`), once its code runs.
+  """
+  def resolve_view(root, view_id) do
+    case whereis(root) do
+      nil -> :ok
+      pid -> GenServer.cast(pid, {:resolve_view, view_id})
+    end
+  end
+
+  @doc """
+  What a window has to say about diff `id` of workspace `root` (a tab an
+  extension opened with `vscode.diff`): `{:state, active?}` – it is the
+  tab shown, or not – or `:closed`.
+  """
+  def diff(root, id, event) do
+    case whereis(root) do
+      nil -> :ok
+      pid -> GenServer.cast(pid, {:diff, id, event})
     end
   end
 
@@ -250,6 +316,9 @@ defmodule Bee.Extensions.Host do
           watching?: false,
           # Language features being asked for: ref => our request's id.
           provides: %{},
+          # The terminals extensions created (window.createTerminal): Node's
+          # id => %{window, term: its Bee.Terminal's id, ref, input, show?, disposed?}.
+          terminals: %{},
           # What extensions are busy with (Bee.UI's progress): {name, id}.
           progress: MapSet.new(),
           log: :queue.new()
@@ -293,6 +362,16 @@ defmodule Bee.Extensions.Host do
 
   @impl true
   def handle_call(:log, _from, s), do: {:reply, :queue.to_list(s.log), s}
+
+  def handle_call({:claim_terminal, id, window}, _from, s) do
+    case s.terminals[id] do
+      %{window: nil} = terminal ->
+        {:reply, true, put_in(s.terminals[id], %{terminal | window: window})}
+
+      _ ->
+        {:reply, false, s}
+    end
+  end
 
   @impl true
   def handle_cast({:activate, plugin}, s) do
@@ -386,6 +465,41 @@ defmodule Bee.Extensions.Host do
   def handle_cast({:webview, id, :closed}, s),
     do: {:noreply, notify(s, "webviewClosed", %{id: id})}
 
+  # A window runs a terminal of an extension's: what was sent to it
+  # meanwhile goes in, and it is shown or killed if that was asked.
+  def handle_cast({:terminal_started, id, term}, s) do
+    case s.terminals[id] do
+      %{term: nil} = terminal when term != nil ->
+        ref = with pid when is_pid(pid) <- Bee.Terminal.whereis(term), do: Process.monitor(pid)
+        for text <- Enum.reverse(terminal.input), do: Bee.Terminal.input(term, text)
+        terminal = %{terminal | term: term, ref: ref, input: []}
+        s = notify(s, "terminalOpened", %{id: id, pid: Bee.Terminal.os_pid(term)})
+        s = put_in(s.terminals[id], terminal)
+        if terminal.show?, do: to_terminal_window(terminal, {:show_terminal, term})
+
+        cond do
+          terminal.disposed? -> {:noreply, close_terminal(s, id, true)}
+          # (It exited before we watched it.)
+          not is_reference(ref) -> {:noreply, close_terminal(s, id, false)}
+          true -> {:noreply, s}
+        end
+
+      %{} ->
+        {:noreply, close_terminal(s, id, false)}
+
+      nil ->
+        {:noreply, s}
+    end
+  end
+
+  def handle_cast({:diff, id, {:state, active?}}, s),
+    do: {:noreply, notify(s, "diffState", %{id: id, active: active?})}
+
+  def handle_cast({:diff, id, :closed}, s), do: {:noreply, notify(s, "diffClosed", %{id: id})}
+
+  def handle_cast({:resolve_view, view_id}, s),
+    do: {:noreply, notify(s, "webviewViewResolve", %{view: view_id})}
+
   def handle_cast({:cancel_provide, ref}, s) do
     case s.provides[ref] do
       nil -> {:noreply, s}
@@ -461,7 +575,13 @@ defmodule Bee.Extensions.Host do
     {:noreply, %{s | window: nil, asks: %{}}}
   end
 
-  def handle_info({:DOWN, _ref, :process, _pid, _reason}, s), do: {:noreply, s}
+  # A terminal of an extension's is gone (its shell exited, it was killed).
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, s) do
+    case Enum.find(s.terminals, fn {_id, terminal} -> terminal.ref == ref end) do
+      {id, _terminal} -> {:noreply, close_terminal(s, id, false)}
+      nil -> {:noreply, s}
+    end
+  end
 
   def handle_info({:settings_changed, scope}, %{root: root} = s)
       when scope == :user or scope == {:workspace, root},
@@ -518,6 +638,7 @@ defmodule Bee.Extensions.Host do
   @impl true
   def terminate(_reason, s) do
     for {name, _} <- s.extensions, do: forget_commands(s.root, name)
+    :ets.match_delete(@environment, {{s.root, :_}, :_})
     for {name, id} <- s.progress, do: Bee.UI.delete_progress(s.root, name, id)
     Bee.Diagnostics.clear(s.root)
     Bee.Languages.Features.put(s.root, [])
@@ -841,7 +962,26 @@ defmodule Bee.Extensions.Host do
         end
 
       {_, _, nil} ->
-        reply_error(s, id, "command '#{command}' not found")
+        # VS Code's own command of a view ("<view id>.focus") or of a views
+        # container ("workbench.view.extension.<id>"): shown.
+        container =
+          case command do
+            "workbench.view.extension." <> container ->
+              Bee.Views.container(container)
+
+            _ ->
+              with %{container: c} <- Bee.Views.view(String.replace_suffix(command, ".focus", "")),
+                   do: Bee.Views.container(c)
+          end
+
+        case container do
+          %{id: container} ->
+            to_window(s, {:show_container, container})
+            reply(s, id, nil)
+
+          _ ->
+            reply_error(s, id, "command '#{command}' not found")
+        end
 
       {_, _, _bees} ->
         to_window(s, {:execute_command, command, Enum.map(args, &plain/1)})
@@ -958,6 +1098,7 @@ defmodule Bee.Extensions.Host do
       extension: params["extension"],
       view_type: params["viewType"],
       title: to_string(params["title"]),
+      view: if(is_binary(params["view"]), do: params["view"]),
       scripts?: params["scripts"] == true,
       roots: Enum.filter(List.wrap(params["roots"]), &is_binary/1)
     })
@@ -993,6 +1134,100 @@ defmodule Bee.Extensions.Host do
 
   defp handle_notification("webviewDispose", %{"id" => id}, s) do
     Bee.Webviews.dispose(s.root, id)
+    s
+  end
+
+  # Two documents an extension compares (`vscode.diff`): a tab of the
+  # window's, with the lines that differ (`Bee.Diff`).
+  defp handle_notification("diffOpen", %{"id" => id} = params, s) when is_binary(id) do
+    side = fn key ->
+      side = params[key] || %{}
+      %{uri: to_string(side["uri"]), path: to_string(side["path"]), text: to_string(side["text"])}
+    end
+
+    {original, modified} = {side.("original"), side.("modified")}
+
+    to_window(s, {
+      :open_diff,
+      %{
+        id: id,
+        title: to_string(params["title"]),
+        original: Map.delete(original, :text),
+        modified: Map.delete(modified, :text),
+        rows: Bee.Diff.rows(original.text, modified.text)
+      }
+    })
+
+    s
+  end
+
+  defp handle_notification("diffClose", %{"id" => id}, s) when is_binary(id) do
+    Phoenix.PubSub.broadcast(Bee.PubSub, "windows:" <> s.root, {:bee_api, {:close_diff, id}})
+    s
+  end
+
+  # Terminals of extensions (window.createTerminal): a window of the
+  # workspace runs each (it says which: `claim_terminal/2`), in its panel.
+  defp handle_notification("terminalCreate", %{"id" => id} = params, s) when is_binary(id) do
+    spec = %{
+      name: to_string(params["name"] || "Terminal"),
+      shell: if(is_binary(params["shell"]), do: params["shell"]),
+      args: Enum.filter(List.wrap(params["args"]), &is_binary/1),
+      cwd: if(is_binary(params["cwd"]), do: params["cwd"]),
+      env:
+        for(
+          {name, value} when is_binary(value) or is_nil(value) <- params["env"] || %{},
+          into: %{},
+          do: {name, value}
+        )
+    }
+
+    terminal = %{window: nil, term: nil, ref: nil, input: [], show?: false, disposed?: false}
+    to_window(s, {:create_terminal, self(), id, spec})
+    put_in(s.terminals[id], terminal)
+  end
+
+  defp handle_notification("terminalInput", %{"id" => id, "text" => text}, s)
+       when is_binary(text) do
+    case s.terminals[id] do
+      %{term: nil} = terminal ->
+        put_in(s.terminals[id], %{terminal | input: [text | terminal.input]})
+
+      %{term: term} ->
+        Bee.Terminal.input(term, text) && s
+
+      nil ->
+        s
+    end
+  end
+
+  defp handle_notification("terminalShow", %{"id" => id}, s) do
+    case s.terminals[id] do
+      %{term: nil} = terminal -> put_in(s.terminals[id], %{terminal | show?: true})
+      %{term: term} = terminal -> to_terminal_window(terminal, {:show_terminal, term}) && s
+      nil -> s
+    end
+  end
+
+  defp handle_notification("terminalDispose", %{"id" => id}, s) do
+    case s.terminals[id] do
+      %{term: nil} = terminal -> put_in(s.terminals[id], %{terminal | disposed?: true})
+      %{} -> close_terminal(s, id, true)
+      nil -> s
+    end
+  end
+
+  # What an extension wants in the environment of new terminals.
+  defp handle_notification("terminalEnv", %{"extension" => name} = params, s)
+       when is_binary(name) do
+    case params["variables"] do
+      variables when is_map(variables) and variables != %{} ->
+        :ets.insert(@environment, {{s.root, name}, variables})
+
+      _ ->
+        :ets.delete(@environment, {s.root, name})
+    end
+
     s
   end
 
@@ -1068,6 +1303,29 @@ defmodule Bee.Extensions.Host do
     ref = make_ref()
     to_window(s, {:ask, ref, self(), kind, spec})
     %{s | asks: Map.put(s.asks, ref, {id, s.window == nil})}
+  end
+
+  ## Terminals of extensions
+
+  defp to_terminal_window(%{window: window}, request) when is_pid(window),
+    do: send(window, {:bee_api, request})
+
+  defp to_terminal_window(_terminal, _request), do: :ok
+
+  # Terminal `id` is over: Node is told; `kill?`: its window ends it.
+  defp close_terminal(s, id, kill?) do
+    case Map.pop(s.terminals, id) do
+      {nil, _} ->
+        s
+
+      {terminal, terminals} ->
+        if is_reference(terminal.ref), do: Process.demonitor(terminal.ref, [:flush])
+
+        if kill? and terminal.term,
+          do: to_terminal_window(terminal, {:kill_terminal, terminal.term})
+
+        notify(%{s | terminals: terminals}, "terminalClosed", %{id: id})
+    end
   end
 
   ## Documents, the active editor

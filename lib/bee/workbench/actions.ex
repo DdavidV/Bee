@@ -288,6 +288,7 @@ defmodule Bee.Workbench.Actions do
           case Workbench.container_location(wb, c.id) do
             :activitybar -> "Side Bar"
             :panel -> "Panel"
+            :auxiliarybar -> "Secondary Side Bar"
           end
 
         %{

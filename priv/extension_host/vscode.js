@@ -4,7 +4,8 @@
 //
 // Implemented: commands, messages / quick picks / input boxes, the active
 // editor and open documents (read, edit), configuration, status bar items,
-// output channels, setContext, the extension context with its state, and
+// output channels, webview panels, terminals, setContext, the extension
+// context with its state, and
 // `languages` (languages.js): providers, diagnostics, and what a language
 // client needs of the workspace (file watchers, workspace edits).
 // Anything else exists as a stand-in that does nothing: the extension keeps
@@ -20,7 +21,8 @@ const {Disposable, EventEmitter, Position, Range, Selection, Uri} = types
 const convert = require("./convert")
 const glob = require("./glob")
 
-const VERSION = "1.105.0"
+// (From 1.106 extensions may put views in the secondary side bar, which Bee has.)
+const VERSION = "1.106.0"
 
 // A stand-in for API Bee doesn't have: callable, constructible, with any
 // member; using it is reported once per name.
@@ -249,11 +251,11 @@ const createApi = (host, ext) => {
       return host.activeEditor
     },
     get visibleTextEditors() {
-      return host.activeEditor ? [host.activeEditor] : []
+      return host.visibleEditors()
     },
     onDidChangeActiveTextEditor: host.onActiveEditor.event,
     onDidChangeTextEditorSelection: host.onSelection.event,
-    onDidChangeVisibleTextEditors: new EventEmitter().event,
+    onDidChangeVisibleTextEditors: host.onVisibleEditors.event,
     // The open files as one group of tabs (language clients look through
     // them for the documents to ask diagnostics for).
     tabGroups: {
@@ -269,6 +271,10 @@ const createApi = (host, ext) => {
           isPreview: false,
           group,
         }))
+        // The diffs shown in tabs (virtual.js): the one shown is the active tab.
+        const diffs = host.virtual.tabs(group)
+        if (diffs.some(tab => tab.isActive)) group.tabs.forEach(tab => (tab.isActive = false))
+        group.tabs.push(...diffs)
         group.activeTab = group.tabs.find(tab => tab.isActive)
         return [group]
       },
@@ -277,17 +283,12 @@ const createApi = (host, ext) => {
       },
       onDidChangeTabs: host.onTabs.event,
       onDidChangeTabGroups: new EventEmitter().event,
-      close: async () => false,
+      close: async tabs => host.virtual.close(tabs),
     },
-    terminals: [],
-    onDidOpenTerminal: new EventEmitter().event,
-    onDidCloseTerminal: new EventEmitter().event,
-    onDidChangeActiveTerminal: new EventEmitter().event,
     onDidChangeTextEditorVisibleRanges: new EventEmitter().event,
     onDidChangeTextEditorOptions: new EventEmitter().event,
     onDidChangeActiveColorTheme: new EventEmitter().event,
     activeColorTheme: {kind: types.ColorThemeKind.Dark},
-    activeTerminal: undefined,
     onDidChangeWindowState: new EventEmitter().event,
     state: {focused: true, active: true},
     showInformationMessage: showMessage("info"),
@@ -404,9 +405,11 @@ const createApi = (host, ext) => {
     // What the extension is busy with (a language server indexing…): a
     // spinner in Bee's status bar and its notifications while `task` runs.
     withProgress: (options, task) => host.progress.run(ext, options || {}, task),
-    // Webview panels (webview.js).
-    ...host.webviews.api(ext),
   }
+  // Webview panels (webview.js) and terminals (terminals.js): with their
+  // getters (`terminals`, `activeTerminal`).
+  Object.defineProperties(window, Object.getOwnPropertyDescriptors(host.webviews.api(ext)))
+  Object.defineProperties(window, Object.getOwnPropertyDescriptors(host.terminals.api(ext)))
 
   const workspace = {
     get workspaceFolders() {
@@ -483,31 +486,16 @@ const createApi = (host, ext) => {
         .filter(file => glob.matches(include, file, host.root) && !(exclude && glob.matches(exclude, file, host.root)))
       return (maxResults ? found.slice(0, maxResults) : found).map(file => Uri.file(file))
     },
-    registerTextDocumentContentProvider: () => new Disposable(() => {}),
-    registerFileSystemProvider: () => new Disposable(() => {}),
-    // An open document, or the file as it is on disk.
+    // Documents that aren't files (virtual.js).
+    ...host.virtual.api(),
+    // An open document, the file as it is on disk, or what its scheme's
+    // provider has.
     openTextDocument: async target => {
+      if (target instanceof Uri && target.scheme !== "file") return host.virtual.open(target)
       const file = typeof target === "string" ? target : target.fsPath
       return host.documents.get(file) || new TextDocument(file, await fs.promises.readFile(file, "utf8"), undefined, 1)
     },
-    fs: {
-      readFile: uri => fs.promises.readFile(uri.fsPath),
-      writeFile: (uri, content) => fs.promises.writeFile(uri.fsPath, content),
-      delete: (uri, options = {}) => fs.promises.rm(uri.fsPath, {recursive: !!options.recursive}),
-      createDirectory: uri => fs.promises.mkdir(uri.fsPath, {recursive: true}),
-      rename: (from, to) => fs.promises.rename(from.fsPath, to.fsPath),
-      copy: (from, to) => fs.promises.cp(from.fsPath, to.fsPath, {recursive: true}),
-      stat: async uri => {
-        const stat = await fs.promises.stat(uri.fsPath)
-        const type = stat.isDirectory() ? types.FileType.Directory : types.FileType.File
-        return {type, ctime: stat.ctimeMs, mtime: stat.mtimeMs, size: stat.size}
-      },
-      readDirectory: async uri =>
-        (await fs.promises.readdir(uri.fsPath, {withFileTypes: true})).map(entry => [
-          entry.name,
-          entry.isDirectory() ? types.FileType.Directory : types.FileType.File,
-        ]),
-    },
+    fs: fileSystem(host),
   }
 
   const env = {
@@ -564,15 +552,49 @@ const UNSUPPORTED = `
   DebugAdapterExecutable DebugAdapterServer DebugAdapterNamedPipeServer DebugAdapterInlineImplementation
   Breakpoint SourceBreakpoint FunctionBreakpoint
   Task TaskGroup ShellExecution ProcessExecution CustomExecution
-  TerminalLink TerminalProfile TerminalExitReason
+  TerminalLink TerminalProfile
   FilePermission QuickInputButtons FileDecoration
   NotebookCellData NotebookData NotebookRange NotebookCellOutput NotebookCellOutputItem
   NotebookCellStatusBarItem NotebookEditorRevealType TestMessage TestTag TestRunRequest
-  CommentThreadState SourceControlInputBoxValidationType EnvironmentVariableMutatorType
+  CommentThreadState SourceControlInputBoxValidationType
   LanguageModelChatMessage LanguageModelChatMessageRole LanguageModelError TelemetryTrustedValue
   ChatResultFeedbackKind ChatRequestTurn ChatResponseTurn McpStdioServerDefinition McpHttpServerDefinition
   PortAutoForwardAction ExtensionRuntime
 `.split(/\s+/).filter(Boolean)
+
+// workspace.fs: the files on disk, or – another scheme – its provider's.
+const fileSystem = host => {
+  const local = {
+    readFile: uri => fs.promises.readFile(uri.fsPath),
+    writeFile: (uri, content) => fs.promises.writeFile(uri.fsPath, content),
+    delete: (uri, options = {}) => fs.promises.rm(uri.fsPath, {recursive: !!options.recursive}),
+    createDirectory: uri => fs.promises.mkdir(uri.fsPath, {recursive: true}),
+    rename: (from, to) => fs.promises.rename(from.fsPath, to.fsPath),
+    copy: (from, to) => fs.promises.cp(from.fsPath, to.fsPath, {recursive: true}),
+    stat: async uri => {
+      const stat = await fs.promises.stat(uri.fsPath)
+      const type = stat.isDirectory() ? types.FileType.Directory : types.FileType.File
+      return {type, ctime: stat.ctimeMs, mtime: stat.mtimeMs, size: stat.size}
+    },
+    readDirectory: async uri =>
+      (await fs.promises.readdir(uri.fsPath, {withFileTypes: true})).map(entry => [
+        entry.name,
+        entry.isDirectory() ? types.FileType.Directory : types.FileType.File,
+      ]),
+  }
+  const routed = {}
+  for (const [name, onDisk] of Object.entries(local)) {
+    routed[name] = async (uri, ...rest) => {
+      if (!uri || uri.scheme === "file") return onDisk(uri, ...rest)
+      const provider = host.virtual.fileSystems.get(uri.scheme)
+      if (!provider || typeof provider[name] !== "function") throw types.FileSystemError.Unavailable(uri)
+      // (A provider's writeFile wants its options.)
+      return provider[name](uri, ...(name === "writeFile" ? [rest[0], {create: true, overwrite: true}] : rest))
+    }
+  }
+  routed.isWritableFileSystem = scheme => (scheme === "file" ? true : host.virtual.fileSystems.has(scheme) ? true : undefined)
+  return routed
+}
 
 // "$(sync~spin) Syncing" → "Syncing": Bee's status bar shows the text.
 const stripIcons = text => String(text ?? "").replace(/\$\([a-z0-9-]+(~spin)?\)\s*/g, "").trim()
@@ -594,7 +616,7 @@ const createContext = (host, ext, {storage, globalStorage}) => ({
   logUri: Uri.file(path.join(globalStorage, "logs")),
   logPath: path.join(globalStorage, "logs"),
   secrets: {get: async () => undefined, store: async () => {}, delete: async () => {}, onDidChange: new EventEmitter().event},
-  environmentVariableCollection: stub(host, ext, "ExtensionContext.environmentVariableCollection"),
+  environmentVariableCollection: host.terminals.environment(ext),
 })
 
 module.exports = {createApi, createContext, TextEditor, VERSION}

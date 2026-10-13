@@ -214,7 +214,7 @@ defmodule Bee.Plugins.VSCode.ManifestTest do
              }
 
       assert Map.keys(commands) |> Enum.sort() ==
-               ~w(hello.broken hello.insert hello.pick hello.reveal hello.sayHello hello.shout)
+               ~w(hello.acceptDiff hello.broken hello.insert hello.pick hello.rejectDiff hello.reveal hello.sayHello hello.shout)
 
       assert "contributes.commands[5] has an enablement Bee can't read, left out: " <> _ =
                Enum.find(warnings, &(&1 =~ "commands[5]"))

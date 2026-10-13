@@ -127,6 +127,50 @@ defmodule BeeWeb.EditorLive.PluginAPI do
     |> Output.push_output()
   end
 
+  # A terminal of an extension's (window.createTerminal): this window runs
+  # it, unless another one of the workspace does already. It is listed
+  # with the user's, and shown when the extension shows it.
+  def plugin_request(socket, {:create_terminal, host, id, spec}) do
+    if Bee.Extensions.Host.claim_terminal(host, id) do
+      case BeeWeb.EditorLive.Terminals.start(socket, spec) do
+        {:ok, term, name} ->
+          Bee.Extensions.Host.terminal_started(host, id, term)
+          change(socket, &Workbench.terminal_added(&1, term, name))
+
+        {:error, reason} ->
+          Bee.Extensions.Host.terminal_started(host, id, nil)
+          Notifications.notify(socket, :error, "Could not start terminal: #{inspect(reason)}")
+      end
+    else
+      socket
+    end
+  end
+
+  def plugin_request(socket, {:show_terminal, term}),
+    do: change(socket, &Workbench.show_terminal(&1, term))
+
+  def plugin_request(socket, {:kill_terminal, term}),
+    do: change(socket, &Workbench.kill_terminal(&1, term))
+
+  # Two documents an extension compares (vscode.diff): a tab with the
+  # lines that differ. Closed by the extension (window.tabGroups.close),
+  # in the window that has it.
+  def plugin_request(socket, {:open_diff, %{id: id, title: title} = diff}) do
+    socket
+    |> update(:diffs, &Map.put(&1, id, diff))
+    |> change(&Workbench.open_diff(&1, id, title))
+  end
+
+  def plugin_request(socket, {:close_diff, id}) do
+    if is_map_key(socket.assigns.diffs, id),
+      do: change(socket, &Workbench.close_editor(&1, "diff:" <> id)),
+      else: socket
+  end
+
+  # A views container of an extension's is to be shown ("<view>.focus").
+  def plugin_request(socket, {:show_container, id}),
+    do: change(socket, &Workbench.show_container(&1, id))
+
   # An address for the user's browser (env.openExternal of an extension).
   def plugin_request(socket, {:open_external, url}),
     do: push_event(socket, "open-external", %{url: url})

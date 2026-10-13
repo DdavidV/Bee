@@ -146,6 +146,12 @@ defmodule BeeWeb.Workbench.Sidebar do
     required: true,
     doc: "plugins' LiveViews (BeeWeb.EditorLive.Extensions.load_live/1)"
 
+  attr :webview_views, :list,
+    default: [],
+    doc: "the pages of extensions' webview views here: [{panel, shown?}] (Bee.Webviews)"
+
+  attr :webview_origin, :string, default: nil
+  attr :color_theme_id, :string, default: nil
   attr :marketplace, :map, required: true, doc: "Bee.Workbench.Marketplace"
   attr :marketplace_installed, :map, required: true, doc: "Bee.Plugins.OpenVsx.installed/0"
 
@@ -153,7 +159,8 @@ defmodule BeeWeb.Workbench.Sidebar do
     assigns =
       assign(assigns,
         explorer_shown: Enum.any?(assigns.views, &(&1.view.id == @explorer)),
-        single: match?([_], assigns.views),
+        single:
+          match?([_], assigns.views) and not match?([%{view: %{webview: true}}], assigns.views),
         explorer_id: @explorer,
         plugin_views: Map.keys(@plugins),
         search_id: @search,
@@ -291,6 +298,30 @@ defmodule BeeWeb.Workbench.Sidebar do
           />
         </div>
       </section>
+
+      <%!-- Webview views of extensions (pages of their own, Bee.Webviews): kept
+           loaded while another container is shown, like VS Code's with
+           retainContextWhenHidden. --%>
+      <p
+        :for={entry <- @views}
+        :if={entry.view[:webview] && !Enum.any?(@webview_views, &(elem(&1, 0).view == entry.view.id))}
+        class="px-4 py-2 text-xs opacity-60"
+      >
+        Starting {entry.view.name}…
+      </p>
+      <div
+        :for={{panel, shown} <- @webview_views}
+        id={"webview-view-#{panel.view}"}
+        data-webview-view={panel.view}
+        class={["relative flex-1 min-h-0", !shown && "hidden"]}
+      >
+        <BeeWeb.Workbench.Webview.webview
+          panel={panel}
+          theme={@color_theme_id}
+          active
+          origin={@webview_origin}
+        />
+      </div>
     </aside>
     """
   end
@@ -302,7 +333,8 @@ defmodule BeeWeb.Workbench.Sidebar do
   # on top of an open pane with an open one somewhere above it; dragging
   # it sets `var` (on <html>) for the open panes (see PaneSash).
   defp panes(assigns) do
-    views = Enum.reject(assigns.views, &(&1.view.id == @explorer))
+    # (Not the explorer, nor extensions' webview views: those are below the panes.)
+    views = Enum.reject(assigns.views, &(&1.view.id == @explorer or &1.view[:webview]))
     open = &(assigns.single or not MapSet.member?(assigns.collapsed_views, &1.view.id))
     known = for e <- views, open.(e), size = assigns.view_sizes[e.view.id], do: size
     default = if known == [], do: 1, else: Enum.sum(known) / length(known)

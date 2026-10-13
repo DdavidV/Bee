@@ -50,6 +50,7 @@ defmodule BeeWeb.Workbench.EditorArea do
   attr :socket, :any, required: true, doc: "the window's socket, for plugins' LiveViews"
   attr :live, :map, required: true
   attr :webviews, :map, required: true
+  attr :diffs, :map, default: %{}, doc: "the diffs of extensions in tabs: id => what differs"
   attr :color_theme_id, :string, required: true
   attr :webview_origin, :any, required: true
   attr :keybinding_labels, :map, required: true
@@ -74,6 +75,7 @@ defmodule BeeWeb.Workbench.EditorArea do
       socket={@socket}
       live={@live}
       webviews={@webviews}
+      diffs={@diffs}
       color_theme_id={@color_theme_id}
       webview_origin={@webview_origin}
       keybinding_labels={@keybinding_labels}
@@ -106,6 +108,7 @@ defmodule BeeWeb.Workbench.EditorArea do
         socket={@socket}
         live={@live}
         webviews={@webviews}
+        diffs={@diffs}
         color_theme_id={@color_theme_id}
         webview_origin={@webview_origin}
         keybinding_labels={@keybinding_labels}
@@ -188,6 +191,11 @@ defmodule BeeWeb.Workbench.EditorArea do
             <.icon
               :if={tab.kind in [:live, :webview]}
               name="hero-window"
+              class="size-4 shrink-0 opacity-70"
+            />
+            <.icon
+              :if={tab.kind == :diff}
+              name="hero-arrows-right-left"
               class="size-4 shrink-0 opacity-70"
             />
             <span class={[tab.color, tab.italic && "italic"]}>
@@ -294,6 +302,13 @@ defmodule BeeWeb.Workbench.EditorArea do
           active={tab.path == @group.active}
           origin={@webview_origin}
         />
+        <%!-- Documents an extension compares (vscode.diff). --%>
+        <BeeWeb.Workbench.DiffView.diff_view
+          :for={tab <- @group.tabs}
+          :if={tab.kind == :diff and @diffs[tab.diff]}
+          diff={@diffs[tab.diff]}
+          active={tab.path == @group.active}
+        />
         <div
           :if={@group.tabs == []}
           class="absolute inset-0 grid place-items-center bg-editor text-editor-fg text-sm"
@@ -361,6 +376,7 @@ defmodule BeeWeb.Workbench.EditorArea do
   def tab_label(%{kind: :settings}, _details), do: "Settings"
   def tab_label(%{kind: :live, title: title}, _details), do: title
   def tab_label(%{kind: :webview, title: title}, _details), do: title
+  def tab_label(%{kind: :diff, title: title}, _details), do: title
 
   def tab_label(%{kind: :extension, name: name}, details),
     do: "Extension: " <> ((details[name] && details[name].display_name) || name)

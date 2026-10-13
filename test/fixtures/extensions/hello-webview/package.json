@@ -1,7 +1,7 @@
 {
   "name": "hello-webview",
   "displayName": "Hello Webview",
-  "description": "Bee's test webview extension: a panel of its own HTML in an editor tab, with a script, a stylesheet and an image of its own, talking to its extension.",
+  "description": "Bee's test webview extension: a panel of its own HTML in an editor tab, with a script, a stylesheet and an image of its own, talking to its extension; and a webview view in the sidebar.",
   "version": "0.1.0",
   "publisher": "bee-tests",
   "engines": {"vscode": "^1.100.0"},
@@ -14,7 +14,28 @@
       {"command": "helloWebview.close", "title": "Close Panel", "category": "Hello Webview"},
       {"command": "helloWebview.plain", "title": "Open Plain Panel", "category": "Hello Webview"},
       {"command": "helloWebview.nested", "title": "Open Nested Panel", "category": "Hello Webview"},
-      {"command": "helloWebview.external", "title": "Open Example", "category": "Hello Webview"}
-    ]
+      {"command": "helloWebview.external", "title": "Open Example", "category": "Hello Webview"},
+      {"command": "helloWebview.focusSide", "title": "Focus Side View", "category": "Hello Webview"},
+      {"command": "helloWebview.focusSecondary", "title": "Focus Secondary View", "category": "Hello Webview"}
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {"id": "hello-side", "title": "Hello Side", "icon": "media/bee.svg"},
+        {"id": "hello-later", "title": "Hello Later", "icon": "$(beaker)", "when": "helloWebview.later"},
+        {"id": "hello-trees", "title": "Only Trees", "icon": "media/bee.svg"}
+      ],
+      "secondarySidebar": [
+        {"id": "hello-secondary", "title": "Elsewhere", "icon": "media/bee.svg"}
+      ]
+    },
+    "views": {
+      "hello-side": [
+        {"type": "webview", "id": "helloWebview.side", "name": "Side"},
+        {"id": "helloWebview.tree", "name": "A Tree"}
+      ],
+      "hello-later": [{"type": "webview", "id": "helloWebview.later", "name": "Later"}],
+      "hello-trees": [{"id": "helloWebview.tree2", "name": "Another Tree"}],
+      "hello-secondary": [{"type": "webview", "id": "helloWebview.secondary", "name": "Secondary"}]
+    }
   }
 }

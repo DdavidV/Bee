@@ -75,6 +75,37 @@ defmodule BeeWeb.EditorLive.Terminals do
 
   def handle_info(_message, socket), do: {:cont, socket}
 
+  @doc """
+  Starts a `Bee.Terminal` of the window's: `{:ok, id, name}`. `spec` may
+  name its `shell` (with `args`), `cwd`, `name` and more for its
+  environment (`env`) – an extension's terminal; the environment the
+  extensions want every terminal to have comes first.
+  """
+  def start(socket, spec) do
+    root = socket.assigns.root
+    id = System.unique_integer([:positive])
+    shell = spec[:shell] || Terminal.default_shell(root)
+    Phoenix.PubSub.subscribe(Bee.PubSub, Terminal.topic(id))
+
+    opts = [
+      id: id,
+      owner: self(),
+      shell: shell,
+      args: spec[:args] || [],
+      cwd: if(is_binary(spec[:cwd]) and File.dir?(spec[:cwd]), do: spec[:cwd], else: root),
+      env: Map.merge(Bee.Extensions.Host.terminal_env(root), spec[:env] || %{})
+    ]
+
+    case Terminal.start(opts) do
+      {:ok, _pid} ->
+        {:ok, id, spec[:name] || Path.basename(shell)}
+
+      {:error, reason} ->
+        Phoenix.PubSub.unsubscribe(Bee.PubSub, Terminal.topic(id))
+        {:error, reason}
+    end
+  end
+
   # The last sequence forwarded to each attached terminal view: `%{id => seq}`.
   def term_seq(socket), do: socket.private[:term_seq] || %{}
   def put_term_seq(socket, seqs), do: put_private(socket, :term_seq, seqs)

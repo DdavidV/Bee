@@ -37,8 +37,6 @@ defmodule BeeWeb.WebviewController do
 
   alias Bee.ColorThemes.Theme
 
-  @placeholder "https://file.bee-webview.invalid"
-
   def show(conn, %{"token" => token, "path" => path}) do
     case {Bee.Webviews.by_token(token), path} do
       {nil, _} ->
@@ -104,7 +102,7 @@ defmodule BeeWeb.WebviewController do
 
   @doc false
   def page(root, panel) do
-    html = String.replace(panel.html, @placeholder, "/webview/#{panel.token}/file")
+    html = Bee.Webviews.resources(panel.html, panel)
     theme = Bee.ColorThemes.get(Bee.Settings.get("workbench.colorTheme", root))
     insert(html, head(root, panel, theme))
   end

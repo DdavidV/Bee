@@ -2145,7 +2145,7 @@ defmodule BeeWeb.EditorLiveTest do
 
   test "the secondary side bar: on the right, toggled, resized, remembered", %{conn: conn} do
     {:ok, view, _html} = live(conn, ~p"/")
-    refute has_element?(view, "#auxiliarybar")
+    assert has_element?(view, "#auxiliarybar.hidden")
     assert has_element?(view, "#layout-auxiliarybar[aria-pressed=false]")
 
     # Its button in the title bar; it comes after the editors.
@@ -2160,13 +2160,13 @@ defmodule BeeWeb.EditorLiveTest do
 
     # Its sash pulled all the way hides it; the command and the menu show it.
     render_hook(view, "layout_hide", %{"part" => "auxiliarybar"})
-    refute has_element?(view, "#auxiliarybar")
+    assert has_element?(view, "#auxiliarybar.hidden")
     run(view, "workbench.action.toggleAuxiliaryBar")
-    assert has_element?(view, "#auxiliarybar")
+    refute has_element?(view, "#auxiliarybar.hidden")
     run(view, "workbench.action.closeAuxiliaryBar")
-    refute has_element?(view, "#auxiliarybar")
+    assert has_element?(view, "#auxiliarybar.hidden")
     menu_click(view, "view", "workbench.action.toggleAuxiliaryBar")
-    assert has_element?(view, "#auxiliarybar")
+    refute has_element?(view, "#auxiliarybar.hidden")
 
     # The width the browser remembered comes with the connection.
     {:ok, view, _html} =

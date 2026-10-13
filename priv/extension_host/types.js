@@ -834,6 +834,8 @@ const enums = {
   InputBoxValidationSeverity: {Info: 1, Warning: 2, Error: 3},
   NotebookCellKind: {Markup: 1, Code: 2},
   TerminalLocation: {Panel: 1, Editor: 2},
+  TerminalExitReason: {Unknown: 0, Shutdown: 1, Process: 2, User: 3, Extension: 4},
+  EnvironmentVariableMutatorType: {Replace: 1, Append: 2, Prepend: 3},
   TaskRevealKind: {Always: 1, Silent: 2, Never: 3},
   TaskPanelKind: {Shared: 1, Dedicated: 2, New: 3},
   TaskScope: {Global: 1, Workspace: 2},

@@ -8,7 +8,7 @@
 //   {method, params}              a notification
 //
 // From Bee: initialize, activate, deactivate, executeCommand; settings,
-// document*, activeEditor, provide, cancel, progressCancel, webview*. To Bee: registerCommand, showMessage,
+// document*, activeEditor, provide, cancel, progressCancel, webview*, terminal*, diff*. To Bee: registerCommand, showMessage,
 // showQuickPick, showInputBox, applyEdit, updateConfiguration,
 // executeCommand (commands that aren't here), statusItem, progress, progressEnd, log,
 // unsupported.
@@ -24,6 +24,8 @@ const {Documents} = require("./documents")
 const {Languages} = require("./languages")
 const features = require("./features")
 const {Webviews} = require("./webview")
+const {Terminals} = require("./terminals")
+const {Virtual} = require("./virtual")
 const {Disposable, EventEmitter, Uri, TabInputText, CancellationTokenSource, ProgressLocation} = require("./types")
 const {createApi, createContext, TextEditor} = require("./vscode")
 
@@ -96,6 +98,8 @@ const host = {
   onFile: new EventEmitter(),
   // Tabs opened, closed or changed: {opened, closed, changed}.
   onTabs: new EventEmitter(),
+  // The text editors on screen changed (a diff's tab shown or hidden).
+  onVisibleEditors: new EventEmitter(),
   watchers: 0,
 
   notify(method, params) {
@@ -128,6 +132,8 @@ const host = {
   executeCommand(extension, id, args) {
     const local = host.commands.get(id)
     if (local) return Promise.resolve().then(() => local.handler.apply(local.thisArg, args))
+    // VS Code's own: two documents compared in a tab (virtual.js).
+    if (id === "vscode.diff") return host.virtual.diff(...args)
     return host.request("executeCommand", {extension: extension.name, command: id, args}).then(revive)
   },
 
@@ -229,6 +235,15 @@ const host = {
 
 host.languages = new Languages(host)
 host.webviews = new Webviews(host)
+host.terminals = new Terminals(host)
+host.virtual = new Virtual(host)
+
+// What the user sees of text: the active editor, and the modified side of
+// a diff whose tab is shown (virtual.js).
+host.visibleEditors = () => [
+  ...(host.activeEditor ? [host.activeEditor] : []),
+  ...host.virtual.shown().map(diff => (diff.editor ??= new TextEditor(host, diff.document, []))),
+]
 
 // The documents are the tabs (vscode.window.tabGroups).
 const tabOf = document => ({label: path.basename(document.fileName), input: new TabInputText(document.uri)})
@@ -382,6 +397,7 @@ const dispose = async extension => {
   }
   host.languages.forget(extension)
   host.webviews.forget(extension)
+  host.terminals.forget(extension)
   host.progress.forget(extension)
   // Commands it didn't put in its subscriptions.
   for (const [id, entry] of [...host.commands]) {
@@ -440,6 +456,13 @@ const notifications = {
   webviewMessage: params => host.webviews.message(params),
   webviewState: params => host.webviews.state(params),
   webviewClosed: params => host.webviews.closed(params),
+  webviewViewResolve: params => host.webviews.resolveView(params),
+  // A diff's tab (virtual.js): shown or not, closed.
+  diffState: params => host.virtual.state(params),
+  diffClosed: params => host.virtual.closed(params),
+  // Terminals of extensions (terminals.js): its shell runs, or is gone.
+  terminalOpened: params => host.terminals.opened(params),
+  terminalClosed: params => host.terminals.closed(params),
   // The editor doesn't wait for a `provide` any more.
   cancel: ({key}) => providing.get(key)?.cancel(),
   // The user cancelled what an extension is busy with (window.withProgress).

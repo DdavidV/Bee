@@ -63,8 +63,47 @@ function page(webview, extensionUri, heading) {
 </html>`
 }
 
+// The side view: a page in the sidebar that counts its pings (kept in the
+// page: it stays loaded while another view is shown) and has the
+// extension answer them.
+const sideProvider = {
+  resolveWebviewView(view) {
+    view.webview.options = {enableScripts: true}
+    view.webview.html = `<!DOCTYPE html><html><body>
+      <h1 id="side">side view</h1>
+      <button id="ping">ping</button>
+      <p id="count">0</p>
+      <p id="out"></p>
+      <script>
+        const api = acquireVsCodeApi()
+        let count = 0
+        document.getElementById("ping").addEventListener("click", () => {
+          document.getElementById("count").textContent = String(++count)
+          api.postMessage({type: "ping", n: count})
+        })
+        window.addEventListener("message", event => {
+          document.getElementById("out").textContent = event.data.type + " " + event.data.n
+        })
+      </script></body></html>`
+    view.webview.onDidReceiveMessage(message => {
+      if (message.type === "ping") view.webview.postMessage({type: "side-pong", n: message.n})
+    })
+    view.onDidChangeVisibility(() => console.log(`side view visible ${view.visible}`))
+    console.log(`side view resolved: ${view.viewType}`)
+  },
+}
+
 function activate(context) {
   context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider("helloWebview.side", sideProvider, {webviewOptions: {retainContextWhenHidden: true}}),
+    // In the secondary side bar (on the right), as VS Code 1.106 has them.
+    vscode.window.registerWebviewViewProvider("helloWebview.secondary", {
+      resolveWebviewView(view) {
+        view.webview.html = `<h1 id="secondary">secondary view, vscode ${vscode.version}</h1>`
+      },
+    }),
+    vscode.commands.registerCommand("helloWebview.focusSecondary", () => vscode.commands.executeCommand("helloWebview.secondary.focus")),
+    vscode.commands.registerCommand("helloWebview.focusSide", () => vscode.commands.executeCommand("helloWebview.side.focus")),
     vscode.commands.registerCommand("helloWebview.open", () => {
       if (panel) return panel.reveal()
       panel = vscode.window.createWebviewPanel("helloWebview", "Hello Webview", vscode.ViewColumn.One, {

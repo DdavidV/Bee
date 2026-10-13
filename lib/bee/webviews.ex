@@ -1,7 +1,10 @@
 defmodule Bee.Webviews do
   @moduledoc """
   The webview panels of VS Code extensions (`window.createWebviewPanel`):
-  pages of an extension's own HTML, shown in editor tabs.
+  pages of an extension's own HTML, shown in editor tabs. And their
+  webview views (`window.registerWebviewViewProvider`): such a page as a
+  view of the sidebar or the panel – a panel whose `view` names it, with
+  the id `"view:<view id>"`, shown there instead of in a tab.
 
   A panel belongs to a workspace's extension host (`Bee.Extensions.Host`),
   which files here what its extension sets – title, HTML, options – and
@@ -55,9 +58,11 @@ defmodule Bee.Webviews do
           scripts?: false,
           roots: [],
           state: nil,
+          # A webview view's: the view (`Bee.Views`) it is the page of.
+          view: nil,
           token: Base.url_encode64(:crypto.strong_rand_bytes(24), padding: false)
         },
-        Map.take(attrs, [:extension, :view_type, :title, :scripts?, :roots])
+        Map.take(attrs, [:extension, :view_type, :title, :scripts?, :roots, :view])
       )
 
     :ets.insert(@table, {{root, id}, panel})
@@ -90,8 +95,40 @@ defmodule Bee.Webviews do
     :ok
   end
 
-  @doc "Posts `message` (JSON data) to the panel's page, in every window showing it."
-  def post(root, id, message), do: tell(root, id, {:message, message})
+  # What `webview.asWebviewUri` gives an extension for a local file: a
+  # stand-in address (priv/extension_host/webview.js), the panel's own
+  # where its page gets it – in its HTML (`BeeWeb.WebviewController`) and in
+  # what is posted to it.
+  @resource "https://file.bee-webview.invalid"
+
+  @doc "The stand-in address of a local file, as extensions have it."
+  def resource_placeholder, do: @resource
+
+  @doc "`text` with the stand-in addresses of local files made `panel`'s own."
+  def resources(text, %{token: token}) when is_binary(text),
+    do: String.replace(text, @resource, "/webview/#{token}/file")
+
+  @doc """
+  Posts `message` (JSON data) to the panel's page, in every window showing
+  it. The addresses of local files in it become the panel's.
+  """
+  def post(root, id, message) do
+    case get(root, id) do
+      nil -> :ok
+      panel -> tell(root, id, {:message, localize(message, panel)})
+    end
+  end
+
+  defp localize(text, panel) when is_binary(text) do
+    if String.contains?(text, @resource), do: resources(text, panel), else: text
+  end
+
+  defp localize(list, panel) when is_list(list), do: Enum.map(list, &localize(&1, panel))
+
+  defp localize(%{} = map, panel),
+    do: Map.new(map, fn {key, value} -> {key, localize(value, panel)} end)
+
+  defp localize(other, _panel), do: other
 
   @doc "Brings the panel's tab to the front."
   def reveal(root, id), do: tell(root, id, :revealed)
@@ -123,7 +160,13 @@ defmodule Bee.Webviews do
     @table
     |> :ets.match_object({{root, :_}, :_})
     |> Enum.map(&elem(&1, 1))
-    |> Enum.sort_by(&String.to_integer(&1.id))
+    |> Enum.sort_by(fn %{id: id} ->
+      # (A view's page, "view:<id>", comes after the panels.)
+      case Integer.parse(id) do
+        {number, ""} -> {0, number, id}
+        _ -> {1, 0, id}
+      end
+    end)
   rescue
     ArgumentError -> []
   end

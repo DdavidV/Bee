@@ -149,3 +149,65 @@ test("a page that embeds its extension's local server: the frame inside has its 
   const inner = page.frameLocator("[data-webview] iframe").frameLocator("#nested")
   await expect(inner.locator("#inner")).toHaveText("inner pong")
 })
+
+test("a webview view: the extension's page in the sidebar, under its icon; kept while another view is shown", async ({page}) => {
+  // Its icon in the activity bar; not the container that waits for its `when`,
+  // nor the one with only a tree.
+  await expect(page.locator("#view-hello-side img").first()).toHaveAttribute("src", /\/plugins\/hello-webview\/media\/bee\.svg$/)
+  await expect(page.locator("#view-hello-later")).toHaveCount(0)
+  await expect(page.locator("#view-hello-trees")).toHaveCount(0)
+
+  // Shown: the extension starts and draws it.
+  await page.click("#view-hello-side")
+  await expect(page.locator("#sidebar-title")).toHaveText("Hello Side")
+  const view = page.locator("#sidebar [data-webview-view='helloWebview.side']")
+  const frame = view.frameLocator("iframe")
+  await expect(frame.locator("#side")).toHaveText("side view")
+  // It fills the sidebar under the title.
+  const box = await view.boundingBox()
+  const sidebar = await page.locator("#sidebar").boundingBox()
+  expect(box.width).toBeGreaterThan(sidebar.width - 4)
+  expect(box.height).toBeGreaterThan(sidebar.height - 60)
+
+  // To the extension and back.
+  await frame.locator("#ping").click()
+  await expect(frame.locator("#out")).toHaveText("side-pong 1")
+  await frame.locator("#ping").click()
+  await expect(frame.locator("#count")).toHaveText("2")
+
+  // Another view and back: the page wasn't loaded again.
+  await page.click("#view-explorer")
+  await expect(view).toBeHidden()
+  await expect(page.locator("#explorer")).toBeVisible()
+  await run(page, "Hello Webview: Focus Side View")
+  await expect(page.locator("#sidebar-title")).toHaveText("Hello Side")
+  await expect(frame.locator("#count")).toHaveText("2")
+  await frame.locator("#ping").click()
+  await expect(frame.locator("#out")).toHaveText("side-pong 3")
+  await page.screenshot({path: "test-results/webview-view.png"})
+  await page.click("#view-explorer")
+})
+
+test("a webview view in the secondary side bar: on the right, shown with the bar or by its command", async ({page}) => {
+  // No icon for it on the left.
+  await expect(page.locator("#view-hello-secondary")).toHaveCount(0)
+  const bar = page.locator("#auxiliarybar")
+  await expect(bar).toBeHidden()
+
+  // The bar opens on it; its extension draws it.
+  await page.getByRole("button", {name: "Toggle Secondary Side Bar"}).click()
+  await expect(page.locator("#auxiliarybar-title")).toHaveText("Elsewhere")
+  const frame = bar.locator("[data-webview-view='helloWebview.secondary']").frameLocator("iframe")
+  await expect(frame.locator("#secondary")).toHaveText(/^secondary view, vscode 1\.106\./)
+  const box = await bar.boundingBox()
+  expect(Math.round(box.x + box.width)).toBe(page.viewportSize().width)
+  await page.screenshot({path: "test-results/webview-secondary.png"})
+
+  // Closed, and shown again by the view's own command.
+  await page.keyboard.press("Control+Alt+b")
+  await expect(bar).toBeHidden()
+  await run(page, "Hello Webview: Focus Secondary View")
+  await expect(bar).toBeVisible()
+  await expect(frame.locator("#secondary")).toBeVisible()
+  await page.keyboard.press("Control+Alt+b")
+})

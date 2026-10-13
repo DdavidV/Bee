@@ -63,6 +63,15 @@ defmodule Bee.Extensions.WebviewTest do
       assert_receive {:webview, "1", :changed}
       assert %{html: "<p>hi</p>", version: 2} = Webviews.get("/wv", "1")
 
+      # What is posted to its page: local files' addresses made its own.
+      Webviews.post("/wv", "1", %{
+        "icons" => ["https://file.bee-webview.invalid/x/a.svg", 1],
+        "text" => "plain"
+      })
+
+      file = "/webview/#{panel.token}/file/x/a.svg"
+      assert_receive {:webview, "1", {:message, %{"icons" => [^file, 1], "text" => "plain"}}}
+
       Webviews.update("/wv", "1", %{title: "Uno"})
       assert_receive {:webview, "1", :changed}
       Webviews.update("/wv", "1", %{title: "Uno"})
@@ -282,6 +291,59 @@ defmodule Bee.Extensions.WebviewTest do
       assert_receive {:webview, ^id, :disposed}, 5_000
       eventually(fn -> "webview disposed" in Host.log(root) end)
       assert Webviews.list(root) == []
+    end
+
+    test "its webview view: read from its package.json, drawn when shown, messages both ways",
+         %{root: root, dir: dir} do
+      # Its containers with a page to show, and those views; no trees, and
+      # no container Bee has no place for.
+      assert %{location: :activitybar, title: "Hello Side", icon: %{light: icon}, movable: true} =
+               Bee.Views.container("hello-side")
+
+      assert icon == "/plugins/hello-webview/media/bee.svg"
+
+      assert %{icon: "$(beaker)", when_ast: ["key", "helloWebview.later"]} =
+               Bee.Views.container("hello-later")
+
+      assert Bee.Views.container("hello-trees") == nil
+      # One for the secondary side bar, which stays there.
+      assert %{location: :auxiliarybar, movable: false} = Bee.Views.container("hello-secondary")
+
+      assert %{webview: true, container: "hello-side", name: "Side"} =
+               Bee.Views.view("helloWebview.side")
+
+      assert Bee.Views.view("helloWebview.tree") == nil
+
+      assert "contributes.views.hello-side[1] (helloWebview.tree) is a tree view, which Bee can't draw" in Plugins.get(
+               "hello-webview",
+               root
+             ).warnings
+
+      # Shown in a window: its extension starts, and draws it.
+      Plugins.view_shown("helloWebview.side", root)
+      Host.resolve_view(root, "helloWebview.side")
+      id = "view:helloWebview.side"
+      assert_receive {:webview, ^id, :opened}, 5_000
+      eventually(fn -> match?(%{version: 1, scripts?: true}, Webviews.get(root, id)) end)
+      panel = Webviews.get(root, id)
+      assert %{view: "helloWebview.side", extension: "hello-webview"} = panel
+      assert panel.html =~ "side view"
+      assert dir in panel.roots
+      eventually(fn -> "side view resolved: helloWebview.side" in Host.log(root) end)
+
+      # Asked again (another window): the same page.
+      Host.resolve_view(root, "helloWebview.side")
+      refute_receive {:webview, ^id, :opened}, 100
+
+      Host.webview(root, id, {:message, %{"type" => "ping", "n" => 2}})
+      assert_receive {:webview, ^id, {:message, %{"type" => "side-pong", "n" => 2}}}, 5_000
+
+      Host.webview(root, id, {:state, false, false})
+      eventually(fn -> "side view visible false" in Host.log(root) end)
+
+      # VS Code's command of a view: its container is shown.
+      run(root, "helloWebview.focusSide")
+      assert_receive {:bee_api, {:show_container, "hello-side"}}, 5_000
     end
 
     test "closed by its extension; gone with it; an address for the browser", %{root: root} do

@@ -81,6 +81,7 @@ installed again.
 | TextMate grammars, including embedded and injected ones | Yes |
 | Snippets | Yes |
 | JSON schema associations | Yes |
+| Views and their containers | Webview views (`"type": "webview"`) in a container of the extension's in the activity bar, the panel or the secondary side bar (on the right), or in Bee's Explorer or Search. Tree views are left out |
 | Localized texts (`%key%`) | Resolved from the extension's default language file |
 | Anything else | Ignored for now |
 
@@ -163,7 +164,10 @@ are installed and their code runs.
 | Context | Setting context keys |
 | Extension state | Global and per-folder state and storage folders |
 | Languages | See below |
-| Webview panels | See below |
+| Webview panels and views | See below |
+| Terminals | `window.createTerminal`: a terminal in the panel beside yours, with its name, shell, folder and environment; text sent to it, shown, disposed of. What an extension adds to the environment of every new terminal (`environmentVariableCollection`) is applied. There is no shell integration |
+| Documents that aren't files | `registerFileSystemProvider` and `registerTextDocumentContentProvider`: what `workspace.openTextDocument` and `workspace.fs` give for another scheme than `file` |
+| Diffs | The `vscode.diff` command: a tab with the lines that differ. See below |
 | Opening links | In the user's browser |
 
 **Anything else is a stand-in.** The interface is large, and extensions call
@@ -226,6 +230,23 @@ The page may only load local files from the folders its extension allowed.
 How these pages are kept apart from Bee's own is described in
 [Security and access](security.md#webview-pages).
 
+A **webview view** (`window.registerWebviewViewProvider`) is such a page as
+a view: under its container's icon in the activity bar, or in the panel.
+or in the secondary side bar on the right (`Ctrl+Alt+B`), where VS Code
+1.106 and later let extensions put views; Bee reports itself as that
+version. Its extension starts and draws it when the view is first shown. In
+either side bar the page stays loaded while it is not shown.
+
+### Diffs
+
+`vscode.diff` opens a tab comparing two documents, files or documents of
+an extension's own scheme. Bee shows the lines that differ with a few
+around them, removed ones red and added ones green, in one column; it is
+for reading, not editing. To the extension it is a tab like VS Code's
+(`window.tabGroups`, a `TabInputTextDiff`), and while it is the tab shown
+its modified side counts as a visible editor – so the buttons an extension
+puts in the tab's bar for then, such as Accept and Reject, appear.
+
 ### Output and failures
 
 What extensions print, and their failures, go to the **Extension Host**
@@ -269,8 +290,8 @@ One package then works in both editors, with the richer integration in Bee.
 ## Limits worth knowing
 
 - Only what the tables above list is used. Tree views, custom editors,
-  debuggers, tasks, notebooks, source control providers and terminals
-  created by extensions are not available. An extension built mainly around
+  debuggers, tasks, notebooks, comments and source control providers are
+  not available. An extension built mainly around
   one of those will load and do little.
 - Icon themes that use an icon font are not drawn.
 - Per-language default overrides declared by an extension are read but not

@@ -5,7 +5,7 @@
 import {expect, freshBee, test} from "./helpers.mjs"
 import {cpSync, existsSync, readFileSync, rmSync, writeFileSync} from "node:fs"
 import {dirname, join, resolve} from "node:path"
-import {config} from "../fixtures.mjs"
+import {config, dws} from "../fixtures.mjs"
 import {dismiss, error, info, openBee, openFile} from "./helpers.mjs"
 
 freshBee({before: () => install()})
@@ -277,4 +277,56 @@ test("the Output section: what extensions write, a channel at a time", async ({p
   await page.fill("#palette-input", ">Show Output")
   await page.keyboard.press("Enter")
   await expect(text).toContainText("broken on purpose")
+
+  // A terminal of the extension's: in the panel beside the user's, with
+  // its name, what it typed and the environment it asked for.
+  await run(page, "hello.terminal")
+  await expect(page.locator("#panel-sections [data-section=terminal]")).toHaveAttribute("aria-selected", "true")
+  await expect(page.locator("#panel [id^=term-tab-]")).toHaveText("Hello Shell")
+  await expect(page.locator("#panel .xterm-rows")).toContainText("mine-everywhere")
+  // Disposed of by the extension: gone.
+  await run(page, "hello.terminalClose")
+  await expect(page.locator("#panel [id^=term-tab-]")).toHaveCount(0)
+})
+
+test("a diff of the extension's: a tab with what differs; its Accept button writes the file and closes it", async ({page}) => {
+  writeFileSync(join(dws, "one.txt"), "first\nsecond thing\nthird\n")
+  await page.reload()
+  await expect(page.locator("[data-phx-main].phx-connected")).toBeVisible()
+  await openFile(page, "one.txt")
+  // Its code starts with its first command.
+  await page.keyboard.press("Control+Alt+h")
+  await expect(flash(page)).toContainText("from the hello extension")
+  await dismiss(flash(page))
+  await run(page, "hello.diff")
+
+  // The tab: named by the extension, the lines that differ in it.
+  const tab = page.locator("[data-tabs] [data-path^='diff:']")
+  await expect(tab).toHaveText(/Shout ↔ notes/)
+  await expect(tab).toHaveAttribute("data-active", "true")
+  const diff = page.locator("[data-diff]")
+  await expect(diff.locator("[data-diff-row=del]")).toHaveText(/2\s*−\s*second thing/)
+  await expect(diff.locator("[data-diff-row=ins]")).toHaveText([/2\s*\+\s*SECOND thing/, /4\s*\+\s*added/])
+  await expect(diff.locator("[data-diff-row=eq]")).toHaveCount(2)
+  await page.screenshot({path: "test-results/diff-tab.png"})
+
+  // While it is shown, the extension's buttons are in the tab bar; not for a file.
+  const accept = page.locator("#editor-actions [data-command='hello.acceptDiff']")
+  await expect(accept).toBeVisible()
+  await page.locator("[data-tabs] [data-path$='/one.txt']").click()
+  await expect(accept).toHaveCount(0)
+  await tab.click()
+
+  // Accept: the file has the change, the tab is gone.
+  await accept.click()
+  await expect(tab).toHaveCount(0)
+  await expect.poll(() => readFileSync(join(dws, "one.txt"), "utf8")).toBe("first\nSECOND thing\nthird\nadded\n")
+
+  // Again, and closed by hand: the extension hears of it (its buttons go).
+  await run(page, "hello.diff")
+  await expect(tab).toHaveCount(1)
+  await expect(page.locator("[data-diff-row=ins]")).toHaveText(/5\s*\+\s*added/)
+  await tab.locator("[data-close]").click()
+  await expect(tab).toHaveCount(0)
+  await expect(accept).toHaveCount(0)
 })

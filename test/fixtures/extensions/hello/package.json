@@ -16,7 +16,9 @@
       {"command": "hello.reveal", "title": "Greet This File", "category": "Hello"},
       {"command": "hello.broken", "title": "Broken Enablement", "enablement": "a ==="},
       {"command": "hello bad id", "title": "Not Usable"},
-      {"command": "hello.untitled"}
+      {"command": "hello.untitled"},
+      {"command": "hello.acceptDiff", "title": "Accept Shouting", "category": "Hello", "icon": "$(check)", "enablement": "hello.viewingDiff"},
+      {"command": "hello.rejectDiff", "title": "Reject Shouting", "category": "Hello", "icon": "$(discard)", "enablement": "hello.viewingDiff"}
     ],
     "keybindings": [
       {"command": "hello.sayHello", "key": "ctrl+alt+h", "mac": "cmd+alt+h"},
@@ -49,7 +51,9 @@
       ],
       "editor/title": [
         {"command": "hello.sayHello", "group": "navigation", "when": "resourceExtname == .txt"},
-        {"command": "hello.shout", "group": "navigation", "when": "resourceExtname == .txt"}
+        {"command": "hello.shout", "group": "navigation", "when": "resourceExtname == .txt"},
+        {"command": "hello.acceptDiff", "group": "navigation", "when": "hello.viewingDiff"},
+        {"command": "hello.rejectDiff", "group": "navigation", "when": "hello.viewingDiff"}
       ],
       "commandPalette": [
         {"command": "hello.reveal", "when": "false"}

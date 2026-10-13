@@ -21,6 +21,10 @@ defmodule BeeWeb.EditorLive.Views do
     {:halt, socket}
   end
 
+  # A container picked in the secondary side bar.
+  def handle_event("show_container", %{"container" => id}, socket) when is_binary(id),
+    do: {:halt, change(socket, &Workbench.show_container(&1, id))}
+
   def handle_event("toggle_view_item", %{"view" => view, "item" => item}, socket) do
     key = {view, item}
 
@@ -133,6 +137,7 @@ defmodule BeeWeb.EditorLive.Views do
   # (Workbench "Views containers"), with their views like the sidebar's.
   def panel_sections(assigns) do
     for container <- Workbench.containers(workbench_from(assigns), :panel, assigns.containers),
+        container_when?(container, assigns.context),
         do: %{container: container, views: container_views(assigns, container.id)}
   end
 
@@ -143,6 +148,25 @@ defmodule BeeWeb.EditorLive.Views do
         do: %{action | icon: "chevron-down", label: "Restore Panel Size"},
         else: action
     end
+  end
+
+  # The pages of the webview views (Bee.Webviews) of the containers at
+  # `location`, each with whether its view is on screen: `[{panel, shown?}]`.
+  # In the sidebar they stay loaded while another container is shown.
+  def webview_views(assigns, location) do
+    wb = workbench_from(assigns)
+
+    shown =
+      case location do
+        :activitybar -> assigns.sidebar_open && assigns.sidebar_view
+        :panel -> assigns.panel_open && assigns.panel_view
+        :auxiliarybar -> assigns.auxiliary_open && assigns.auxiliary_view
+      end
+
+    for {_id, %{view: id} = panel} when is_binary(id) <- Enum.sort(assigns.webviews),
+        view = Enum.find(assigns.views, &(&1.id == id)),
+        Workbench.container_location(wb, view.container) == location,
+        do: {panel, view.container == shown}
   end
 
   defp container_views(assigns, container) do
@@ -189,7 +213,8 @@ defmodule BeeWeb.EditorLive.Views do
   # Activity bar entries with the summed badges of their plugin views.
   def activity_bar(assigns) do
     for container <-
-          Workbench.containers(workbench_from(assigns), :activitybar, assigns.containers) do
+          Workbench.containers(workbench_from(assigns), :activitybar, assigns.containers),
+        container_when?(container, assigns.context) do
       badge =
         assigns.views
         |> Enum.filter(&(&1.container == container.id))
@@ -199,6 +224,18 @@ defmodule BeeWeb.EditorLive.Views do
       Map.put(container, :badge, if(badge > 0, do: badge))
     end
   end
+
+  # What the secondary side bar can show: the containers there.
+  def auxiliary_containers(assigns) do
+    for container <-
+          Workbench.containers(workbench_from(assigns), :auxiliarybar, assigns.containers),
+        container_when?(container, assigns.context),
+        do: container
+  end
+
+  # A container's own `when` (an extension's: shown once it says so).
+  defp container_when?(container, context),
+    do: Bee.Commands.When.eval(Map.get(container, :when_ast, ["true"]), context)
 
   def load_decorations(socket) do
     root = socket.assigns.root

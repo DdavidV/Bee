@@ -42,7 +42,11 @@ defmodule BeeWeb.EditorLive.Derived do
     {:menubar, [:context, :menus, :open_menu | @menus]},
     {:editor_actions, [:context | @menus]},
     {:context_menu_items, [:context, :context_menu, :submenus | @menus]},
-    {:activity_bar, [:containers, :activity_order, :views, :view_contents | @placed]},
+    {:activity_bar, [:context, :containers, :activity_order, :views, :view_contents | @placed]},
+    {:sidebar_webviews, [:webviews, :views, :sidebar_open, :sidebar_view | @placed]},
+    {:panel_webviews, [:webviews, :views, :panel_open, :panel_view | @placed]},
+    {:auxiliary_webviews, [:webviews, :views, :auxiliary_open, :auxiliary_view | @placed]},
+    {:auxiliary_containers, [:context, :containers | @placed]},
     {:sidebar_views, [:context, :views, :sidebar_view, :view_contents | @menus]},
     {:panel_sections,
      [:panel_open, :context, :views, :containers, :panel_order, :view_contents] ++
@@ -90,6 +94,11 @@ defmodule BeeWeb.EditorLive.Derived do
   defp derive(:context_menu_items, assigns), do: Menus.context_menu_items(assigns)
   defp derive(:activity_bar, assigns), do: Views.activity_bar(assigns)
   defp derive(:sidebar_views, assigns), do: Views.sidebar_views(assigns)
+  defp derive(:sidebar_webviews, assigns), do: Views.webview_views(assigns, :activitybar)
+  defp derive(:auxiliary_webviews, assigns), do: Views.webview_views(assigns, :auxiliarybar)
+  defp derive(:auxiliary_containers, assigns), do: Views.auxiliary_containers(assigns)
+  defp derive(:panel_webviews, %{panel_open: false}), do: []
+  defp derive(:panel_webviews, assigns), do: Views.webview_views(assigns, :panel)
 
   # (The panel shows nothing while it is closed.)
   defp derive(:panel_sections, %{panel_open: false}), do: []

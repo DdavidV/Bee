@@ -56,6 +56,9 @@
     view_sizes={@view_sizes}
     search={@search}
     references={@references}
+    webview_views={@sidebar_webviews}
+    webview_origin={@webview_origin}
+    color_theme_id={@color_theme.id}
     file_decorations={@file_decorations}
     icon_theme={@icon_theme}
     clipboard={@clipboard}
@@ -104,6 +107,7 @@
         socket={@socket}
         live={@live}
         webviews={@webviews}
+        diffs={@diffs}
         color_theme_id={@color_theme.id}
         webview_origin={@webview_origin}
         keybinding_labels={@keybinding_labels}
@@ -133,11 +137,21 @@
       references={@references}
       problems={@problem_entries}
       problems_hidden={@problems_hidden}
+      webview_views={@panel_webviews}
+      webview_origin={@webview_origin}
+      color_theme_id={@color_theme.id}
     />
   </main>
 
   <%!-- The secondary side bar, on the right --%>
-  <BeeWeb.Workbench.AuxiliaryBar.auxiliary_bar :if={@auxiliary_open} />
+  <BeeWeb.Workbench.AuxiliaryBar.auxiliary_bar
+    open={@auxiliary_open}
+    containers={@auxiliary_containers}
+    active={@auxiliary_view}
+    webview_views={@auxiliary_webviews}
+    webview_origin={@webview_origin}
+    color_theme_id={@color_theme.id}
+  />
 
   <%!-- Status bar --%>
   <footer class="col-span-full h-6 bg-statusbar text-statusbar-fg text-xs flex items-center gap-4 pl-3 pr-2">

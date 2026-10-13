@@ -7,7 +7,9 @@ defmodule Bee.Views do
       (`viewsContainers.activitybar`: `"explorer"`, `"extensions"`, a
       plugin's `"scm"`…; clicking it shows its views in the sidebar) or a
       section of the bottom panel (`viewsContainers.panel`: `"terminal"`,
-      `"console"`…; its title is the panel's tab). That is where it is to
+      `"console"`…; its title is the panel's tab), or – a VS Code
+      extension's, `viewsContainers.secondarySidebar` – what the secondary
+      side bar on the right shows. That is where it is to
       begin with: the user can hide it, and move it to the other place
       (`Bee.Workbench`, "Views containers") unless it says `"movable":
       false` – Bee's Explorer, Terminal… are drawn for one place only
@@ -15,6 +17,9 @@ defmodule Bee.Views do
       Plugins, Search, Terminal, Bee Console) itself; a plugin fills its
       views with data through `Bee.API.set_view/3` (stored in `Bee.UI`),
       wherever they are
+
+    * a view of `type` `"webview"` is a VS Code extension's: a page its
+      code draws (`window.registerWebviewViewProvider`, `Bee.Webviews`)
 
     * a view with `live` is drawn by a LiveView of the plugin instead
       (`Bee.Plugin.LiveView`), as is an editor (`editors`: `%{id, title,
@@ -27,13 +32,14 @@ defmodule Bee.Views do
 
   alias Bee.Contributions
 
-  @type location :: :activitybar | :panel
+  @type location :: :activitybar | :panel | :auxiliarybar
   @type container :: %{
           id: String.t(),
           title: String.t(),
           icon: String.t(),
           location: location,
           movable: boolean(),
+          when_ast: list(),
           source: term()
         }
   @type view :: %{
@@ -42,6 +48,7 @@ defmodule Bee.Views do
           container: String.t(),
           when_ast: list(),
           live: String.t() | nil,
+          webview: boolean(),
           source: term()
         }
   @type editor :: %{id: String.t(), title: String.t(), live: String.t(), source: term()}
@@ -100,14 +107,20 @@ defmodule Bee.Views do
     contributes = manifest["contributes"]
 
     containers =
-      for location <- [:activitybar, :panel],
-          c <- get_in(contributes, ["viewsContainers", Atom.to_string(location)]) || [] do
+      for {key, location} <- [
+            {"activitybar", :activitybar},
+            {"panel", :panel},
+            {"secondarySidebar", :auxiliarybar}
+          ],
+          c <- get_in(contributes, ["viewsContainers", key]) || [] do
         %{
           id: c["id"],
           title: c["title"],
-          icon: c["icon"],
+          icon: icon(c["icon"], source),
           location: location,
-          movable: c["movable"] != false,
+          # (What is in the secondary side bar stays there.)
+          movable: c["movable"] != false and location != :auxiliarybar,
+          when_ast: Bee.Commands.When.parse!(c["when"]),
           source: source
         }
       end
@@ -120,6 +133,9 @@ defmodule Bee.Views do
           container: container,
           when_ast: Bee.Commands.When.parse!(v["when"]),
           live: v["live"],
+          # Drawn by a VS Code extension's code, as a page of its own
+          # (`window.registerWebviewViewProvider`, `Bee.Webviews`).
+          webview: v["type"] == "webview",
           source: source
         }
       end
@@ -136,6 +152,18 @@ defmodule Bee.Views do
     if containers == [] and views == [] and editors == [],
       do: nil,
       else: %{containers: containers, views: views, editors: editors}
+  end
+
+  # A plugin's images are served from its folder (Bee.Plugins.asset_path/2).
+  defp icon(%{"light" => light, "dark" => dark}, {:plugin, name}),
+    do: %{light: asset_url(name, light), dark: asset_url(name, dark)}
+
+  defp icon(icon, _source) when is_binary(icon), do: icon
+  defp icon(_icon, _source), do: "window"
+
+  defp asset_url(name, rel) do
+    path = rel |> Path.expand("/") |> String.trim_leading("/")
+    "/plugins/#{URI.encode(name)}/#{URI.encode(path)}"
   end
 
   @impl Bee.Contributions.Point

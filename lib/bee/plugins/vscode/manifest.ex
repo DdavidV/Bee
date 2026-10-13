@@ -64,6 +64,8 @@ defmodule Bee.Plugins.VSCode.Manifest do
 
       main = string(package["main"])
       {contributes, warnings} = contributes(package, dir, nls, main != nil)
+      {views, view_warnings} = views(package, dir, nls, main != nil)
+      warnings = warnings ++ view_warnings
 
       manifest =
         %{
@@ -73,7 +75,15 @@ defmodule Bee.Plugins.VSCode.Manifest do
           "version" => string(package["version"]),
           "extension" => if(main, do: extension(package, main)),
           "activationEvents" => activation_events(package, contributes, main),
-          "contributes" => Map.merge(contributes, bee_contributes(package))
+          "contributes" =>
+            contributes
+            |> Map.merge(views)
+            |> Map.merge(bee_contributes(package), fn _point, vscode, bee ->
+              # (Both have containers or views: the lists of each place.)
+              if is_map(vscode) and is_map(bee),
+                do: Map.merge(vscode, bee, fn _key, a, b -> List.wrap(a) ++ List.wrap(b) end),
+                else: bee
+            end)
         }
         |> Map.merge(bee_parts(package))
         |> Map.reject(fn {_k, v} -> is_nil(v) end)
@@ -135,6 +145,96 @@ defmodule Bee.Plugins.VSCode.Manifest do
     do: Map.take(contributes, @bee_points)
 
   defp bee_contributes(_package), do: %{}
+
+  ## Views
+  #
+  # VS Code's views are drawn by the extension's code. Bee can show the
+  # ones that are pages of its own (`"type": "webview"`): in a container of
+  # the extension's (an icon in the activity bar, a section of the panel,
+  # the secondary side bar) or in one of Bee's. Tree views, and containers with nothing Bee can
+  # show, are left out.
+
+  @bee_containers ~w(explorer search)
+
+  # `{contributes, warnings}`: its `viewsContainers` and `views`.
+  defp views(package, dir, nls, main?) do
+    containers =
+      for location <- ~w(activitybar panel secondarySidebar),
+          %{"id" => id} = c when is_binary(id) <-
+            List.wrap(get_in(package, ["contributes", "viewsContainers", location])),
+          do: {id, location, c}
+
+    known = @bee_containers ++ Enum.map(containers, &elem(&1, 0))
+
+    {views, warnings} =
+      for {container, list} when is_binary(container) <-
+            map(get_in(package, ["contributes", "views"])),
+          container in known,
+          reduce: {%{}, []} do
+        {views, warnings} ->
+          {kept, dropped} =
+            entries(list, "contributes.views.#{container}", &view(&1, nls, main?))
+
+          {if(kept == [], do: views, else: Map.put(views, container, kept)), warnings ++ dropped}
+      end
+
+    shown =
+      for {id, location, c} <- containers,
+          Map.has_key?(views, id),
+          Regex.match?(~r/^[A-Za-z0-9_-]+$/, id),
+          reduce: %{} do
+        acc ->
+          container =
+            %{
+              "id" => id,
+              "title" => text(c["title"], nls) || id,
+              "icon" => command_icon(c["icon"], dir) || "window",
+              "when" => if(when?(c["when"]), do: c["when"])
+            }
+            |> Map.reject(fn {_k, v} -> is_nil(v) end)
+
+          Map.update(acc, location, [container], &(&1 ++ [container]))
+      end
+
+    views =
+      Map.filter(views, fn {id, _} ->
+        id in @bee_containers or
+          Enum.any?(shown, fn {_, cs} -> Enum.any?(cs, &(&1["id"] == id)) end)
+      end)
+
+    contributes =
+      %{"viewsContainers" => shown, "views" => views} |> Map.reject(fn {_k, v} -> v == %{} end)
+
+    {contributes, warnings}
+  end
+
+  defp view(%{"id" => id, "type" => "webview"} = v, nls, true) when is_binary(id) do
+    cond do
+      not Regex.match?(~r/^[A-Za-z0-9_.-]+$/, id) ->
+        {:drop, "(#{id}) has an id Bee can't use"}
+
+      not when?(v["when"]) ->
+        {:drop, "(#{id}) has a when clause Bee can't read"}
+
+      true ->
+        {:ok,
+         %{
+           "id" => id,
+           "name" => text(v["name"], nls) || id,
+           "type" => "webview",
+           "when" => v["when"]
+         }
+         |> Map.reject(fn {_k, v} -> is_nil(v) end)}
+    end
+  end
+
+  defp view(%{"id" => id, "type" => "webview"}, _nls, false),
+    do: {:drop, "(#{id}) needs the extension's code, which it doesn't have"}
+
+  defp view(%{"id" => id}, _nls, _main?) when is_binary(id),
+    do: {:drop, "(#{id}) is a tree view, which Bee can't draw"}
+
+  defp view(_view, _nls, _main?), do: {:drop, "has no id"}
 
   ## Contributions
 

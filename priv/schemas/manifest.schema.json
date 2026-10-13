@@ -131,7 +131,8 @@
           "additionalProperties": false,
           "properties": {
             "activitybar": {"type": "array", "items": {"$ref": "#/definitions/viewsContainer"}, "description": "Icons in the activity bar; their views show in the sidebar."},
-            "panel": {"type": "array", "items": {"$ref": "#/definitions/viewsContainer"}, "description": "Sections of the bottom panel (its tabs: Terminal, Bee Console…); their views show in it."}
+            "panel": {"type": "array", "items": {"$ref": "#/definitions/viewsContainer"}, "description": "Sections of the bottom panel (its tabs: Terminal, Bee Console…); their views show in it."},
+            "secondarySidebar": {"type": "array", "items": {"$ref": "#/definitions/viewsContainer"}, "description": "What the secondary side bar (on the right) shows, as VS Code extensions declare it: their webview views."}
           }
         },
         "views": {
@@ -254,7 +255,14 @@
       "properties": {
         "id": {"type": "string", "pattern": "^[A-Za-z0-9_-]+$"},
         "title": {"type": "string", "minLength": 1},
-        "icon": {"type": "string", "pattern": "^[a-z0-9-]+$", "description": "A Heroicons outline name."},
+        "icon": {
+          "description": "A Heroicons outline name; a VS Code extension's may be a codicon (\"$(name)\") or images in its folder.",
+          "anyOf": [
+            {"type": "string", "pattern": "^([a-z0-9-]+|\\$\\([a-z0-9-]+\\))$"},
+            {"type": "object", "required": ["light", "dark"], "additionalProperties": false, "properties": {"light": {"type": "string"}, "dark": {"type": "string"}}}
+          ]
+        },
+        "when": {"$ref": "#/definitions/whenClause"},
         "movable": {"type": "boolean", "default": true, "description": "Whether the user may move it between the activity bar and the panel (its right-click menu). False for one whose views only make sense where it is."}
       }
     },
@@ -266,6 +274,7 @@
       "properties": {
         "id": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+$"},
         "name": {"type": "string", "minLength": 1},
+        "type": {"enum": ["webview"], "description": "A webview view of a VS Code extension: its code draws it, as a page of its own (window.registerWebviewViewProvider)."},
         "live": {"$ref": "#/definitions/liveModule"},
         "when": {"$ref": "#/definitions/whenClause"}
       }

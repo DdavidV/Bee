@@ -2,6 +2,30 @@
 // the extension host's tests.
 const vscode = require("vscode")
 
+// What "hello-proposed:" documents have in them.
+const proposed = {
+  files: new Map(),
+  onDidChangeFile: new vscode.EventEmitter().event,
+  watch: () => new vscode.Disposable(() => {}),
+  stat(uri) {
+    if (!this.files.has(uri.toString())) throw vscode.FileSystemError.FileNotFound(uri)
+    return {type: vscode.FileType.File, ctime: 0, mtime: 0, size: this.files.get(uri.toString()).length}
+  },
+  readFile(uri) {
+    if (!this.files.has(uri.toString())) throw vscode.FileSystemError.FileNotFound(uri)
+    return this.files.get(uri.toString())
+  },
+  writeFile(uri, content) {
+    this.files.set(uri.toString(), content)
+  },
+  readDirectory: () => [],
+  createDirectory() {},
+  delete(uri) {
+    this.files.delete(uri.toString())
+  },
+  rename() {},
+}
+
 function activate(context) {
   const greeting = () => vscode.workspace.getConfiguration("hello").get("greeting")
 
@@ -102,6 +126,48 @@ function activate(context) {
       log.info("started", {port: 1})
       log.error(new Error("boom"))
       console.log("printed by hello")
+    }),
+    // A terminal of its own: named, with its environment (its own, and
+    // what it wants every new terminal to have), typed into before it runs.
+    vscode.commands.registerCommand("hello.terminal", async (show = true) => {
+      context.environmentVariableCollection.replace("HELLO_ALL", "everywhere")
+      const terminal = vscode.window.createTerminal({name: "Hello Shell", env: {HELLO_ONE: "mine"}})
+      context.terminal = terminal
+      terminal.sendText('echo "$HELLO_ONE-$HELLO_ALL"')
+      if (show) terminal.show()
+      const pid = await terminal.processId
+      console.log(`terminal ${terminal.name} runs: ${typeof pid}, ${vscode.window.terminals.length} listed, active ${vscode.window.activeTerminal === terminal}`)
+    }),
+    vscode.commands.registerCommand("hello.terminalClose", () => context.terminal && context.terminal.dispose()),
+    vscode.window.onDidCloseTerminal(terminal => console.log(`terminal ${terminal.name} closed, ${vscode.window.terminals.length} left`)),
+    // A proposed change, the way assistants show theirs: the active file
+    // beside what it would become (a document of a scheme of its own), in
+    // a diff tab with Accept and Reject in its bar while it is shown.
+    vscode.workspace.registerFileSystemProvider("hello-proposed", proposed),
+    vscode.window.onDidChangeVisibleTextEditors(editors =>
+      vscode.commands.executeCommand("setContext", "hello.viewingDiff", editors.some(editor => editor.document.uri.scheme === "hello-proposed")),
+    ),
+    vscode.commands.registerCommand("hello.diff", async () => {
+      const original = vscode.window.activeTextEditor.document
+      const uri = vscode.Uri.from({scheme: "hello-proposed", path: original.uri.path})
+      proposed.files.set(uri.toString(), Buffer.from(original.getText().replace(/second/, "SECOND") + "added\n"))
+      const document = await vscode.workspace.openTextDocument(uri)
+      await vscode.commands.executeCommand("vscode.diff", original.uri, uri, "Shout ↔ notes", {preview: false})
+      const isOurs = tab => tab.input instanceof vscode.TabInputTextDiff && tab.input.modified.toString() === uri.toString()
+      const tabs = () => vscode.window.tabGroups.all.flatMap(group => group.tabs)
+      console.log(`diff open: ${tabs().some(isOurs)}, ${document.lineCount} lines proposed`)
+      context.diff = {original, uri, isOurs, tabs}
+    }),
+    vscode.commands.registerCommand("hello.acceptDiff", async () => {
+      const {original, uri, isOurs, tabs} = context.diff
+      const active = vscode.window.tabGroups.activeTabGroup.activeTab
+      console.log(`accepting: active tab ours ${Boolean(active && isOurs(active))}`)
+      await vscode.workspace.fs.writeFile(original.uri, await vscode.workspace.fs.readFile(uri))
+      await vscode.window.tabGroups.close(tabs().filter(isOurs))
+    }),
+    vscode.commands.registerCommand("hello.rejectDiff", () => vscode.window.tabGroups.close(context.diff.tabs().filter(context.diff.isOurs))),
+    vscode.window.tabGroups.onDidChangeTabs(event => {
+      for (const tab of event.closed) if (tab.input instanceof vscode.TabInputTextDiff) console.log(`diff tab closed: ${tab.label}`)
     }),
     vscode.commands.registerCommand("hello.crash", () => process.exit(3)),
     vscode.workspace.onDidChangeConfiguration(event => {

@@ -11,6 +11,8 @@ defmodule Bee.Workbench do
     * `{:open_file, path}`, `{:open_file, path, :preview}` – open a
       `Bee.Editor.Buffer`, then `editor_opened/5`
     * `{:close_buffer, path}` – detach from the file's `Bee.Editor.Buffer`
+    * `{:webview_closed, id}`, `{:diff_closed, id}` – a tab of an
+      extension's (a webview panel, a diff) was closed: it is told
     * `:new_terminal` – start a `Bee.Terminal`, then `terminal_started/3`
     * `:start_console` – start the window's `Bee.Console`, then `console_started/2`
     * `{:stop_terminal, id}` – stop it (`{:forget_terminal, id}` when it already exited)
@@ -68,6 +70,8 @@ defmodule Bee.Workbench do
             # The secondary side bar, on the right of the editors (empty,
             # as VS Code's is to begin with).
             auxiliary_open: false,
+            # The container it shows (one at `:auxiliarybar`), if any.
+            auxiliary_view: nil,
             auxiliary_width: 300,
             # Views containers the user moved: container id =>
             # `:activitybar` or `:panel`; and those hidden (container ids).
@@ -111,6 +115,7 @@ defmodule Bee.Workbench do
     :panel_order,
     :panel_maximized,
     :auxiliary_open,
+    :auxiliary_view,
     :auxiliary_width,
     :container_locations,
     :hidden_containers,
@@ -158,7 +163,8 @@ defmodule Bee.Workbench do
   # LiveView of its; see `BeeWeb.Workbench.PluginLive`), the settings page
   # (`kind: :settings`, path "settings:"), or a webview panel
   # of a VS Code extension (`kind: :webview`, path "webview:<id>", see
-  # `Bee.Webviews`).
+  # `Bee.Webviews`), or two documents an extension compares (`kind: :diff`,
+  # path "diff:<id>", `vscode.diff`; see `BeeWeb.Workbench.DiffView`).
 
   @doc "Whether `path` has an editor, in any group."
   def open?(wb, path), do: Enum.any?(all_tabs(wb), &(&1.path == path))
@@ -470,6 +476,21 @@ defmodule Bee.Workbench do
     end
   end
 
+  @doc """
+  Shows diff `id` (two documents an extension compares, `vscode.diff`) in
+  an editor tab named `title`: a new one, or the open one.
+  """
+  def open_diff(wb, id, title) do
+    path = "diff:" <> id
+
+    if open?(wb, path) do
+      reveal(wb, path)
+    else
+      tab = %{path: path, kind: :diff, diff: id, title: title, dirty: false, lang: nil}
+      activate_editor(%{wb | tabs: wb.tabs ++ [tab]}, path)
+    end
+  end
+
   @doc "The title of webview panel `id`'s tab is `title` now."
   def set_webview_title(wb, id, title),
     do: update_tab(wb, "webview:" <> id, &%{&1 | title: title})
@@ -617,6 +638,7 @@ defmodule Bee.Workbench do
             %{kind: :file} -> file_closed(wb, path, gone?)
             # Its extension is told: the panel is disposed of.
             %{kind: :webview, webview: id} when gone? -> [{:webview_closed, id}]
+            %{kind: :diff, diff: id} when gone? -> [{:diff_closed, id}]
             _ -> []
           end
 
@@ -704,7 +726,18 @@ defmodule Bee.Workbench do
   end
 
   @doc "Shows or hides the secondary side bar (on the right)."
-  def toggle_auxiliary(wb), do: %{wb | auxiliary_open: not wb.auxiliary_open}
+  def toggle_auxiliary(%{auxiliary_open: true} = wb), do: %{wb | auxiliary_open: false}
+
+  # (On the container it showed, or – none, or gone – its first.)
+  def toggle_auxiliary(wb) do
+    ids = Enum.map(containers(wb, :auxiliarybar), & &1.id)
+
+    cond do
+      wb.auxiliary_view in ids -> show_container(wb, wb.auxiliary_view)
+      ids != [] -> show_container(wb, hd(ids))
+      true -> %{wb | auxiliary_open: true}
+    end
+  end
 
   @doc """
   Shows sidebar view `view` ("explorer", "extensions" – the plugins); like clicking its
@@ -772,7 +805,9 @@ defmodule Bee.Workbench do
   #
   # A views container (`Bee.Views`) is shown in one of two places: as an
   # icon of the activity bar, its views in the sidebar (`:activitybar`), or
-  # as a section of the bottom panel (`:panel`) – where it was contributed
+  # as a section of the bottom panel (`:panel`) – or, a VS Code extension's
+  # that says so, in the secondary side bar (`:auxiliarybar`, which shows
+  # one at a time: `auxiliary_view`) – where it was contributed
   # (`viewsContainers.activitybar`, `viewsContainers.panel`), or where the
   # user moved it (`container_locations`; one that is `movable`). A hidden
   # one (`hidden_containers`) has no icon or tab until it is shown again.
@@ -780,7 +815,7 @@ defmodule Bee.Workbench do
 
   @locations [:activitybar, :panel]
 
-  @doc "Where container `id` is: `:activitybar` or `:panel`."
+  @doc "Where container `id` is: `:activitybar`, `:panel` or `:auxiliarybar`."
   def container_location(wb, id),
     do: Map.get(wb.container_locations, id) || default_location(id)
 
@@ -799,12 +834,19 @@ defmodule Bee.Workbench do
   are): the activity bar's icons or the panel's sections, in their order as
   dragged.
   """
-  def containers(wb, location, containers \\ Bee.Views.all()) when location in @locations do
+  def containers(wb, location, containers \\ Bee.Views.all())
+      when location in [:auxiliarybar | @locations] do
     containers
     |> Enum.filter(
       &(container_location(wb, &1.id) == location and not container_hidden?(wb, &1.id))
     )
-    |> sort_containers(if(location == :panel, do: wb.panel_order, else: wb.activity_order))
+    |> sort_containers(
+      case location do
+        :panel -> wb.panel_order
+        :activitybar -> wb.activity_order
+        :auxiliarybar -> []
+      end
+    )
   end
 
   @doc """
@@ -813,8 +855,17 @@ defmodule Bee.Workbench do
   """
   def show_container(wb, id) do
     case container_location(wb, id) do
-      :activitybar -> {reveal_view(wb, id), [{:panel_shown, id}]}
-      :panel -> show_panel(wb, id)
+      :activitybar ->
+        {reveal_view(wb, id), [{:panel_shown, id}]}
+
+      :panel ->
+        show_panel(wb, id)
+
+      :auxiliarybar ->
+        hidden = List.delete(wb.hidden_containers, id)
+
+        {%{wb | auxiliary_open: true, auxiliary_view: id, hidden_containers: hidden},
+         [{:panel_shown, id}]}
     end
   end
 
@@ -943,15 +994,24 @@ defmodule Bee.Workbench do
   `terminal_colors/0`), all of which the user can change.
   """
   def terminal_started(wb, id, name) do
-    terminal = %{id: id, name: name, icon: "command-line", color: nil}
+    wb = terminal_added(wb, id, name)
+    %{wb | active_term: id, panel_open: true, panel_view: "terminal"}
+  end
 
-    %{
-      wb
-      | terminals: wb.terminals ++ [terminal],
-        active_term: id,
-        panel_open: true,
-        panel_view: "terminal"
-    }
+  @doc """
+  A terminal that runs without being shown (an extension's, until it shows
+  it: `show_terminal/2`): listed, the panel as it was.
+  """
+  def terminal_added(wb, id, name) do
+    terminal = %{id: id, name: name, icon: "command-line", color: nil}
+    %{wb | terminals: wb.terminals ++ [terminal], active_term: wb.active_term || id}
+  end
+
+  @doc "Shows terminal `id`: the panel open on it."
+  def show_terminal(wb, id) do
+    if terminal?(wb, id),
+      do: show_panel(%{wb | active_term: id}, "terminal"),
+      else: wb
   end
 
   @terminal_colors ~w(red green yellow blue magenta cyan)
@@ -1154,6 +1214,7 @@ defmodule Bee.Workbench do
       "sideBarVisible" => wb.sidebar_open,
       "activeViewlet" => wb.sidebar_open && "workbench.view.#{wb.sidebar_view}",
       "auxiliaryBarVisible" => wb.auxiliary_open,
+      "activeAuxiliary" => wb.auxiliary_open && wb.auxiliary_view,
       "panelVisible" => wb.panel_open,
       "activePanel" => wb.panel_open && wb.panel_view,
       "panelMaximized" => wb.panel_maximized,

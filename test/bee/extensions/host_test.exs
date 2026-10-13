@@ -226,6 +226,108 @@ defmodule Bee.Extensions.HostTest do
       assert Bee.Output.get(root, "Hello") == ""
     end
 
+    test "a terminal of its own: run by a window, typed into, closed; the environment it wants",
+         %{root: root} do
+      log = fn -> root |> Bee.Output.get("Extension Host") |> to_string() end
+      run(root, "hello.terminal")
+
+      # A window is asked to run it; the first to claim it does.
+      assert_receive {:bee_api, {:create_terminal, host, id, spec}}, 5_000
+      assert %{name: "Hello Shell", env: %{"HELLO_ONE" => "mine"}, shell: nil, args: []} = spec
+      eventually(fn -> Host.terminal_env(root) == %{"HELLO_ALL" => "everywhere"} end)
+      assert Host.claim_terminal(host, id)
+      refute Host.claim_terminal(host, id)
+
+      term = System.unique_integer([:positive])
+      Phoenix.PubSub.subscribe(Bee.PubSub, Bee.Terminal.topic(term))
+
+      {:ok, _pid} =
+        Bee.Terminal.start(
+          id: term,
+          owner: self(),
+          shell: "/bin/sh",
+          cwd: root,
+          env: Map.merge(Host.terminal_env(root), spec.env)
+        )
+
+      # What it sent before the shell ran goes in now; it was shown.
+      Host.terminal_started(host, id, term)
+      assert_receive {:bee_api, {:show_terminal, ^term}}, 5_000
+
+      output = fn output, more ->
+        receive do
+          {:term_data, ^term, _seq, data} ->
+            if output <> data =~ "mine-everywhere\r\n",
+              do: :ok,
+              else: more.(output <> data, more)
+        after
+          5_000 -> flunk("no output: #{inspect(output)}")
+        end
+      end
+
+      output.("", output)
+      eventually(fn -> log.() =~ "terminal Hello Shell runs: number, 1 listed, active true" end)
+
+      # Disposed of: its window is to kill it. Gone, the extension is told.
+      run(root, "hello.terminalClose")
+      assert_receive {:bee_api, {:kill_terminal, ^term}}, 5_000
+      eventually(fn -> log.() =~ "terminal Hello Shell closed, 0 left" end)
+
+      # One that exits on its own is closed too.
+      run(root, "hello.terminal", args: [false])
+      assert_receive {:bee_api, {:create_terminal, ^host, id, _spec}}, 5_000
+      assert Host.claim_terminal(host, id)
+      second = System.unique_integer([:positive])
+      {:ok, _pid} = Bee.Terminal.start(id: second, owner: self(), shell: "/bin/sh", cwd: root)
+      Host.terminal_started(host, id, second)
+      refute_receive {:bee_api, {:show_terminal, ^second}}, 100
+      Bee.Terminal.input(second, "exit\n")
+
+      eventually(fn ->
+        length(Regex.scan(~r/terminal Hello Shell closed, 0 left/, log.())) == 2
+      end)
+    end
+
+    test "a diff: a file beside a document of its own, in a tab; its buttons while it is shown",
+         %{root: root, path: path} do
+      log = fn -> root |> Bee.Output.get("Extension Host") |> to_string() end
+      {:ok, _} = Bee.Editor.Buffer.open(path)
+      on_exit(fn -> Bee.Editor.Buffer.close(path) end)
+      run(root, "hello.diff", active_editor: path)
+
+      # The window gets the tab: what differs, by line.
+      assert_receive {:bee_api, {:open_diff, diff}}, 5_000
+      assert %{id: id, title: "Shout ↔ notes", original: %{path: ^path}} = diff
+      assert diff.modified.uri == "hello-proposed:" <> path
+
+      assert diff.rows == [
+               {:eq, 1, 1, "héllo 🐝 world"},
+               {:del, 2, nil, "second line"},
+               {:ins, nil, 2, "SECOND line"},
+               {:ins, nil, 3, "added"}
+             ]
+
+      eventually(fn -> log.() =~ "diff open: true, 4 lines proposed" end)
+
+      # Its tab shown: its modified side is a visible editor – the
+      # extension's buttons are for then.
+      refute Bee.UI.context(root)["hello.viewingDiff"]
+      Host.diff(root, id, {:state, true})
+      eventually(fn -> Bee.UI.context(root)["hello.viewingDiff"] == true end)
+      Host.diff(root, id, {:state, false})
+      eventually(fn -> Bee.UI.context(root)["hello.viewingDiff"] == false end)
+      Host.diff(root, id, {:state, true})
+
+      # Accepted: the extension writes the file and closes the tab.
+      run(root, "hello.acceptDiff")
+      assert_receive {:bee_api, {:close_diff, ^id}}, 5_000
+      assert log.() =~ "accepting: active tab ours true"
+      assert File.read!(path) == "héllo 🐝 world\nSECOND line\nadded\n"
+      Host.diff(root, id, :closed)
+      eventually(fn -> log.() =~ "diff tab closed: Shout ↔ notes" end)
+      eventually(fn -> Bee.UI.context(root)["hello.viewingDiff"] == false end)
+    end
+
     test "API Bee doesn't have does nothing, and is listed", %{root: root} do
       run(root, "hello.unsupported")
       assert_receive {:bee_api, {:show_message, :info, "still running"}}, 5_000

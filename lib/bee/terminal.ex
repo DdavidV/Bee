@@ -28,6 +28,21 @@ defmodule Bee.Terminal do
   @doc "The shell new terminals run (`terminal.integrated.shell` of workspace `root`)."
   def default_shell(root \\ nil), do: Bee.Settings.get("terminal.integrated.shell", root)
 
+  @doc "The terminal's process, or nil."
+  def whereis(id) do
+    case Registry.lookup(Bee.Registry, {:terminal, id}) do
+      [{pid, _}] -> pid
+      [] -> nil
+    end
+  end
+
+  @doc "The operating system's id of the terminal's shell, or nil."
+  def os_pid(id) do
+    GenServer.call(via(id), :os_pid)
+  catch
+    :exit, _ -> nil
+  end
+
   def input(id, data), do: GenServer.cast(via(id), {:input, data})
   def resize(id, cols, rows), do: GenServer.cast(via(id), {:resize, cols, rows})
 
@@ -51,6 +66,14 @@ defmodule Bee.Terminal do
     id = Keyword.fetch!(opts, :id)
     owner = Keyword.fetch!(opts, :owner)
     shell = Keyword.get_lazy(opts, :shell, &default_shell/0)
+    # The shell's arguments, and more for its environment: `%{name => value}`,
+    # nil to unset (a terminal of an extension, `Bee.Extensions.Host`).
+    args = Keyword.get(opts, :args, [])
+
+    env =
+      for {name, value} <- Keyword.get(opts, :env, %{}),
+          do: {to_charlist(name), if(is_binary(value), do: to_charlist(value), else: false)}
+
     cwd = Keyword.get_lazy(opts, :cwd, &Bee.Workspace.root/0)
     {cols, rows} = {Keyword.get(opts, :cols, 80), Keyword.get(opts, :rows, 24)}
 
@@ -75,10 +98,15 @@ defmodule Bee.Terminal do
       {:kill, ~c"kill -HUP $CHILD_PID"},
       {:kill_timeout, 1},
       {:cd, String.to_charlist(cwd)},
-      {:env, [{~c"TERM", ~c"xterm-256color"}, {~c"COLORTERM", ~c"truecolor"}]}
+      {:env, [{~c"TERM", ~c"xterm-256color"}, {~c"COLORTERM", ~c"truecolor"}] ++ env}
     ]
 
-    case :exec.run(String.to_charlist(shell), exec_opts) do
+    command =
+      if args == [],
+        do: String.to_charlist(shell),
+        else: Enum.map([shell | args], &String.to_charlist/1)
+
+    case :exec.run(command, exec_opts) do
       {:ok, exec_pid, os_pid} ->
         Process.monitor(owner)
 
@@ -101,6 +129,8 @@ defmodule Bee.Terminal do
   end
 
   @impl true
+  def handle_call(:os_pid, _from, state), do: {:reply, state.os_pid, state}
+
   def handle_call(:scrollback, _from, state) do
     # (What waits is sent first: the scrollback is what `seq` has seen.)
     state = flush(state)

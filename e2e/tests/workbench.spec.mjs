@@ -168,7 +168,7 @@ test("the sidebar is resized by dragging its edge; the width is remembered, a do
 test("the secondary side bar: on the right, shown by button, key and menu, resized by its edge", async ({page}) => {
   await openBee(page)
   const bar = page.locator("#auxiliarybar")
-  await expect(bar).toHaveCount(0)
+  await expect(bar).toBeHidden()
   await page.getByRole("button", {name: "Toggle Secondary Side Bar"}).click()
   await expect(bar).toBeVisible()
 
@@ -197,14 +197,14 @@ test("the secondary side bar: on the right, shown by button, key and menu, resiz
 
   // The key hides and shows it, the View menu too; the width is remembered over a reload.
   await page.keyboard.press("Control+Alt+b")
-  await expect(bar).toHaveCount(0)
+  await expect(bar).toBeHidden()
   await page.reload()
   await expect(page.locator("[data-phx-main].phx-connected")).toBeVisible()
   await menuItem(await openMenu(page, "View"), "Toggle Secondary Side Bar Visibility").click()
   await expect(bar).toBeVisible()
   expect(Math.abs((await width()) - wide)).toBeLessThanOrEqual(2)
   await page.keyboard.press("Control+Alt+b")
-  await expect(bar).toHaveCount(0)
+  await expect(bar).toBeHidden()
 })
 
 test("the panel is resized by dragging its top edge, and can fill the window", async ({page}) => {
